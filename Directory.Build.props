@@ -1,0 +1,12 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- Blossom (UI + windowing) is a git submodule at external/Blossom; fallback to a sibling clone ../Blossom -->
+    <BlossomRoot Condition="'$(BlossomRoot)' == '' and Exists('$(MSBuildThisFileDirectory)external\Blossom\src\Blossom\Blossom.csproj')">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)external\Blossom\'))</BlossomRoot>
+    <BlossomRoot Condition="'$(BlossomRoot)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\Blossom\'))</BlossomRoot>
+  </PropertyGroup>
+</Project>

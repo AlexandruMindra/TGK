@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="src/TGK.Terminal/TGK.Terminal.csproj" />
+  <Project Path="src/TGK.Core/TGK.Core.csproj" />
+  <Project Path="src/TGK.Client/TGK.Client.csproj" />
+  <Project Path="tests/TGK.Terminal.Tests/TGK.Terminal.Tests.csproj" />
+  <Project Path="tests/TGK.Core.Tests/TGK.Core.Tests.csproj" />
+</Solution>
