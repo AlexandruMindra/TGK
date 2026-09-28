@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>TGK</AssemblyName>
+    <RootNamespace>TGK.Client</RootNamespace>
+    <Version>0.1.0</Version>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationIcon>..\..\assets\icon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(BlossomRoot)src\Blossom\Blossom.csproj" />
+    <ProjectReference Include="..\TGK.Core\TGK.Core.csproj" />
+    <ProjectReference Include="..\TGK.Terminal\TGK.Terminal.csproj" />
+  </ItemGroup>
+
+  <!-- Vendored GLFW (glfw3-x64.dll, glfw3-x86.dll, libglfw.so.3.3) copied flat into the output -->
+  <ItemGroup>
+    <None Include="$(BlossomRoot)glfw\**\*">
+      <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <Visible>false</Visible>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Blossom's Browser auto-loads <exe dir>/assets/icon.png as the window icon -->
+    <Content Include="..\..\assets\icon.png">
+      <Link>assets\icon.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\icons\**\*">
+      <Link>assets\icons\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\fonts\**\*">
+      <Link>assets\fonts\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

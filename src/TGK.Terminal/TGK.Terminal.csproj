@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>TGK.Terminal</RootNamespace>
+    <Description>Headless xterm-compatible terminal emulator core (parser, screen model, input encoding).</Description>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="TGK.Terminal.Tests" />
+  </ItemGroup>
+
+</Project>
