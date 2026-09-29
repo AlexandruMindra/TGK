@@ -1,6 +1,8 @@
 # Builds the desktop client for Linux and Windows on every push and pull request.
 # Each run uploads a ready-to-run, self-contained archive per platform (no .NET install needed).
-# Pushing a tag like v0.2.0 also publishes both archives as a GitHub release.
+# - push to main -> the rolling "nightly" pre-release is replaced with this build (X.Y.Z-nightly.N)
+# - tag vX.Y.Z   -> an immutable release vX.Y.Z (the tag must equal <Version> in Directory.Build.props)
+# Versioning and release rules: docs/RELEASING.md
 name: Build client
 
 on:
@@ -13,6 +15,10 @@ on:
 permissions:
   contents: read
 
+env:
+  DOTNET_NOLOGO: "1" # keeps the first-run banner out of captured command output
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
@@ -20,6 +26,8 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -27,6 +35,30 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
+
+      # Release builds carry exactly the tag's version; every other build is a pre-release of the next version.
+      - name: Version
+        id: version
+        run: |
+          base=$(dotnet msbuild src/TGK.Client -getProperty:Version)
+          if [[ ! "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::<Version> in Directory.Build.props must be MAJOR.MINOR.PATCH, got '$base'"
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            if [[ "${GITHUB_REF_NAME#v}" != "$base" ]]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match <Version>$base</Version> in Directory.Build.props (see docs/RELEASING.md)"
+              exit 1
+            fi
+            version="$base"
+          elif [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            version="$base-nightly.$GITHUB_RUN_NUMBER"
+          else
+            version="$base-ci.$GITHUB_RUN_NUMBER"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building TGK $version"
+
       - name: Test
         run: scripts/test.sh
 
@@ -53,6 +85,7 @@ jobs:
         shell: bash
         run: |
           dotnet publish src/TGK.Client -c Release -r ${{ matrix.rid }} --self-contained true \
+            -p:Version=${{ needs.test.outputs.version }} \
             -p:DebugType=none -p:SatelliteResourceLanguages=en -o publish/TGK
 
       # tar keeps the executable bit on Linux; Windows users expect a zip.
@@ -72,7 +105,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [test, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -81,7 +114,32 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      # Fails if the release already exists: published versions are never overwritten.
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" dist/* --repo "${{ github.repository }}" --generate-notes
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
+            --title "TGK ${{ needs.test.outputs.version }}" --generate-notes --latest
+
+  nightly:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      # Recreated on every push so the "nightly" tag and its files always match the latest main commit.
+      - name: Replace nightly pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.test.outputs.version }}
+        run: |
+          gh release delete nightly --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          gh release create nightly dist/* --repo "$GITHUB_REPOSITORY" --prerelease --latest=false \
+            --target "$GITHUB_SHA" --title "Nightly $VERSION" \
+            --notes "Automatic build of \`main\` at ${GITHUB_SHA::7} ($VERSION). Not a stable release: it is replaced on every push. Stable versions: the releases tagged vX.Y.Z."

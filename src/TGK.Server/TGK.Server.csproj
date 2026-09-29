@@ -3,7 +3,6 @@
   <PropertyGroup>
     <AssemblyName>tgk-server</AssemblyName>
     <RootNamespace>TGK.Server</RootNamespace>
-    <Version>1.0.0</Version>
     <!-- Plain API server: no static web assets, no IIS web.config in publish output. -->
     <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
     <IsWebConfigTransformDisabled>true</IsWebConfigTransformDisabled>

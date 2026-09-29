@@ -46,8 +46,8 @@ entirely on one machine.
 
 ## Getting started
 
-Ready-to-run Linux and Windows builds (no .NET needed) are attached to every [Actions run](https://github.com/AlexandruMindra/TGK/actions)
-and to [releases](https://github.com/AlexandruMindra/TGK/releases). To build from source you need the
+Ready-to-run Linux and Windows builds (no .NET needed): the [latest release](https://github.com/AlexandruMindra/TGK/releases/latest),
+or the [nightly](https://github.com/AlexandruMindra/TGK/releases/tag/nightly) build of `main` (versioning rules: [docs/RELEASING.md](docs/RELEASING.md)). To build from source you need the
 [.NET 10 SDK](https://dotnet.microsoft.com/download). Tested mainly on Linux; Windows is supported but less tested.
 
 ```bash

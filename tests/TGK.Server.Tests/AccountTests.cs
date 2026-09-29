@@ -21,7 +21,7 @@ public sealed class AccountTests(ServerFixture server) : IClassFixture<ServerFix
         var info = await (await server.Client().GetAsync("/api/info")).ReadAsync<InfoResponse>();
         Assert.Equal("tgk-server", info.Name);
         Assert.Equal(1, info.Protocol);
-        Assert.Equal("1.0.0", info.Version);
+        Assert.Matches(@"^\d+\.\d+\.\d+$", info.Version);
     }
 
     [Fact]

@@ -4,7 +4,6 @@
     <OutputType>WinExe</OutputType>
     <AssemblyName>TGK</AssemblyName>
     <RootNamespace>TGK.Client</RootNamespace>
-    <Version>0.1.0</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationIcon>..\..\assets\icon.ico</ApplicationIcon>
   </PropertyGroup>
