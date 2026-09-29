@@ -393,6 +393,7 @@ public sealed class TabStrip : Control
             };
             SKColor dot = alert ?? vault.Status switch
             {
+                _ when vault.Mode == Core.Services.VaultMode.Local => Theme.Idle,
                 Core.Services.SyncState.Syncing => Theme.Accent,
                 Core.Services.SyncState.Offline => Theme.Idle,
                 _ => Theme.Success,
@@ -405,7 +406,7 @@ public sealed class TabStrip : Control
     }
 }
 
-/// <summary>Round account button showing the user's initial; opens the account menu.</summary>
+/// <summary>Round account button showing the user's initial (a computer for the local vault); opens the account menu.</summary>
 public sealed class AvatarButton : Control
 {
     private readonly MainView _main;
@@ -427,6 +428,11 @@ public sealed class AvatarButton : Control
         if (IsHovered)
             Gfx.Circle(c, W / 2f, H / 2f, r + 2, Theme.AccentSoft);
         Gfx.Circle(c, W / 2f, H / 2f, r, IsPressed ? Theme.AccentPressed : Theme.Accent);
+        if (_main.Services.Vault.Mode == Core.Services.VaultMode.Local)
+        {
+            Icons.Draw(c, "monitor", W / 2f, H / 2f, 16, Theme.TextOnAccent);
+            return;
+        }
         string user = _main.Services.Vault.CurrentUser ?? "?";
         string initial = user.Length > 0 ? user[..1].ToUpperInvariant() : "?";
         Gfx.Text(c, initial, W / 2f, H / 2f, Theme.FontBase, Theme.WeightSemibold, Theme.TextOnAccent, TextAlignment.Center);

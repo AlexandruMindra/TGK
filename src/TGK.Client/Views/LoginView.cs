@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Blossom;
@@ -7,6 +8,7 @@ using Blossom.Core.Visual;
 using Silk.NET.Input;
 using SkiaSharp;
 using TGK.Client.Controls;
+using TGK.Client.Dialogs;
 using TGK.Client.Input;
 using TGK.Client.Main;
 using TGK.Core.Models;
@@ -18,11 +20,12 @@ namespace TGK.Client.Views;
 
 /// <summary>
 /// Sign-in screen: one centered card that switches between signing in, creating an account and setting up an
-/// authenticator (the second registration step, also used when an administrator reset the account's authenticator).
+/// authenticator (the second registration step, also used when an administrator reset the account's authenticator),
+/// or, with "This device only", creating or unlocking the local vault (no server).
 /// </summary>
 public sealed class LoginView : TgkView
 {
-    private enum Step { SignIn, Register, Authenticator }
+    private enum Step { SignIn, Register, Authenticator, LocalCreate, LocalUnlock }
 
     private const float CardW = 400, CardPad = 32, Inner = CardW - 2 * CardPad, FieldH = 36, RowGap = 12, QrSize = 200;
     private const int CodeLength = 6;
@@ -34,7 +37,11 @@ public sealed class LoginView : TgkView
     private Label _serverCaption = null!, _userCaption = null!, _passwordCaption = null!, _confirmCaption = null!, _inviteCaption = null!, _codeCaption = null!;
     private TextField _server = null!, _user = null!, _password = null!, _confirm = null!, _invite = null!, _code = null!, _setupCode = null!;
     private Label _userHint = null!, _keyCaption = null!, _setupCodeCaption = null!;
-    private PasswordMeter _meter = null!;
+    private Label _localNote = null!, _masterCaption = null!, _masterConfirmCaption = null!;
+    private TextField _master = null!, _masterConfirm = null!;
+    private PasswordMeter _meter = null!, _masterMeter = null!;
+    private SegmentedControl _mode = null!;
+    private Checkbox _keepUnlocked = null!;
     private QrCodeView _qr = null!;
     private SetupKeyBox _key = null!;
     private Checkbox _keep = null!;
@@ -58,7 +65,9 @@ public sealed class LoginView : TgkView
     // After a click on the background, typing and Enter continue in the form.
     protected override VisualElement? DefaultFocus => FirstEmptyField();
 
-    private TextField[] Fields => [_server, _user, _password, _confirm, _invite, _code, _setupCode];
+    private TextField[] Fields => [_server, _user, _password, _confirm, _invite, _code, _setupCode, _master, _masterConfirm];
+
+    private bool IsLocalStep => _step is Step.LocalCreate or Step.LocalUnlock;
 
     protected override void Build()
     {
@@ -69,6 +78,15 @@ public sealed class LoginView : TgkView
         _title = Add(new Label("", Theme.FontXl, Theme.TextPrimary, Theme.WeightSemibold, TextAlignment.Center));
         _subtitle = Add(new Label("", Theme.FontBase, Theme.TextMuted, align: TextAlignment.Center) { MaxLines = 3 });
         _notice = Add(new Notice());
+        _mode = Add(new SegmentedControl("Server account", "This device only"));
+        _mode.SelectionChanged += OnModeSelected;
+        _localNote = Add(new Label("", Theme.FontSm, Theme.TextSecondary) { MaxLines = 3 });
+        _masterCaption = Add(Form.Caption("Master password"));
+        _master = Add(new TextField { IsPassword = true });
+        _masterMeter = Add(new PasswordMeter());
+        _masterConfirmCaption = Add(Form.Caption("Confirm master password"));
+        _masterConfirm = Add(new TextField("Repeat the master password") { IsPassword = true });
+        _keepUnlocked = Add(new Checkbox("Keep unlocked on this device"));
         _serverCaption = Add(Form.Caption("Server URL"));
         _server = Add(new TextField("https://tgk.example.com"));
         _userCaption = Add(Form.Caption("Username"));
@@ -105,6 +123,7 @@ public sealed class LoginView : TgkView
         _server.Changed += _ => ProbeServer();
         _user.Changed += _ => UpdateUserHint();
         _password.Changed += text => _meter.Password = text;
+        _master.Changed += text => _masterMeter.Password = text;
         // A complete code submits by itself once everything else is filled in.
         _code.Changed += text =>
         {
@@ -118,9 +137,15 @@ public sealed class LoginView : TgkView
         };
 
         Prefill();
-        ShowStep(Step.SignIn);
+        ShowStep(InitialStep());
         switch (Services.Dev.Scene)
         {
+            case "local-create":
+                ShowStep(Step.LocalCreate);
+                break;
+            case "local-unlock":
+                ShowStep(Step.LocalUnlock);
+                break;
             case "register":
                 ShowStep(Step.Register);
                 break;
@@ -130,11 +155,22 @@ public sealed class LoginView : TgkView
                 StartAuthenticator(forRegistration: Services.Dev.Scene == "register-totp");
                 break;
         }
-        if (App.TakeDevAutoLogin())
+        if (!App.TakeDevAutoLogin())
+            return;
+        if (Services.Dev.UsesLocalVault)
+        {
+            // Unlocks (or creates) the local vault of the dev config directory.
+            _master.Text = _masterConfirm.Text = DevOptions.DevMasterPassword;
+            _keepUnlocked.Checked = false;
+            ShowStep(LocalStep());
+            UiThread.Post(Submit);
+        }
+        else
         {
             _server.Text = DevOptions.DevServer;
             _user.Text = DevOptions.DevUser;
             _password.Text = DevOptions.DevPassword;
+            ShowStep(Step.SignIn);
             UiThread.Post(Submit);
         }
     }
@@ -145,17 +181,30 @@ public sealed class LoginView : TgkView
         FirstEmptyField().Focus();
     }
 
-    /// <summary>Back from a sign-out: the sign-in step with the password and codes cleared, and an optional notice (why the session ended).</summary>
+    /// <summary>
+    /// Back from a sign-out or lock: the sign-in (or local unlock) step with the passwords and codes cleared, and an
+    /// optional notice (why the session ended).
+    /// </summary>
     public void Reset(string? notice = null)
     {
-        foreach (TextField field in new[] { _password, _confirm, _invite, _code, _setupCode })
-            field.Text = "";
-        _meter.Password = "";
-        _enrollment = null;
+        ClearSecrets();
         _notice.Text = notice ?? "";
         Prefill();
-        ShowStep(Step.SignIn);
+        ShowStep(InitialStep());
     }
+
+    private void ClearSecrets()
+    {
+        foreach (TextField field in new[] { _password, _confirm, _invite, _code, _setupCode, _master, _masterConfirm })
+            field.Text = "";
+        _meter.Password = _masterMeter.Password = "";
+        _enrollment = null;
+    }
+
+    /// <summary>The step for the remembered mode: server sign-in, or unlocking (creating) the local vault.</summary>
+    private Step InitialStep() => Services.Prefs.Mode == VaultMode.Local ? LocalStep() : Step.SignIn;
+
+    private Step LocalStep() => Services.Vault.Local.Exists ? Step.LocalUnlock : Step.LocalCreate;
 
     private T Add<T>(T element) where T : VisualElement
     {
@@ -171,6 +220,7 @@ public sealed class LoginView : TgkView
         _server.Text = prefs.LastServer ?? "";
         _user.Text = prefs.LastUsername ?? "";
         _keep.Checked = prefs.KeepSignedIn;
+        _keepUnlocked.Checked = prefs.KeepLocalUnlocked;
         ProbeServer();
     }
 
@@ -178,6 +228,10 @@ public sealed class LoginView : TgkView
     {
         if (_step == Step.Authenticator)
             return _setupCode;
+        if (_step == Step.LocalUnlock || (_step == Step.LocalCreate && _master.Text.Length == 0))
+            return _master;
+        if (_step == Step.LocalCreate)
+            return _masterConfirm;
         TextField last = _step == Step.Register ? _confirm : _code;
         return new[] { _server, _user, _password, last }.FirstOrDefault(f => f.Text.Length == 0) ?? last;
     }
@@ -188,23 +242,33 @@ public sealed class LoginView : TgkView
     {
         _step = step;
         bool signIn = step == Step.SignIn, register = step == Step.Register, auth = step == Step.Authenticator;
+        bool create = step == Step.LocalCreate, unlock = step == Step.LocalUnlock, server = !create && !unlock;
         _title.Text = step switch
         {
-            Step.SignIn => "TGK",
+            Step.SignIn or Step.LocalCreate or Step.LocalUnlock => "TGK",
             Step.Register => "Create your account",
             _ => "Set up Google Authenticator",
         };
         _subtitle.Text = step switch
         {
-            Step.SignIn => "SSH sessions, everywhere",
+            Step.SignIn or Step.LocalCreate or Step.LocalUnlock => "SSH sessions, everywhere",
             Step.Register => "Your vault is end-to-end encrypted: the server never sees your hosts or keys.",
             _ when _enrollForRegistration => "Scan the QR code with Google Authenticator (or any TOTP app), then enter the 6-digit code it shows.",
             _ => "Your authenticator was reset. Scan the QR code with Google Authenticator, then enter the code it shows.",
         };
-        SetVisible(!auth, _serverCaption, _server, _userCaption, _user, _passwordCaption, _password, _keep);
+        SetVisible(!auth && server, _serverCaption, _server, _userCaption, _user, _passwordCaption, _password, _keep);
         SetVisible(register, _userHint, _meter, _confirmCaption, _confirm, _inviteCaption, _invite);
         SetVisible(signIn, _codeCaption, _code);
         SetVisible(auth, _qr, _keyCaption, _key, _setupCodeCaption, _setupCode);
+        SetVisible(!server, _localNote, _masterCaption, _master, _keepUnlocked);
+        SetVisible(create, _masterMeter, _masterConfirmCaption, _masterConfirm);
+        _mode.Visible = signIn || !server;
+        _mode.SelectedIndex = server ? 0 : 1;
+        _footer.Visible = server;
+        _localNote.Text = create
+            ? "Your hosts and keys stay on this computer, encrypted with this password. It can't be recovered if forgotten."
+            : "Your hosts and keys are stored on this computer. Enter the master password to unlock them.";
+        _masterCaption.Text = create ? "Choose a master password" : "Master password";
         _notice.Visible = signIn && _notice.Text.Length > 0;
         _user.Placeholder = register ? "Choose a username" : "Your username";
         _password.Placeholder = register ? "Choose a password" : "Your password";
@@ -224,7 +288,21 @@ public sealed class LoginView : TgkView
     {
         if (_busy)
             return;
-        ShowStep(_step == Step.SignIn || (_step == Step.Authenticator && _enrollForRegistration) ? Step.Register : Step.SignIn);
+        if (_step == Step.LocalUnlock)
+            DeleteLocalVault();
+        else
+            ShowStep(_step == Step.SignIn || (_step == Step.Authenticator && _enrollForRegistration) ? Step.Register : Step.SignIn);
+    }
+
+    /// <summary>"Server account | This device only".</summary>
+    private void OnModeSelected(int index)
+    {
+        if (_busy)
+        {
+            _mode.SelectedIndex = IsLocalStep ? 1 : 0;
+            return;
+        }
+        ShowStep(index == 1 ? LocalStep() : Step.SignIn);
     }
 
     private void UpdateSwitchRow()
@@ -235,6 +313,8 @@ public sealed class LoginView : TgkView
             Step.SignIn when closed => ("Have an invite code?", "Create an account"),
             Step.SignIn => ("New to TGK?", "Create an account"),
             Step.Register => ("Already have an account?", "Sign in"),
+            Step.LocalCreate => ("Have a TGK server?", "Sign in to it"),
+            Step.LocalUnlock => ("Forgot the master password?", "Delete this vault"),
             _ => ("", "Back"),
         };
         // An admin's invite (tgk-server user create) works on a server that is closed to everyone else.
@@ -288,6 +368,12 @@ public sealed class LoginView : TgkView
                 break;
             case Step.Register:
                 ContinueRegistration();
+                break;
+            case Step.LocalCreate:
+                CreateLocal();
+                break;
+            case Step.LocalUnlock:
+                UnlockLocal();
                 break;
             default:
                 FinishAuthenticator();
@@ -430,19 +516,95 @@ public sealed class LoginView : TgkView
         }
     }
 
+    private async void CreateLocal()
+    {
+        if (_master.Text.Length < LocalVaultService.MinPasswordLength)
+        {
+            SetError($"Use at least {LocalVaultService.MinPasswordLength} characters for the master password.", _master);
+            return;
+        }
+        if (_masterConfirm.Text != _master.Text)
+        {
+            SetError("The passwords don't match.", _masterConfirm);
+            return;
+        }
+        SetBusy(true);
+        LoginResult result = await Services.Vault.CreateLocalAsync(_master.Text, _keepUnlocked.Checked);
+        SetBusy(false);
+        if (result.Success)
+            Complete();
+        else if (Services.Vault.Local.Exists)
+        {
+            ShowStep(Step.LocalUnlock); // created meanwhile (another TGK window)
+            SetError(result.Error ?? "This device already has a local vault.");
+        }
+        else
+            SetError(result.Error ?? "Could not create the local vault.", result.ErrorCode == VaultError.ValidationFailed ? _master : null);
+    }
+
+    private async void UnlockLocal()
+    {
+        if (_master.Text.Length == 0)
+        {
+            SetError("Enter your master password.", _master);
+            return;
+        }
+        SetBusy(true);
+        LoginResult result = await Services.Vault.UnlockLocalAsync(_master.Text, _keepUnlocked.Checked);
+        SetBusy(false);
+        if (result.Success)
+            Complete();
+        else if (result.ErrorCode == VaultError.NotFound)
+        {
+            ShowStep(Step.LocalCreate);
+            SetError(result.Error ?? "This device has no local vault yet.");
+        }
+        else
+            SetError(result.Error ?? "Could not unlock the local vault.", result.ErrorCode == VaultError.InvalidCredentials ? _master : null);
+    }
+
+    /// <summary>The way out of a forgotten master password: delete the vault (after a warning) and start over.</summary>
+    private async void DeleteLocalVault()
+    {
+        if (!await ConfirmDialog.ShowAsync(this, "Delete the local vault?",
+                "Without its master password nobody can read the hosts and keys in it. Deleting it lets you start over with an empty vault. This can't be undone.",
+                "Delete vault", danger: true))
+            return;
+        SetBusy(true);
+        _primary.Text = "Deleting…";
+        try
+        {
+            await Task.Run(Services.Vault.Local.DeleteVault); // may wait on the keyring
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            SetBusy(false);
+            SetError($"Could not delete the local vault: {ex.Message}");
+            return;
+        }
+        SetBusy(false);
+        ShowStep(Step.LocalCreate);
+        ShowToast("Local vault deleted", ToastKind.Success);
+    }
+
     private void Complete()
     {
+        bool local = IsLocalStep;
         string server = _server.Text.Trim(), user = _user.Text.Trim();
-        bool keep = _keep.Checked;
+        bool keep = _keep.Checked, keepUnlocked = _keepUnlocked.Checked;
         Services.UpdatePrefs(p =>
         {
+            p.Mode = local ? VaultMode.Local : VaultMode.Server;
+            if (local)
+            {
+                p.KeepLocalUnlocked = keepUnlocked;
+                return;
+            }
             p.LastServer = server;
             p.LastUsername = user;
             p.KeepSignedIn = keep;
         });
-        foreach (TextField field in new[] { _password, _confirm, _invite, _code, _setupCode })
-            field.Text = "";
-        _enrollment = null;
+        ClearSecrets();
         App.ShowMain();
     }
 
@@ -463,11 +625,15 @@ public sealed class LoginView : TgkView
             (Step.SignIn, true) => "Signing in…",
             (Step.Register, false) => "Continue",
             (Step.Register, true) => "Checking server…",
+            (Step.LocalCreate, false) => "Create local vault",
+            (Step.LocalCreate, true) => "Creating vault…",
+            (Step.LocalUnlock, false) => "Unlock",
+            (Step.LocalUnlock, true) => "Unlocking…",
             (_, false) => _enrollForRegistration ? "Create account" : "Verify and sign in",
             _ => _enrollForRegistration ? "Creating account…" : "Signing in…",
         };
         _primary.Enabled = !busy;
-        foreach (Control control in new Control[] { _server, _user, _password, _confirm, _invite, _code, _setupCode, _keep, _key })
+        foreach (Control control in new Control[] { _server, _user, _password, _confirm, _invite, _code, _setupCode, _keep, _key, _mode, _master, _masterConfirm, _keepUnlocked })
             control.Enabled = !busy;
         UpdateSwitchRow();
     }
@@ -514,9 +680,20 @@ public sealed class LoginView : TgkView
         float y = brand ? 88 : 28;
         _title.Transform.SetLocalFrame(x, y, Inner, 28);
         y += 30;
-        float subtitleH = _subtitle.MeasureHeight(Inner);
-        _subtitle.Transform.SetLocalFrame(x, y, Inner, subtitleH);
-        y += subtitleH + 22;
+        // The tagline goes first when space is short and the mode switch is shown.
+        _subtitle.Visible = !(compact && _mode.Visible);
+        if (_subtitle.Visible)
+        {
+            float subtitleH = _subtitle.MeasureHeight(Inner);
+            _subtitle.Transform.SetLocalFrame(x, y, Inner, subtitleH);
+            y += subtitleH;
+        }
+        y += 22;
+        if (_mode.Visible)
+        {
+            _mode.Transform.SetLocalFrame(x, y, Inner, 34);
+            y += 34 + 20;
+        }
         if (_notice.Visible)
         {
             float noticeH = _notice.MeasureHeight(Inner);
@@ -531,7 +708,7 @@ public sealed class LoginView : TgkView
                 y = Row(_userCaption, _user, y);
                 y = Row(_passwordCaption, _password, y);
                 y = Row(_codeCaption, _code, y);
-                y = Check(y);
+                y = Check(_keep, y);
                 break;
             case Step.Register:
                 y = Row(_serverCaption, _server, y);
@@ -539,7 +716,19 @@ public sealed class LoginView : TgkView
                 y = Hint(_meter, Row(_passwordCaption, _password, y));
                 y = Row(_confirmCaption, _confirm, y);
                 y = Row(_inviteCaption, _invite, y);
-                y = Check(y);
+                y = Check(_keep, y);
+                break;
+            case Step.LocalCreate or Step.LocalUnlock:
+                float noteH = _localNote.MeasureHeight(Inner);
+                _localNote.Transform.SetLocalFrame(x, y - 4, Inner, noteH);
+                y += noteH + 12;
+                y = Row(_masterCaption, _master, y);
+                if (_step == Step.LocalCreate)
+                {
+                    y = Hint(_masterMeter, y);
+                    y = Row(_masterConfirmCaption, _masterConfirm, y);
+                }
+                y = Check(_keepUnlocked, y);
                 break;
             default:
                 _qr.Transform.SetLocalFrame(MathF.Round((CardW - QrSize) / 2f), y, QrSize, QrSize);
@@ -577,9 +766,9 @@ public sealed class LoginView : TgkView
         return y + 20;
     }
 
-    private float Check(float y)
+    private static float Check(Checkbox box, float y)
     {
-        _keep.Transform.SetLocalFrame(CardPad, y + 2, _keep.PreferredWidth, 20);
+        box.Transform.SetLocalFrame(CardPad, y + 2, box.PreferredWidth, 20);
         return y + 20 + 18;
     }
 
@@ -597,7 +786,7 @@ public sealed class LoginView : TgkView
                 view.Submit();
                 return true;
             }
-            if (k.Is(Key.Escape) && view._step != Step.SignIn)
+            if (k.Is(Key.Escape) && view._step is Step.Register or Step.Authenticator)
             {
                 view.SwitchStep();
                 return true;
@@ -665,42 +854,6 @@ public sealed class LoginView : TgkView
                 Gfx.Text(c, line, TextX, y, Theme.FontSm, Theme.WeightRegular, Theme.TextPrimary);
                 y += LineH;
             }
-        }
-    }
-
-    /// <summary>The authenticator secret in groups of four; a click copies it (ungrouped) to the clipboard.</summary>
-    private sealed class SetupKeyBox : Control
-    {
-        private string _secret = "";
-
-        public SetupKeyBox()
-        {
-            Cursor = StandardCursor.Hand;
-            Events.OnClick += (_, e) =>
-            {
-                e.Handled = true;
-                if (_secret.Length == 0)
-                    return;
-                Browser.SetClipboardText(_secret);
-                Copied?.Invoke();
-            };
-        }
-
-        public event Action? Copied;
-
-        public string Secret { get => _secret; set => SetAndPaint(ref _secret, value ?? ""); }
-
-        protected override void Paint(SKCanvas c)
-        {
-            var r = new SKRect(0, 0, W, H);
-            Gfx.FillRound(c, r, Theme.Radius, Theme.Input);
-            Gfx.StrokeRound(c, r, Theme.Radius, IsHovered ? Theme.BorderStrong : Theme.BorderInput);
-            string grouped = string.Join(' ', _secret.Chunk(4).Select(chunk => new string(chunk)));
-            Gfx.Text(c, grouped, 10, H / 2f, Gfx.Font(Theme.FontSm, Theme.Mono), Enabled ? Theme.TextPrimary : Theme.TextMuted, TextAlignment.Left, W - 46);
-            var button = SKRect.Create(W - 34, 4, 30, H - 8);
-            if (IsHovered)
-                Gfx.FillRound(c, button, Theme.RadiusSm, Theme.SurfaceHover);
-            Icons.Draw(c, "copy", button.MidX, button.MidY, 16, IsHovered ? Theme.TextPrimary : Theme.TextSecondary);
         }
     }
 

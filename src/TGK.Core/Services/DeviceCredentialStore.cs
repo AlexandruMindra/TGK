@@ -10,7 +10,10 @@ using System.Threading.Tasks;
 
 namespace TGK.Core.Services;
 
-/// <summary>What "keep me signed in" stores on the device. <see cref="VaultKey"/> decrypts the vault: never log it.</summary>
+/// <summary>
+/// What "keep me signed in" stores on the device. <see cref="VaultKey"/> decrypts the vault: never log it.
+/// The local vault's "keep unlocked" entry uses only <see cref="VaultKey"/> and <see cref="UserId"/> (the local vault's id).
+/// </summary>
 public sealed record DeviceCredentials(string ServerUrl, string Username, string UserId, string SessionId, string Token, byte[] VaultKey);
 
 /// <summary>Holds at most one <see cref="DeviceCredentials"/>. Calls are synchronous (may start a process): call off the UI thread.</summary>
@@ -28,6 +31,7 @@ public interface IDeviceCredentialStore
 public sealed class DeviceCredentialStore : IDeviceCredentialStore
 {
     public const string FileName = "device.json";
+    public const string LocalVaultFileName = "local-vault-key.json";
 
     private static readonly byte[] DpapiEntropy = "tgk/device/v1"u8.ToArray();
     private static readonly TimeSpan SecretToolTimeout = TimeSpan.FromSeconds(20);
@@ -35,15 +39,20 @@ public sealed class DeviceCredentialStore : IDeviceCredentialStore
 
     private readonly string? _secretTool;
     private readonly string[] _attributes;
+    private readonly string _label;
 
     /// <param name="baseDirectory">Directory for the file; defaults to <see cref="AppPaths.ConfigDirectory"/>.</param>
     /// <param name="secretTool">The <c>secret-tool</c> executable, or null to use only the file (ignored on Windows).</param>
-    public DeviceCredentialStore(string? baseDirectory = null, string? secretTool = "secret-tool")
+    /// <param name="localVault">The local vault's "keep unlocked" entry instead of the server sign-in (they never overwrite each other).</param>
+    public DeviceCredentialStore(string? baseDirectory = null, string? secretTool = "secret-tool", bool localVault = false)
     {
         string directory = Path.GetFullPath(baseDirectory ?? AppPaths.ConfigDirectory);
-        FilePath = Path.Combine(directory, FileName);
+        FilePath = Path.Combine(directory, localVault ? LocalVaultFileName : FileName);
         _secretTool = OperatingSystem.IsWindows() ? null : secretTool;
-        _attributes = ["application", "tgk", "profile", directory];
+        // A different application value, not an extra attribute: secret-tool's lookup and clear match every item that
+        // has the given attributes, so the sign-in's calls would also reach an entry with one more attribute.
+        _attributes = ["application", localVault ? "tgk-local-vault" : "tgk", "profile", directory];
+        _label = localVault ? "TGK local vault" : "TGK sign-in";
     }
 
     public string FilePath { get; }
@@ -81,7 +90,7 @@ public sealed class DeviceCredentialStore : IDeviceCredentialStore
         }
 
         string secret = JsonSerializer.Serialize(credentials, TgkJson.Options);
-        if (RunSecretTool(["store", "--label=TGK sign-in", .. _attributes], secret) is not null)
+        if (RunSecretTool(["store", "--label=" + _label, .. _attributes], secret) is not null)
         {
             DeleteFile();
             return;

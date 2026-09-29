@@ -434,26 +434,50 @@ public sealed class MainView : TgkView
     public void ShowAccountMenu()
     {
         var at = _strip.Avatar.Transform.Computed;
-        string who = $"Signed in as {Services.Vault.CurrentUser}";
-        Menu.Show(
-        [
-            new MenuItem { Text = who, IsHeader = true },
+        bool local = Services.Vault.Mode == VaultMode.Local;
+        var items = new List<MenuItem>
+        {
+            new() { Text = local ? "Local vault · this device only" : $"Signed in as {Services.Vault.CurrentUser}", IsHeader = true },
             MenuItem.Separator,
-            new MenuItem { Text = "Keys & identities", Icon = "key", Action = ShowIdentities },
-            new MenuItem { Text = "Settings", Icon = "settings", Hint = "Ctrl+,", Action = ShowSettings },
-            new MenuItem { Text = "Sync now", Icon = "refresh", Action = SyncNow },
-            MenuItem.Separator,
-            new MenuItem { Text = "Devices & sessions…", Icon = "shield", Action = ShowDevices },
-            new MenuItem { Text = "Change password…", Icon = "lock", Action = ShowChangePassword },
-            MenuItem.Separator,
-            new MenuItem { Text = "Sign out", Icon = "logout", Action = () => SignOut() },
-        ], at.X + at.Width, at.Y + at.Height + 6, 220, at.Height);
+            new() { Text = "Keys & identities", Icon = "key", Action = ShowIdentities },
+            new() { Text = "Settings", Icon = "settings", Hint = "Ctrl+,", Action = ShowSettings },
+        };
+        if (local)
+        {
+            items.Add(new MenuItem { Text = "Change master password…", Icon = "shield", Action = ShowChangePassword });
+            items.Add(MenuItem.Separator);
+            items.Add(new MenuItem { Text = "Upload to a server account…", Icon = "upload", Action = () => new UploadToServerDialog(this).Open() });
+        }
+        else
+        {
+            items.Add(new MenuItem { Text = "Sync now", Icon = "refresh", Action = SyncNow });
+            items.Add(MenuItem.Separator);
+            items.Add(new MenuItem { Text = "Devices & sessions…", Icon = "shield", Action = ShowDevices });
+            items.Add(new MenuItem { Text = "Change password…", Icon = "lock", Action = ShowChangePassword });
+            items.Add(MenuItem.Separator);
+            items.Add(new MenuItem { Text = "Save an offline copy…", Icon = "monitor", Action = () => new OfflineCopyDialog(this).Open() });
+        }
+        items.Add(new MenuItem { Text = "Export backup…", Icon = "download", Action = () => new BackupExportDialog(this).Open() });
+        items.Add(new MenuItem { Text = "Import backup…", Icon = "folder", Action = () => new BackupImportDialog(this).Open() });
+        items.Add(MenuItem.Separator);
+        items.Add(local
+            ? new MenuItem { Text = "Lock", Icon = "lock", Action = () => SignOut() }
+            : new MenuItem { Text = "Sign out", Icon = "logout", Action = () => SignOut() });
+        Menu.Show(items, at.X + at.Width, at.Y + at.Height + 6, 260, at.Height);
     }
 
     /// <summary>Drops down from the sync chip (window rect <paramref name="x"/>, <paramref name="y"/>, <paramref name="h"/>): the sync state in words and "Sync now".</summary>
     public void ShowSyncMenu(float x, float y, float h)
     {
         IVaultService vault = Services.Vault;
+        if (vault.Mode == VaultMode.Local)
+        {
+            string where = vault.Status == SyncState.Error
+                ? "Save error. " + vault.LastError
+                : "Your vault is stored only on this computer, encrypted with your master password. Nothing is synced.";
+            Menu.Show(Gfx.Wrap(where, Gfx.Font(Theme.FontSm), 340, 5).Select(line => new MenuItem { Text = line, IsHeader = true }).ToList(), x, y + h + 6, 220, h);
+            return;
+        }
         string last = $"Last synced {HostFormat.Ago(vault.LastSync, DateTimeOffset.UtcNow)}";
         string status = vault.Status switch
         {
@@ -479,15 +503,24 @@ public sealed class MainView : TgkView
 
     public void ShowChangePassword() => new ChangePasswordDialog(this).Open();
 
+    /// <summary>After the vault switched between the local vault and a server account (upload to a server).</summary>
+    public void OnVaultModeChanged()
+    {
+        _strip.Avatar.InvalidatePaint();
+        RefreshFromVault();
+    }
+
     /// <summary>
-    /// Signs this device out and returns to the login screen. Asks first when sessions are open (unless
-    /// <paramref name="confirmed"/>) and, always, when changes could not be uploaded: signing out discards them.
+    /// Signs this device out (locks the local vault) and returns to the login screen. Asks first when sessions are
+    /// open (unless <paramref name="confirmed"/>) and, always, when changes could not be saved: signing out discards them.
     /// </summary>
     public async void SignOut(bool confirmed = false)
     {
+        bool local = Services.Vault.Mode == VaultMode.Local;
+        string action = local ? "Lock" : "Sign out";
         int sessions = _tabs.Count(t => t is not HomeTabContent);
-        if (!confirmed && sessions > 0 && !await ConfirmDialog.ShowAsync(this, "Sign out?",
-                $"{sessions} open session{(sessions == 1 ? "" : "s")} will be closed.", "Sign out"))
+        if (!confirmed && sessions > 0 && !await ConfirmDialog.ShowAsync(this, local ? "Lock the vault?" : "Sign out?",
+                $"{sessions} open session{(sessions == 1 ? "" : "s")} will be closed.", action))
             return;
         if (Services.Vault.PendingChanges > 0)
         {
@@ -502,9 +535,12 @@ public sealed class MainView : TgkView
             if (!Services.Vault.IsLoggedIn)
                 return; // the server ended the session meanwhile; the login screen is already on its way
             int unsent = Services.Vault.PendingChanges;
-            if (unsent > 0 && !await ConfirmDialog.ShowAsync(this, "Discard unsynced changes?",
-                    $"{unsent} change{(unsent == 1 ? " has" : "s have")} not reached the server yet ({Services.Vault.LastError ?? "it is not reachable"}). Signing out now discards {(unsent == 1 ? "it" : "them")}.",
-                    "Sign out anyway", danger: true))
+            string them = unsent == 1 ? "it" : "them";
+            if (unsent > 0 && !await ConfirmDialog.ShowAsync(this, local ? "Discard unsaved changes?" : "Discard unsynced changes?",
+                    local
+                        ? $"{unsent} change{(unsent == 1 ? "" : "s")} could not be saved to the local vault ({Services.Vault.LastError ?? "the file can't be written"}). Locking now discards {them}."
+                        : $"{unsent} change{(unsent == 1 ? " has" : "s have")} not reached the server yet ({Services.Vault.LastError ?? "it is not reachable"}). Signing out now discards {them}.",
+                    $"{action} anyway", danger: true))
                 return;
         }
         Teardown();
@@ -626,6 +662,21 @@ public sealed class MainView : TgkView
                 break;
             case "change-password":
                 ShowChangePassword();
+                break;
+            case "local-main":
+                ShowAccountMenu();
+                break;
+            case "upload-to-server":
+                new UploadToServerDialog(this).Open();
+                break;
+            case "offline-copy":
+                new OfflineCopyDialog(this).Open();
+                break;
+            case "backup-export":
+                new BackupExportDialog(this).Open();
+                break;
+            case "backup-import":
+                new BackupImportDialog(this).Open();
                 break;
         }
     }

@@ -38,7 +38,7 @@ public sealed class IdentitiesDialog : DialogBase
     public IdentitiesDialog(TgkView view) : base(view, "Keys & identities", 780)
     {
         _vault = view.Services.Vault;
-        Subtitle = "Credentials that hosts can use. They sync to all your devices.";
+        Subtitle = view.Services.IsLocal ? "Credentials that hosts can use, kept in your local vault." : "Credentials that hosts can use. They sync to all your devices.";
         _list = AddBody(new IdentityList());
         _list.Picked += Select;
         _new = AddBody(new Button("New identity", ButtonVariant.Secondary, "plus"));
@@ -319,9 +319,9 @@ public sealed class IdentitiesDialog : DialogBase
     {
         Identity target = _draft;
         int users = _vault.Current.Hosts.Count(h => h.IdentityId == target.Id);
-        string message = users == 0
-            ? $"“{target.Name}” will be removed from all your devices."
-            : $"“{target.Name}” will be removed from all your devices. {users} host{(users == 1 ? "" : "s")} using it will ask for a password instead.";
+        string message = $"“{target.Name}” will be removed{(View.Services.IsLocal ? "" : " from all your devices")}.";
+        if (users > 0)
+            message += $" {users} host{(users == 1 ? "" : "s")} using it will ask for a password instead.";
         if (!await ConfirmDialog.ShowAsync(View, "Delete identity?", message, "Delete", danger: true) || IsClosed)
             return;
         if (!View.RunVault(() => _vault.DeleteIdentityAsync(target.Id)))

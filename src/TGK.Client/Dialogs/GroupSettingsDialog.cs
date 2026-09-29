@@ -34,7 +34,8 @@ public sealed class GroupSettingsDialog : TabbedDialog
             Name = "",
             SortOrder = _vault.Current.Groups.Select(g => g.SortOrder).DefaultIfEmpty(-1).Max() + 1,
         };
-        Subtitle = _isNew ? "Groups and their settings sync to all your devices." : _group.Name;
+        Subtitle = !_isNew ? _group.Name
+            : view.Services.IsLocal ? "Groups and their settings are kept in your local vault." : "Groups and their settings sync to all your devices.";
 
         FormPage general = PageAt(GeneralTab);
         _nameCaption = general.Add(Form.Caption("Name"));
@@ -126,6 +127,6 @@ public sealed class GroupSettingsDialog : TabbedDialog
     {
         int count = view.Services.Vault.Current.Hosts.Count(h => h.GroupId == group.Id);
         string hosts = count == 0 ? "" : $" Its {count} host{(count == 1 ? " becomes" : "s become")} ungrouped and no longer inherit{(count == 1 ? "s" : "")} the group's settings.";
-        return ConfirmDialog.ShowAsync(view, "Delete group?", $"“{group.Name}” will be removed on all devices.{hosts}", "Delete", danger: true);
+        return ConfirmDialog.ShowAsync(view, "Delete group?", $"“{group.Name}” will be removed{(view.Services.IsLocal ? "" : " on all devices")}.{hosts}", "Delete", danger: true);
     }
 }

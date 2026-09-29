@@ -19,6 +19,7 @@ public sealed class SettingsDialog : TabbedDialog
     public const int TerminalTab = 0, ConnectionTab = 1, SessionTab = 2, AppearanceTab = 3;
     private const string LocalSubtitle = "Terminal preferences for this device only (not synced).";
     private const string SyncedSubtitle = "Connection defaults for all hosts, synced to all your devices. Groups and hosts can override them.";
+    private const string LocalVaultSubtitle = "Connection defaults for all hosts, kept in your local vault. Groups and hosts can override them.";
     private static readonly float[] FontSizes = [10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24];
     private static readonly int[] ScrollbackSizes = [1_000, 5_000, 10_000, 50_000, 100_000];
     private static readonly string[] CursorShapes = [TerminalSettings.CursorBlock, TerminalSettings.CursorBar, TerminalSettings.CursorUnderline];
@@ -90,7 +91,7 @@ public sealed class SettingsDialog : TabbedDialog
 
     protected override void OnTabShown(int index)
     {
-        Subtitle = index == TerminalTab ? LocalSubtitle : SyncedSubtitle;
+        Subtitle = index == TerminalTab ? LocalSubtitle : View.Services.IsLocal ? LocalVaultSubtitle : SyncedSubtitle;
         _defaults.RefreshInherited();
     }
 

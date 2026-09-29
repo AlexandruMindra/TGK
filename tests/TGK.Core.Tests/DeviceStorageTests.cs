@@ -34,6 +34,22 @@ public sealed class DeviceStorageTests : IDisposable
     }
 
     [Fact]
+    public void CredentialStore_LocalVaultEntry_IsSeparateFromTheSignIn()
+    {
+        var signIn = new DeviceCredentialStore(_dir.Path, secretTool: null);
+        var local = new DeviceCredentialStore(_dir.Path, secretTool: null, localVault: true);
+        signIn.Save(new DeviceCredentials("https://tgk.test", "alice", "u1", "s1", "token", [1]));
+        local.Save(new DeviceCredentials("local", "", "vault-id", "", "", [2]));
+
+        Assert.NotEqual(signIn.FilePath, local.FilePath);
+        Assert.Equal("alice", signIn.Load()?.Username);
+        signIn.Clear();
+        Assert.Equal([2], local.Load()?.VaultKey);
+        local.Clear();
+        Assert.Null(local.Load());
+    }
+
+    [Fact]
     public void CredentialStore_IgnoresCorruptFile()
     {
         var store = new DeviceCredentialStore(_dir.Path, secretTool: null);

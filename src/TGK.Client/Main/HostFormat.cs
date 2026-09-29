@@ -39,16 +39,21 @@ public static class HostFormat
         return t.LocalDateTime.ToString("yyyy-MM-dd");
     }
 
-    /// <summary>Short sync status, e.g. "Synced · 2m", "Syncing…", "Sync error".</summary>
-    public static string Sync(IVaultService vault, DateTimeOffset now) => vault.Status switch
+    /// <summary>Short sync status, e.g. "Synced · 2m", "Syncing…", "Sync error"; "Local" (or "Save error") for the local vault.</summary>
+    public static string Sync(IVaultService vault, DateTimeOffset now)
     {
-        SyncState.Syncing => "Syncing…",
-        SyncState.Error => "Sync error",
-        SyncState.Offline => "Offline",
-        _ => vault.LastSync is { } last && now - last >= TimeSpan.FromMinutes(1)
-            ? $"Synced · {Short(now - last)}"
-            : "Synced",
-    };
+        if (vault.Mode == VaultMode.Local)
+            return vault.Status == SyncState.Error ? "Save error" : "Local";
+        return vault.Status switch
+        {
+            SyncState.Syncing => "Syncing…",
+            SyncState.Error => "Sync error",
+            SyncState.Offline => "Offline",
+            _ => vault.LastSync is { } last && now - last >= TimeSpan.FromMinutes(1)
+                ? $"Synced · {Short(now - last)}"
+                : "Synced",
+        };
+    }
 
     private static string Short(TimeSpan d) =>
         d < TimeSpan.FromHours(1) ? $"{(int)d.TotalMinutes}m"

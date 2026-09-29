@@ -12,16 +12,26 @@ namespace TGK.Client;
 /// </summary>
 public sealed class ClientServices
 {
-    public ClientServices(IVaultService vault, PrefsStore prefsStore, DevOptions dev)
+    public ClientServices(RoutingVaultService vault, PrefsStore prefsStore, DevOptions dev)
     {
         Vault = vault;
+        Migration = new VaultMigration(vault);
         PrefsStore = prefsStore;
         Dev = dev;
         Prefs = prefsStore.Load();
     }
 
-    /// <summary>The user's vault. Its <c>Changed</c> event fires on any thread: marshal with <c>Browser.Post</c>.</summary>
-    public IVaultService Vault { get; }
+    /// <summary>
+    /// The user's vault: a server account or the local vault (<see cref="RoutingVaultService.Mode"/>). Its <c>Changed</c>
+    /// event fires on any thread: marshal with <c>Browser.Post</c>.
+    /// </summary>
+    public RoutingVaultService Vault { get; }
+
+    /// <summary>Moves data between the local vault and server accounts, and to and from backup files.</summary>
+    public VaultMigration Migration { get; }
+
+    /// <summary>The vault is the local one (this device only, nothing syncs).</summary>
+    public bool IsLocal => Vault.Mode == VaultMode.Local;
 
     public PrefsStore PrefsStore { get; }
 

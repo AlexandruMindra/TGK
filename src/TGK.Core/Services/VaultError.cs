@@ -36,6 +36,9 @@ public enum VaultError
 
     /// <summary>Any other server-side failure (e.g. HTTP 500).</summary>
     Server,
+
+    /// <summary>A local file (the local vault, a backup) could not be read or written, or is damaged.</summary>
+    Storage,
 }
 
 /// <summary>A failed vault or account operation; <see cref="Exception.Message"/> is suitable for the user.</summary>

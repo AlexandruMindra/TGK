@@ -46,7 +46,8 @@ public sealed class HostEditorDialog : TabbedDialog
         }
         VaultData vault = _vault.Current;
         _identities = vault.Identities.OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToList();
-        Subtitle = _isNew ? "Saved hosts sync to all your devices." : _entry.DisplayName;
+        Subtitle = !_isNew ? _entry.DisplayName
+            : view.Services.IsLocal ? "Saved hosts are kept in your local vault." : "Saved hosts sync to all your devices.";
 
         FormPage general = PageAt(GeneralTab);
         _nameCaption = general.Add(Form.Caption("Name"));
@@ -225,7 +226,7 @@ public sealed class HostEditorDialog : TabbedDialog
             : $" It is the jump host of {string.Join(", ", users.Take(4))}{(users.Count > 4 ? $" and {users.Count - 4} more" : "")}: "
                 + "those connections will fail until another jump host is chosen.";
         return ConfirmDialog.ShowAsync(view, "Delete host?",
-            $"“{host.DisplayName}” will be removed from your vault on all devices. Open sessions stay connected.{jump}",
+            $"“{host.DisplayName}” will be removed from your vault{(view.Services.IsLocal ? "" : " on all devices")}. Open sessions stay connected.{jump}",
             "Delete", danger: true);
     }
 

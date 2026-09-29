@@ -8,12 +8,18 @@ using System.Threading.Tasks;
 
 namespace TGK.Client.Platform;
 
+/// <summary>A file type offered by the picker, e.g. ("TGK backup", ["*.tgkbackup"]); "All files" is always added after it.</summary>
+public sealed record FileFilter(string Name, params string[] Patterns);
+
 /// <summary>
-/// Native "open file" dialog: GetOpenFileNameW on Windows, zenity or kdialog on Linux. Runs off the UI thread so
-/// the app keeps rendering while the dialog is open.
+/// Native "open file" and "save file" dialogs: GetOpenFileNameW / GetSaveFileNameW on Windows, zenity or kdialog on
+/// Linux. Run off the UI thread so the app keeps rendering while the dialog is open.
 /// </summary>
 public static class FilePicker
 {
+    /// <summary>The Windows open dialog's filter when none is given (private keys).</summary>
+    private const string DefaultWindowsFilter = "All files\0*.*\0Private keys (*.pem, *.key, id_*)\0*.pem;*.key;id_*\0\0";
+
     /// <summary>True when a native picker is available on this system.</summary>
     public static bool IsAvailable => OperatingSystem.IsWindows() || FindLinuxTool() is not null;
 
@@ -21,13 +27,31 @@ public static class FilePicker
     /// Shows the picker starting in <paramref name="initialDirectory"/>. Completes with the chosen path, or null when
     /// cancelled. Throws <see cref="PlatformNotSupportedException"/> when no picker exists (see <see cref="IsAvailable"/>).
     /// </summary>
-    public static Task<string?> PickFileAsync(string title, string? initialDirectory = null)
+    public static Task<string?> PickFileAsync(string title, string? initialDirectory = null, FileFilter? filter = null)
     {
         if (OperatingSystem.IsWindows())
-            return RunOnStaThread(() => PickWindows(title, initialDirectory));
+            return RunOnStaThread(() => ShowWindows(title, initialDirectory, null, filter, save: false));
         string tool = FindLinuxTool() ?? throw new PlatformNotSupportedException("No file picker (zenity or kdialog) is installed.");
-        return Task.Run(() => PickLinux(tool, title, initialDirectory));
+        return Task.Run(() => ShowLinux(tool, title, StartDirectory(initialDirectory), filter, save: false));
     }
+
+    /// <summary>
+    /// Shows the "save as" dialog in <paramref name="initialDirectory"/> with <paramref name="defaultName"/> filled in;
+    /// it asks before overwriting an existing file. Completes with the chosen path, or null when cancelled. Throws
+    /// <see cref="PlatformNotSupportedException"/> when no picker exists (see <see cref="IsAvailable"/>).
+    /// </summary>
+    public static Task<string?> SaveFileAsync(string title, string defaultName, string? initialDirectory = null, FileFilter? filter = null)
+    {
+        if (OperatingSystem.IsWindows())
+            return RunOnStaThread(() => ShowWindows(title, initialDirectory, defaultName, filter, save: true));
+        string tool = FindLinuxTool() ?? throw new PlatformNotSupportedException("No file picker (zenity or kdialog) is installed.");
+        return Task.Run(() => ShowLinux(tool, title, StartDirectory(initialDirectory) + defaultName, filter, save: true));
+    }
+
+    private static string StartDirectory(string? directory) =>
+        directory is not null && Directory.Exists(directory)
+            ? directory.TrimEnd('/') + "/"
+            : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + "/";
 
     private static string? FindLinuxTool()
     {
@@ -45,11 +69,8 @@ public static class FilePicker
         return null;
     }
 
-    private static string? PickLinux(string tool, string title, string? initialDirectory)
+    private static string? ShowLinux(string tool, string title, string start, FileFilter? filter, bool save)
     {
-        string start = initialDirectory is not null && Directory.Exists(initialDirectory)
-            ? initialDirectory.TrimEnd('/') + "/"
-            : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + "/";
         var psi = new ProcessStartInfo(tool)
         {
             RedirectStandardOutput = true,
@@ -59,15 +80,27 @@ public static class FilePicker
         if (tool == "zenity")
         {
             psi.ArgumentList.Add("--file-selection");
+            if (save)
+            {
+                psi.ArgumentList.Add("--save");
+                psi.ArgumentList.Add("--confirm-overwrite");
+            }
             psi.ArgumentList.Add("--title=" + title);
             psi.ArgumentList.Add("--filename=" + start);
+            if (filter is not null)
+            {
+                psi.ArgumentList.Add($"--file-filter={filter.Name} | {string.Join(' ', filter.Patterns)}");
+                psi.ArgumentList.Add("--file-filter=All files | *");
+            }
         }
         else
         {
             psi.ArgumentList.Add("--title");
             psi.ArgumentList.Add(title);
-            psi.ArgumentList.Add("--getopenfilename");
+            psi.ArgumentList.Add(save ? "--getsavefilename" : "--getopenfilename");
             psi.ArgumentList.Add(start);
+            if (filter is not null)
+                psi.ArgumentList.Add($"{string.Join(' ', filter.Patterns)}|{filter.Name}\n*|All files");
         }
         using Process process = Process.Start(psi) ?? throw new PlatformNotSupportedException($"Could not start {tool}.");
         string output = process.StandardOutput.ReadToEnd();
@@ -97,24 +130,32 @@ public static class FilePicker
         return tcs.Task;
     }
 
-    private static string? PickWindows(string title, string? initialDirectory)
+    private static string? ShowWindows(string title, string? initialDirectory, string? defaultName, FileFilter? filter, bool save)
     {
         const int MaxPath = 32768;
         IntPtr buffer = Marshal.AllocHGlobal(MaxPath * sizeof(char));
         try
         {
             Marshal.WriteInt16(buffer, 0);
+            if (defaultName is not null)
+            {
+                char[] name = (defaultName + "\0").ToCharArray();
+                Marshal.Copy(name, 0, buffer, Math.Min(name.Length, MaxPath));
+            }
+            string? extension = filter?.Patterns.Length > 0 && filter.Patterns[0].StartsWith("*.", StringComparison.Ordinal) ? filter.Patterns[0][2..] : null;
             var ofn = new OpenFileName
             {
                 lStructSize = Marshal.SizeOf<OpenFileName>(),
-                lpstrFilter = "All files\0*.*\0Private keys (*.pem, *.key, id_*)\0*.pem;*.key;id_*\0\0",
+                lpstrFilter = filter is null ? DefaultWindowsFilter
+                    : $"{filter.Name} ({string.Join(", ", filter.Patterns)})\0{string.Join(';', filter.Patterns)}\0All files\0*.*\0\0",
                 lpstrFile = buffer,
                 nMaxFile = MaxPath,
                 lpstrTitle = title,
                 lpstrInitialDir = initialDirectory,
-                Flags = OfnFileMustExist | OfnPathMustExist | OfnNoChangeDir | OfnExplorer,
+                lpstrDefExt = save ? extension : null,
+                Flags = OfnPathMustExist | OfnNoChangeDir | OfnExplorer | (save ? OfnOverwritePrompt : OfnFileMustExist),
             };
-            if (GetOpenFileNameW(ref ofn))
+            if (save ? GetSaveFileNameW(ref ofn) : GetOpenFileNameW(ref ofn))
                 return Marshal.PtrToStringUni(buffer);
             int error = CommDlgExtendedError();
             if (error != 0)
@@ -127,7 +168,7 @@ public static class FilePicker
         }
     }
 
-    private const int OfnPathMustExist = 0x800, OfnFileMustExist = 0x1000, OfnNoChangeDir = 0x8, OfnExplorer = 0x80000;
+    private const int OfnOverwritePrompt = 0x2, OfnPathMustExist = 0x800, OfnFileMustExist = 0x1000, OfnNoChangeDir = 0x8, OfnExplorer = 0x80000;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct OpenFileName
@@ -160,6 +201,10 @@ public static class FilePicker
     [DllImport("comdlg32.dll", CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetOpenFileNameW(ref OpenFileName ofn);
+
+    [DllImport("comdlg32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetSaveFileNameW(ref OpenFileName ofn);
 
     [DllImport("comdlg32.dll")]
     private static extern int CommDlgExtendedError();

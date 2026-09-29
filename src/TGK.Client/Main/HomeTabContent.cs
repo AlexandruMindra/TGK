@@ -55,7 +55,7 @@ public sealed class HomeTabContent : TabContent
         _recent = Add(new HostCardGrid(main, showLastUsed: true));
         _allCaption = Add(new Label("ALL HOSTS", Theme.FontXs, Theme.TextSecondary, Theme.WeightSemibold));
         _all = Add(new HostCardGrid(main, showLastUsed: false));
-        _emptyText = Add(new Label("You have no saved hosts yet. Add one to see it here and on all your devices.", Theme.FontBase, Theme.TextMuted) { MaxLines = 2 });
+        _emptyText = Add(new Label(EmptyText(main.Services.IsLocal), Theme.FontBase, Theme.TextMuted) { MaxLines = 2 });
         _newHost = Add(new Button("New host", ButtonVariant.Secondary, "plus"));
         _newHost.Clicked += () => Host.EditHost(null);
         _recent.HostClicked += host => Host.ConnectInTab(this, host);
@@ -75,8 +75,12 @@ public sealed class HomeTabContent : TabContent
     {
         VaultData vault = Host.Services.Vault.Current;
         _all.Hosts = vault.Hosts.OrderBy(h => h.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
+        _emptyText.Text = EmptyText(Host.Services.IsLocal); // the mode can change (upload to a server account)
         InvalidateLayout();
     }
+
+    private static string EmptyText(bool local) =>
+        $"You have no saved hosts yet. Add one to see it here{(local ? "" : " and on all your devices")}.";
 
     public void FocusQuickConnect()
     {

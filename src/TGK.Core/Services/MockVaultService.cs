@@ -21,7 +21,7 @@ namespace TGK.Core.Services;
 /// This mock writes identities (including any passwords and private keys entered) to its dev file in plain
 /// JSON (0600 on Unix); the real <see cref="RemoteVaultService"/> encrypts everything end to end.
 /// </remarks>
-public sealed class MockVaultService : IVaultService
+public sealed class MockVaultService : IVaultService, IVaultEditor
 {
     public static readonly TimeSpan DefaultLatency = TimeSpan.FromMilliseconds(300);
 
@@ -55,6 +55,7 @@ public sealed class MockVaultService : IVaultService
     // Sessions are never ended by the mock "server".
     public event Action<string>? SessionEnded { add { } remove { } }
 
+    public VaultMode Mode => VaultMode.Mock;
     public bool IsLoggedIn { get { lock (_gate) return _user is not null; } }
     public string? CurrentUser { get { lock (_gate) return _user; } }
     public string? ServerUrl { get { lock (_gate) return _serverUrl; } }
@@ -285,6 +286,8 @@ public sealed class MockVaultService : IVaultService
     public Task AddKnownHostAsync(KnownHost knownHost) => MutateAsync(VaultEdits.AddKnownHost(knownHost));
 
     public Task TouchHostAsync(Guid hostId) => MutateAsync(VaultEdits.TouchHost(hostId, DateTimeOffset.UtcNow));
+
+    Task IVaultEditor.EditAsync(Action<VaultData> edit) => MutateAsync(edit);
 
     /// <summary>Applies <paramref name="edit"/> to a copy of the vault, publishes it, then pushes it to the dev file.</summary>
     private async Task MutateAsync(Action<VaultData> edit)

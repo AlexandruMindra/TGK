@@ -5,10 +5,14 @@ using TGK.Core.Services;
 
 namespace TGK.Client.Dialogs;
 
-/// <summary>Changes the account password (confirmed with the current password and an authenticator code).</summary>
+/// <summary>
+/// Changes the account password (confirmed with the current password and an authenticator code), or the local vault's
+/// master password.
+/// </summary>
 public sealed class ChangePasswordDialog : DialogBase
 {
-    private readonly IVaultService _vault;
+    private readonly RoutingVaultService _vault;
+    private readonly bool _local;
     private readonly Label _currentCaption, _codeCaption, _newCaption, _confirmCaption, _error;
     private readonly TextField _current, _code, _new, _confirm;
     private readonly PasswordMeter _meter;
@@ -16,11 +20,12 @@ public sealed class ChangePasswordDialog : DialogBase
     private readonly Button _save;
     private bool _busy;
 
-    public ChangePasswordDialog(TgkView view) : base(view, "Change password", 480)
+    public ChangePasswordDialog(TgkView view) : base(view, view.Services.Vault.Mode == VaultMode.Local ? "Change master password" : "Change password", 480)
     {
         _vault = view.Services.Vault;
+        _local = _vault.Mode == VaultMode.Local;
         Subtitle = "Only your vault key is re-encrypted; your hosts and keys stay as they are.";
-        _currentCaption = AddBody(Form.Caption("Current password"));
+        _currentCaption = AddBody(Form.Caption(_local ? "Current master password" : "Current password"));
         _current = AddBody(new TextField { IsPassword = true });
         _codeCaption = AddBody(Form.Caption("Authenticator code"));
         _code = AddBody(new TextField("6-digit code") { DigitsOnly = true, MaxLength = 6, Mono = true });
@@ -30,6 +35,7 @@ public sealed class ChangePasswordDialog : DialogBase
         _confirmCaption = AddBody(Form.Caption("Confirm new password"));
         _confirm = AddBody(new TextField { IsPassword = true });
         _signOutOthers = AddBody(new Checkbox("Sign out my other devices", isChecked: true));
+        SetVisible(!_local, _codeCaption, _code, _signOutOthers);
         _error = AddBody(new Label("", Theme.FontSm, Theme.Danger) { MaxLines = 3, Visible = false });
         foreach (TextField field in new[] { _current, _code, _new, _confirm })
             field.Changed += _ => SetError(null);
@@ -39,20 +45,34 @@ public sealed class ChangePasswordDialog : DialogBase
         _save = AddButton("Change password", ButtonVariant.Primary, Accept);
     }
 
+    private static void SetVisible(bool visible, params Control[] controls)
+    {
+        foreach (Control control in controls)
+            control.Visible = visible;
+    }
+
     protected override VisualElement? InitialFocus => _current;
 
     protected override float LayoutBody(float left, float top, float width)
     {
         float col = (width - 16) / 2f;
         float y = top;
-        Form.Place(_currentCaption, _current, left, y, col + 40);
-        y = Form.Place(_codeCaption, _code, left + col + 56, y, col - 40) + Form.RowGap;
+        if (_local)
+            y = Form.Place(_currentCaption, _current, left, y, width) + Form.RowGap;
+        else
+        {
+            Form.Place(_currentCaption, _current, left, y, col + 40);
+            y = Form.Place(_codeCaption, _code, left + col + 56, y, col - 40) + Form.RowGap;
+        }
         y = Form.Place(_newCaption, _new, left, y, width);
         _meter.Transform.SetLocalFrame(left, y + 4, width, 16);
         y += 20 + Form.RowGap;
-        y = Form.Place(_confirmCaption, _confirm, left, y, width) + Form.RowGap;
-        _signOutOthers.Transform.SetLocalFrame(left, y, _signOutOthers.PreferredWidth, 22);
-        y += 22;
+        y = Form.Place(_confirmCaption, _confirm, left, y, width);
+        if (!_local)
+        {
+            _signOutOthers.Transform.SetLocalFrame(left, y + Form.RowGap, _signOutOthers.PreferredWidth, 22);
+            y += Form.RowGap + 22;
+        }
         if (_error.Visible)
         {
             float h = _error.MeasureHeight(width);
@@ -77,7 +97,7 @@ public sealed class ChangePasswordDialog : DialogBase
             SetError("Enter your current password.", _current);
             return;
         }
-        if (_code.Text.Length != 6)
+        if (!_local && _code.Text.Length != 6)
         {
             SetError("Enter the 6-digit code from your authenticator app.", _code);
             return;
@@ -96,10 +116,13 @@ public sealed class ChangePasswordDialog : DialogBase
         SetBusy(true);
         try
         {
-            await _vault.ChangePasswordAsync(_current.Text, _code.Text, _new.Text, _signOutOthers.Checked);
+            if (_local)
+                await _vault.Local.ChangeMasterPasswordAsync(_current.Text, _new.Text);
+            else
+                await _vault.ChangePasswordAsync(_current.Text, _code.Text, _new.Text, _signOutOthers.Checked);
             SetBusy(false);
             Close();
-            View.ShowToast("Password changed", ToastKind.Success);
+            View.ShowToast(_local ? "Master password changed" : "Password changed", ToastKind.Success);
         }
         catch (VaultException ex)
         {

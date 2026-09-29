@@ -21,6 +21,14 @@ public enum SyncState
     Offline,
 }
 
+/// <summary>Where the vault lives: a TGK server account, the local vault on this device, or the dev mock.</summary>
+public enum VaultMode
+{
+    Server,
+    Local,
+    Mock,
+}
+
 /// <summary>Outcome of a login or registration. <see cref="Error"/> is a message for the user.</summary>
 public sealed record LoginResult(bool Success, string? Error, VaultError ErrorCode = VaultError.None)
 {
@@ -38,7 +46,8 @@ public sealed record TotpEnrollment(string Secret, string OtpAuthUri);
 public sealed record DeviceSession(string Id, string DeviceName, string Platform, DateTimeOffset CreatedAt, DateTimeOffset LastSeenAt, string? LastIp, bool Current);
 
 /// <summary>
-/// Client-side access to the user's vault (hosts, groups, identities, known host keys) held by the TGK server.
+/// Client-side access to the user's vault (hosts, groups, identities, known host keys) held by the TGK server, or in
+/// local mode by this device (<see cref="LocalVaultService"/>).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -57,6 +66,13 @@ public sealed record DeviceSession(string Id, string DeviceName, string Platform
 /// </remarks>
 public interface IVaultService
 {
+    /// <summary>
+    /// Which kind of vault this is. Server-only members (sessions, account password, <see cref="GetServerInfoAsync"/>)
+    /// are harmless no-ops or throw <see cref="NotSupportedException"/> for <see cref="VaultMode.Local"/>.
+    /// </summary>
+    VaultMode Mode { get; }
+
+    /// <summary>Signed in (server), or unlocked (local vault).</summary>
     bool IsLoggedIn { get; }
     string? CurrentUser { get; }
     string? ServerUrl { get; }
@@ -173,4 +189,14 @@ public interface IVaultService
 
     /// <summary>Records that a host was just connected to (sets <see cref="HostEntry.LastConnected"/>, which is kept per device and not synced).</summary>
     Task TouchHostAsync(Guid hostId);
+}
+
+/// <summary>Applies an arbitrary edit (e.g. an import) to the vault like the <c>Save*</c> methods do.</summary>
+internal interface IVaultEditor
+{
+    /// <summary>
+    /// Runs <paramref name="edit"/> on a shallow copy of the current snapshot (it must replace entities, never modify
+    /// them), publishes it and stores/pushes the changed items. Completes like a <c>Save*</c> call.
+    /// </summary>
+    Task EditAsync(Action<VaultData> edit);
 }

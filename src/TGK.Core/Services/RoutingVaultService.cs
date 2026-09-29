@@ -7,21 +7,24 @@ using TGK.Core.Models;
 namespace TGK.Core.Services;
 
 /// <summary>
-/// The client's vault: <c>mock://</c> server addresses go to the dev <see cref="MockVaultService"/>, everything
-/// else to the real <see cref="RemoteVaultService"/>. A login or registration picks the service; all other
-/// members use the one picked last. Events are forwarded from the active service only.
+/// The client's vault: the server account (<see cref="RemoteVaultService"/>), the local vault (<see cref="Local"/>)
+/// or, for <c>mock://</c> addresses, the dev <see cref="MockVaultService"/>. A login or registration picks the server
+/// or mock service, <see cref="CreateLocalAsync"/> and <see cref="UnlockLocalAsync"/> the local vault (and
+/// <see cref="VaultMigration"/> moves between them); switching logs out (or locks) the previous one. All other
+/// members use the one picked last, and events are forwarded from it only.
 /// </summary>
-public sealed class RoutingVaultService : IVaultService
+public sealed class RoutingVaultService : IVaultService, IVaultEditor
 {
-    private readonly IVaultService _remote;
     private readonly IVaultService _mock;
     private volatile IVaultService _active;
 
-    public RoutingVaultService(IVaultService remote, IVaultService mock)
+    public RoutingVaultService(RemoteVaultService remote, IVaultService mock, LocalVaultService local)
     {
-        _remote = _active = remote;
+        Remote = remote;
+        Local = local;
+        _active = remote;
         _mock = mock;
-        foreach (IVaultService service in new[] { remote, mock })
+        foreach (IVaultService service in new[] { remote, mock, local })
         {
             service.Changed += () =>
             {
@@ -39,6 +42,12 @@ public sealed class RoutingVaultService : IVaultService
     public event Action? Changed;
     public event Action<string>? SessionEnded;
 
+    /// <summary>The local vault: <see cref="LocalVaultService.Exists"/>, <see cref="LocalVaultService.ChangeMasterPasswordAsync"/>, <see cref="LocalVaultService.DeleteVault"/>.</summary>
+    public LocalVaultService Local { get; }
+
+    internal RemoteVaultService Remote { get; }
+
+    public VaultMode Mode => _active.Mode;
     public bool IsLoggedIn => _active.IsLoggedIn;
     public string? CurrentUser => _active.CurrentUser;
     public string? ServerUrl => _active.ServerUrl;
@@ -51,23 +60,45 @@ public sealed class RoutingVaultService : IVaultService
     public Task<ServerInfo?> GetServerInfoAsync(string serverUrl, CancellationToken ct = default) =>
         For(serverUrl).GetServerInfoAsync(serverUrl, ct);
 
-    public TotpEnrollment BeginTotpEnrollment(string username) => _remote.BeginTotpEnrollment(username);
+    public TotpEnrollment BeginTotpEnrollment(string username) => Remote.BeginTotpEnrollment(username);
 
     public async Task<LoginResult> LoginAsync(string serverUrl, string username, string password, string? totpCode, bool keepSignedIn, CancellationToken ct = default) =>
-        await (await SwitchToAsync(serverUrl).ConfigureAwait(false)).LoginAsync(serverUrl, username, password, totpCode, keepSignedIn, ct).ConfigureAwait(false);
+        await (await SwitchToAsync(For(serverUrl)).ConfigureAwait(false)).LoginAsync(serverUrl, username, password, totpCode, keepSignedIn, ct).ConfigureAwait(false);
 
     public async Task<LoginResult> CompleteTotpSetupAsync(string serverUrl, string username, string password, string newSecret, string code, bool keepSignedIn, CancellationToken ct = default) =>
-        await (await SwitchToAsync(serverUrl).ConfigureAwait(false)).CompleteTotpSetupAsync(serverUrl, username, password, newSecret, code, keepSignedIn, ct).ConfigureAwait(false);
+        await (await SwitchToAsync(For(serverUrl)).ConfigureAwait(false)).CompleteTotpSetupAsync(serverUrl, username, password, newSecret, code, keepSignedIn, ct).ConfigureAwait(false);
 
     public async Task<LoginResult> RegisterAsync(string serverUrl, string username, string password, string? inviteCode, string totpSecret, string totpCode, bool keepSignedIn, CancellationToken ct = default) =>
-        await (await SwitchToAsync(serverUrl).ConfigureAwait(false)).RegisterAsync(serverUrl, username, password, inviteCode, totpSecret, totpCode, keepSignedIn, ct).ConfigureAwait(false);
+        await (await SwitchToAsync(For(serverUrl)).ConfigureAwait(false)).RegisterAsync(serverUrl, username, password, inviteCode, totpSecret, totpCode, keepSignedIn, ct).ConfigureAwait(false);
 
+    /// <summary>Creates the local vault (see <see cref="LocalVaultService.CreateAsync(string, bool, CancellationToken)"/>) and, on success, switches to it.</summary>
+    public async Task<LoginResult> CreateLocalAsync(string masterPassword, bool keepUnlocked, CancellationToken ct = default) =>
+        await SwitchOnSuccessAsync(await Local.CreateAsync(masterPassword, keepUnlocked, ct).ConfigureAwait(false)).ConfigureAwait(false);
+
+    /// <summary>Unlocks the local vault (see <see cref="LocalVaultService.UnlockAsync"/>) and, on success, switches to it.</summary>
+    public async Task<LoginResult> UnlockLocalAsync(string masterPassword, bool keepUnlocked, CancellationToken ct = default) =>
+        await SwitchOnSuccessAsync(await Local.UnlockAsync(masterPassword, keepUnlocked, ct).ConfigureAwait(false)).ConfigureAwait(false);
+
+    private async Task<LoginResult> SwitchOnSuccessAsync(LoginResult result)
+    {
+        if (result.Success)
+            await SwitchToAsync(Local).ConfigureAwait(false);
+        return result;
+    }
+
+    /// <summary>Restores a kept server sign-in, else a kept local unlock (only one of them is ever kept).</summary>
     public async Task<bool> TryRestoreSessionAsync(CancellationToken ct = default)
     {
-        if (_active != _remote && _active.IsLoggedIn)
+        if (_active.IsLoggedIn && _active != Remote)
             return false;
-        _active = _remote;
-        return await _remote.TryRestoreSessionAsync(ct).ConfigureAwait(false);
+        foreach (IVaultService service in new IVaultService[] { Remote, Local })
+        {
+            _active = service;
+            if (await service.TryRestoreSessionAsync(ct).ConfigureAwait(false))
+                return true;
+        }
+        _active = Remote;
+        return false;
     }
 
     public Task LogoutAsync() => _active.LogoutAsync();
@@ -89,16 +120,19 @@ public sealed class RoutingVaultService : IVaultService
     public Task AddKnownHostAsync(KnownHost knownHost) => _active.AddKnownHostAsync(knownHost);
     public Task TouchHostAsync(Guid hostId) => _active.TouchHostAsync(hostId);
 
-    private IVaultService For(string serverUrl) => ServerAddress.IsMock(serverUrl) ? _mock : _remote;
+    Task IVaultEditor.EditAsync(Action<VaultData> edit) => ((IVaultEditor)_active).EditAsync(edit);
 
-    /// <summary>Makes the service for <paramref name="serverUrl"/> active, logging out the other one first.</summary>
-    private async Task<IVaultService> SwitchToAsync(string serverUrl)
+    private IVaultService For(string serverUrl) => ServerAddress.IsMock(serverUrl) ? _mock : Remote;
+
+    /// <summary>Makes <paramref name="target"/> active, then logs out (locks) the previous one if it is signed in.</summary>
+    internal async Task<IVaultService> SwitchToAsync(IVaultService target)
     {
-        IVaultService target = For(serverUrl);
         IVaultService previous = _active;
+        _active = target;
         if (previous != target && previous.IsLoggedIn)
             await previous.LogoutAsync().ConfigureAwait(false);
-        _active = target;
+        if (previous != target)
+            Changed?.Invoke(); // what the target did while inactive was not forwarded
         return target;
     }
 }

@@ -57,7 +57,7 @@ public sealed class RemoteVaultOptions
 /// account, not the session: when a session ends before it was pushed (revoked, expired, app closed), it stays in
 /// the cache file and is pushed after the next sign-in to the same account.
 /// </remarks>
-public sealed class RemoteVaultService : IVaultService, IDisposable
+public sealed class RemoteVaultService : IVaultService, IVaultEditor, IDisposable
 {
     public const int MinPasswordLength = 8;
 
@@ -91,6 +91,7 @@ public sealed class RemoteVaultService : IVaultService, IDisposable
     public event Action? Changed;
     public event Action<string>? SessionEnded;
 
+    public VaultMode Mode => VaultMode.Server;
     public bool IsLoggedIn { get { lock (_gate) return _session is not null; } }
     public string? CurrentUser { get { lock (_gate) return _session?.Username; } }
     public string? ServerUrl { get { lock (_gate) return _session?.ServerUrl; } }
@@ -223,7 +224,16 @@ public sealed class RemoteVaultService : IVaultService, IDisposable
         }
     }
 
-    public async Task<LoginResult> RegisterAsync(string serverUrl, string username, string password, string? inviteCode, string totpSecret, string totpCode, bool keepSignedIn, CancellationToken ct = default)
+    public Task<LoginResult> RegisterAsync(string serverUrl, string username, string password, string? inviteCode, string totpSecret, string totpCode, bool keepSignedIn, CancellationToken ct = default) =>
+        RegisterAsync(serverUrl, username, password, inviteCode, totpSecret, totpCode, keepSignedIn, null, [], ct);
+
+    /// <summary>
+    /// Registers with <paramref name="vaultKey"/> (null = a new one) as the account's vault key and queues
+    /// <paramref name="items"/> (sealed with that key) for upload as they are; they show at once and are pushed right
+    /// after. Used to turn a local vault into a server account.
+    /// </summary>
+    internal async Task<LoginResult> RegisterAsync(string serverUrl, string username, string password, string? inviteCode, string totpSecret, string totpCode,
+        bool keepSignedIn, byte[]? vaultKey, IReadOnlyCollection<KeyValuePair<string, byte[]>> items, CancellationToken ct)
     {
         if (!ServerAddress.TryParse(serverUrl, out Uri? baseUri, out string? addressError))
             return LoginResult.Fail(VaultError.InsecureUrl, addressError);
@@ -240,7 +250,7 @@ public sealed class RemoteVaultService : IVaultService, IDisposable
         byte[] salt = VaultCrypto.NewSalt();
         KdfParams kdf = _options.NewKdf;
         (byte[] authKey, byte[] kek) = await Task.Run(() => VaultCrypto.DeriveKeys(password, salt, kdf), ct).ConfigureAwait(false);
-        byte[] vaultKey = VaultCrypto.NewVaultKey();
+        vaultKey = vaultKey is null ? VaultCrypto.NewVaultKey() : (byte[])vaultKey.Clone();
         try
         {
             var request = new RegisterRequest(username, authKey, salt, kdf, VaultCrypto.WrapVaultKey(kek, vaultKey), totpSecret,
@@ -250,7 +260,9 @@ public sealed class RemoteVaultService : IVaultService, IDisposable
             {
                 Revision = response.Revision,
             };
-            await ActivateAsync(session, new VaultData(), persist: true, pullNow: false).ConfigureAwait(false);
+            foreach ((string id, byte[] data) in items)
+                session.Pending[id] = data;
+            await ActivateAsync(session, BuildVault(session), persist: true, pullNow: false).ConfigureAwait(false);
             return LoginResult.Ok;
         }
         catch (VaultException ex)
@@ -494,6 +506,8 @@ public sealed class RemoteVaultService : IVaultService, IDisposable
 
     public Task AddKnownHostAsync(KnownHost knownHost) => MutateAsync(VaultEdits.AddKnownHost(knownHost));
 
+    Task IVaultEditor.EditAsync(Action<VaultData> edit) => MutateAsync(edit);
+
     /// <summary>Kept on this device only (see <see cref="VaultItems"/>): nothing is pushed, so the task is already complete.</summary>
     public Task TouchHostAsync(Guid hostId)
     {
@@ -513,6 +527,36 @@ public sealed class RemoteVaultService : IVaultService, IDisposable
         _ = Task.Run(() => SaveCache(session));
         RaiseChanged();
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Takes over when this device last connected to <paramref name="hosts"/> (the local vault moving to this account)
+    /// for the vault's hosts that have no later time. Kept on this device only, like <see cref="TouchHostAsync"/>.
+    /// </summary>
+    internal void ImportLastConnected(IEnumerable<HostEntry> hosts)
+    {
+        Session session;
+        lock (_gate)
+        {
+            session = _session ?? throw new InvalidOperationException("Not logged in.");
+            VaultData? next = null;
+            foreach (HostEntry host in hosts)
+            {
+                string id = VaultItems.IdOf(host.Id);
+                if (host.LastConnected is not { } at || _current.FindHost(host.Id) is null
+                    || (session.LastConnected.TryGetValue(id, out DateTimeOffset known) && known >= at))
+                    continue;
+                session.LastConnected[id] = at;
+                next ??= _current.ShallowCopy();
+                VaultEdits.SetLastConnected(next, host.Id, at);
+            }
+            if (next is null)
+                return;
+            session.CacheDirty = true;
+            Publish(next);
+        }
+        _ = Task.Run(() => SaveCache(session));
+        RaiseChanged();
     }
 
     /// <summary>Publishes the edited snapshot, queues the changed items (sealed), saves the outbox and wakes the sync loop.</summary>

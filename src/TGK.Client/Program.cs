@@ -27,7 +27,8 @@ internal static class Program
 
         DevOptions dev = DevOptions.Parse(args);
         var remote = new RemoteVaultService(new RemoteVaultOptions { DeviceName = $"{Environment.MachineName} · {OsName()}" });
-        var services = new ClientServices(new RoutingVaultService(remote, new MockVaultService()), new PrefsStore(), dev);
+        var local = new LocalVaultService();
+        var services = new ClientServices(new RoutingVaultService(remote, new MockVaultService(), local), new PrefsStore(), dev);
         Browser.MaxFps = 120;
         Browser.ShowDebugOverlay = dev.DebugOverlay;
         KeyboardHub.AllowDebugOverlay = dev.DebugOverlay;
@@ -37,6 +38,7 @@ internal static class Program
         Browser.Post(() => ConfigureWindow(dev.WindowSize));
         Browser.Initialize(new TgkApplication(services)); // blocks until the window closes
         remote.Dispose(); // writes edits that were not saved or pushed yet
+        local.Dispose();
     }
 
     private static string OsName() => OperatingSystem.IsWindows() ? "Windows" : OperatingSystem.IsMacOS() ? "macOS" : "Linux";

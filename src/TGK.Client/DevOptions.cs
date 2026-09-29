@@ -11,6 +11,9 @@ public sealed class DevOptions
     public const string DevPassword = "demo";
     public const string DevServer = "mock://localhost";
 
+    /// <summary>Master password of the local vault the local scenes create or unlock (in the dev config directory).</summary>
+    public const string DevMasterPassword = "demo-master";
+
     /// <summary>
     /// Sign in to the mock server as <see cref="DevUser"/> without showing the login form (when no kept session was
     /// restored): <c>--dev-login</c>, <c>--dev-connect</c> or a scene that needs a vault.
@@ -19,6 +22,12 @@ public sealed class DevOptions
 
     /// <summary>Don't restore a kept session at startup: <c>--dev-login</c>, <c>--dev-connect</c> or a login-form scene.</summary>
     public bool SkipRestore { get; private init; }
+
+    /// <summary>
+    /// The scene needs the local vault: <see cref="AutoLogin"/> unlocks it with <see cref="DevMasterPassword"/> (creating
+    /// an empty one if there is none) instead of signing in to the mock server.
+    /// </summary>
+    public bool UsesLocalVault { get; private init; }
 
     /// <summary><c>--scene=&lt;name&gt;</c>: open a UI state directly (for screenshots). See <see cref="Scenes"/>.</summary>
     public string? Scene { get; private init; }
@@ -43,10 +52,14 @@ public sealed class DevOptions
         "login", "login-totp", "register", "register-totp",
         "main", "host-editor", "host-editor-connection", "host-editor-tunnels", "host-editor-appearance", "group-settings", "connection-defaults",
         "identities", "settings", "hostkey", "hostkey-changed", "password-prompt", "menu", "devices", "change-password",
+        "local-create", "local-unlock", "local-main", "upload-to-server", "offline-copy", "backup-export", "backup-import",
     ];
 
     /// <summary>Scenes of the login screen (the rest need a signed-in vault: a restored session, else the mock).</summary>
-    private static readonly string[] LoginScenes = ["login", "login-totp", "register", "register-totp"];
+    private static readonly string[] LoginScenes = ["login", "login-totp", "register", "register-totp", "local-create", "local-unlock"];
+
+    /// <summary>Scenes in local mode (see <see cref="UsesLocalVault"/>).</summary>
+    private static readonly string[] LocalScenes = ["local-main", "upload-to-server"];
 
     public static DevOptions Parse(string[] args)
     {
@@ -74,11 +87,13 @@ public sealed class DevOptions
             scene = null;
         }
         bool loginScene = scene is not null && Array.IndexOf(LoginScenes, scene) >= 0;
-        bool skipRestore = autoLogin || connect is not null || loginScene;
+        bool localScene = scene is not null && Array.IndexOf(LocalScenes, scene) >= 0;
+        bool skipRestore = autoLogin || connect is not null || loginScene || localScene;
         autoLogin |= (scene is not null && !loginScene) || connect is not null;
         return new DevOptions
         {
-            AutoLogin = autoLogin, SkipRestore = skipRestore, Scene = scene, WindowSize = size, DebugOverlay = overlay, Connect = connect, Send = send,
+            AutoLogin = autoLogin, SkipRestore = skipRestore, UsesLocalVault = localScene, Scene = scene, WindowSize = size, DebugOverlay = overlay,
+            Connect = connect, Send = send,
         };
     }
 
