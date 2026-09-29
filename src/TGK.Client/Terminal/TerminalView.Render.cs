@@ -286,7 +286,7 @@ public sealed partial class TerminalView
         float thumbH = Math.Max(24, trackH * Rows / (history + Rows));
         float top = (trackH - thumbH) * (history - _offset) / history;
         float x = Cols * _font.CellWidth + PadX - 6;
-        _thumb.Color = SKColors.White.WithAlpha(70);
+        _thumb.Color = _palette.Foreground.WithAlpha(90);
         c.DrawRoundRect(new SKRect(x, top, x + 4, top + thumbH), 2, 2, _thumb);
     }
 

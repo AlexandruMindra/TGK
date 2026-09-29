@@ -23,8 +23,11 @@ internal static class Program
             e.SetObserved();
         };
 
+        CoreLog.Warning = Log.Warning;
+
         DevOptions dev = DevOptions.Parse(args);
-        var services = new ClientServices(new MockVaultService(), new PrefsStore(), dev);
+        var remote = new RemoteVaultService(new RemoteVaultOptions { DeviceName = $"{Environment.MachineName} · {OsName()}" });
+        var services = new ClientServices(new RoutingVaultService(remote, new MockVaultService()), new PrefsStore(), dev);
         Browser.MaxFps = 120;
         Browser.ShowDebugOverlay = dev.DebugOverlay;
         KeyboardHub.AllowDebugOverlay = dev.DebugOverlay;
@@ -33,7 +36,10 @@ internal static class Program
         // Runs on the UI thread once the window exists (the post queue is drained by the main loop).
         Browser.Post(() => ConfigureWindow(dev.WindowSize));
         Browser.Initialize(new TgkApplication(services)); // blocks until the window closes
+        remote.Dispose(); // writes edits that were not saved or pushed yet
     }
+
+    private static string OsName() => OperatingSystem.IsWindows() ? "Windows" : OperatingSystem.IsMacOS() ? "macOS" : "Linux";
 
     private static void ConfigureWindow((int Width, int Height)? size)
     {

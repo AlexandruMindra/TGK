@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Threading.Tasks;
 using Silk.NET.Input;
 using SkiaSharp;
 using TGK.Client.Controls;
@@ -11,9 +12,13 @@ using TGK.Core.Services;
 
 namespace TGK.Client.Dialogs;
 
-/// <summary>Create or edit a saved host. Saves (and deletes) through the vault.</summary>
-public sealed class HostEditorDialog : DialogBase
+/// <summary>
+/// Create or edit a saved host: General (address, credentials, group), Connection, Session, Tunnels and Appearance.
+/// Saves (and deletes) through the vault.
+/// </summary>
+public sealed class HostEditorDialog : TabbedDialog
 {
+    public const int GeneralTab = 0, ConnectionTab = 1, SessionTab = 2, TunnelsTab = 3, AppearanceTab = 4;
     private const float PortW = 100, Gap = 16;
     private readonly IVaultService _vault;
     private readonly HostEntry _entry;
@@ -23,12 +28,13 @@ public sealed class HostEditorDialog : DialogBase
     private readonly TextField _name, _host, _port, _user, _group, _notes;
     private readonly Dropdown _identity;
     private readonly ColorSwatches _color;
-    private readonly Label _error;
+    private readonly OptionsEditor _options;
+    private readonly TunnelsEditor _tunnels;
 
     /// <param name="host">The host to edit, or null for a new one.</param>
     /// <param name="template">Prefill for a new host (e.g. when duplicating).</param>
     public HostEditorDialog(TgkView view, HostEntry? host, HostEntry? template = null)
-        : base(view, host is null ? "New host" : "Edit host", 600)
+        : base(view, host is null ? "New host" : "Edit host", 640, "General", "Connection", "Session", "Tunnels", "Appearance")
     {
         _vault = view.Services.Vault;
         _isNew = host is null;
@@ -42,28 +48,35 @@ public sealed class HostEditorDialog : DialogBase
         _identities = vault.Identities.OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToList();
         Subtitle = _isNew ? "Saved hosts sync to all your devices." : _entry.DisplayName;
 
-        _nameCaption = AddBody(Form.Caption("Name"));
-        _name = AddBody(new TextField("e.g. web-01") { Text = _entry.Name });
-        _hostCaption = AddBody(Form.Caption("Host"));
-        _host = AddBody(new TextField("hostname or IP address") { Text = _entry.Host, Mono = true });
-        _portCaption = AddBody(Form.Caption("Port"));
-        _port = AddBody(new TextField("22") { Text = _entry.Port.ToString(CultureInfo.InvariantCulture), Mono = true, MaxLength = 5 });
-        _userCaption = AddBody(Form.Caption("Username"));
-        _user = AddBody(new TextField("from identity") { Text = _entry.Username ?? "" });
-        _identityCaption = AddBody(Form.Caption("Identity"));
-        _identity = AddBody(new Dropdown
+        FormPage general = PageAt(GeneralTab);
+        _nameCaption = general.Add(Form.Caption("Name"));
+        _name = general.Add(new TextField("e.g. web-01") { Text = _entry.Name });
+        _hostCaption = general.Add(Form.Caption("Host"));
+        _host = general.Add(new TextField("hostname or IP address") { Text = _entry.Host, Mono = true });
+        _portCaption = general.Add(Form.Caption("Port"));
+        _port = general.Add(new TextField("22") { Text = _entry.Port.ToString(CultureInfo.InvariantCulture), Mono = true, MaxLength = 5 });
+        _userCaption = general.Add(Form.Caption("Username"));
+        _user = general.Add(new TextField("from identity") { Text = _entry.Username ?? "" });
+        _identityCaption = general.Add(Form.Caption("Identity"));
+        _identity = general.Add(new Dropdown
         {
             Options = _identities.Select(i => i.Name).Prepend("None (ask for password)").ToList(),
         });
         _identity.SelectedIndex = _identities.FindIndex(i => i.Id == _entry.IdentityId) + 1;
-        _groupCaption = AddBody(Form.Caption("Group"));
-        _group = AddBody(new TextField("No group") { Text = vault.FindGroup(_entry.GroupId)?.Name ?? "", TrailingIcon = "chevron-down" });
+        _groupCaption = general.Add(Form.Caption("Group"));
+        _group = general.Add(new TextField("No group") { Text = vault.FindGroup(_entry.GroupId)?.Name ?? "", TrailingIcon = "chevron-down" });
         _group.TrailingClicked += ShowGroupMenu;
-        _colorCaption = AddBody(Form.Caption("Tag color"));
-        _color = AddBody(new ColorSwatches { Selected = _entry.TagColor });
-        _notesCaption = AddBody(Form.Caption("Notes"));
-        _notes = AddBody(new TextField("Optional") { Text = _entry.Notes ?? "" });
-        _error = AddBody(new Label("", Theme.FontSm, Theme.Danger) { Visible = false });
+        _colorCaption = general.Add(Form.Caption("Tag color"));
+        _color = general.Add(new ColorSwatches { Selected = _entry.TagColor });
+        _notesCaption = general.Add(Form.Caption("Notes"));
+        _notes = general.Add(new TextField("Optional") { Text = _entry.Notes ?? "" });
+        general.Layout = LayoutGeneral;
+
+        _options = new OptionsEditor(view, _entry.Options, OptionsLevel.Host, ResolveInherited, Candidate,
+            PageAt(ConnectionTab), PageAt(SessionTab), PageAt(AppearanceTab), _entry.Id);
+        _options.LayoutChanged += InvalidateLayout;
+        _tunnels = new TunnelsEditor(PageAt(TunnelsTab), _entry.Tunnels);
+        _tunnels.LayoutChanged += InvalidateLayout;
 
         _host.Changed += _ => ClearError(_host);
         _port.Changed += _ => ClearError(_port);
@@ -76,24 +89,47 @@ public sealed class HostEditorDialog : DialogBase
 
     protected override Blossom.Core.Visual.VisualElement? InitialFocus => _isNew && _entry.Host.Length == 0 ? _name : _host;
 
-    protected override float LayoutBody(float left, float top, float width)
+    // The options inherit from the group typed on the General page (it may have changed since the dialog opened).
+    private EffectiveHostOptions ResolveInherited()
+    {
+        VaultData vault = _vault.Current;
+        HostGroup? group = FindGroup(_group.Text.Trim());
+        return EffectiveOptions.Resolve(null, group?.Options, vault.Defaults, View.Services.Prefs.Terminal.FontSize, _entry.Id)
+            with { GroupName = group?.Name };
+    }
+
+    // The vault with this host saved with `options`, in the group typed on the General page.
+    private VaultData Candidate(HostOptions options)
+    {
+        VaultData vault = _vault.Current.ShallowCopy();
+        HostEntry host = _entry.Clone();
+        host.Options = options;
+        host.GroupId = FindGroup(_group.Text.Trim())?.Id;
+        int index = vault.Hosts.FindIndex(h => h.Id == host.Id);
+        if (index >= 0)
+            vault.Hosts[index] = host;
+        else
+            vault.Hosts.Add(host);
+        return vault;
+    }
+
+    private HostGroup? FindGroup(string name) => name.Length == 0 ? null
+        : _vault.Current.Groups.Find(g => string.Equals(g.Name, name, StringComparison.OrdinalIgnoreCase));
+
+    protected override void OnTabShown(int index) => _options.RefreshInherited();
+
+    private float LayoutGeneral(float width)
     {
         float col = (width - Gap) / 2f;
-        float y = top;
-        y = Form.Place(_nameCaption, _name, left, y, width) + Form.RowGap;
-        Form.Place(_hostCaption, _host, left, y, width - PortW - Gap);
-        y = Form.Place(_portCaption, _port, left + width - PortW, y, PortW) + Form.RowGap;
-        Form.Place(_userCaption, _user, left, y, col);
-        y = Form.Place(_identityCaption, _identity, left + col + Gap, y, col) + Form.RowGap;
-        Form.Place(_groupCaption, _group, left, y, col);
-        y = Form.Place(_colorCaption, _color, left + col + Gap, y, col) + Form.RowGap;
-        y = Form.Place(_notesCaption, _notes, left, y, width);
-        if (_error.Visible)
-        {
-            _error.Transform.SetLocalFrame(left, y + 10, width, 18);
-            y += 28;
-        }
-        return y - top;
+        float y = 0;
+        y = Form.Place(_nameCaption, _name, 0, y, width) + Form.RowGap;
+        Form.Place(_hostCaption, _host, 0, y, width - PortW - Gap);
+        y = Form.Place(_portCaption, _port, width - PortW, y, PortW) + Form.RowGap;
+        Form.Place(_userCaption, _user, 0, y, col);
+        y = Form.Place(_identityCaption, _identity, col + Gap, y, col) + Form.RowGap;
+        Form.Place(_groupCaption, _group, 0, y, col);
+        y = Form.Place(_colorCaption, _color, col + Gap, y, col) + Form.RowGap;
+        return Form.Place(_notesCaption, _notes, 0, y, width);
     }
 
     private void ShowGroupMenu()
@@ -111,39 +147,35 @@ public sealed class HostEditorDialog : DialogBase
         View.Menu.Show(items, at.X, at.Y + at.Height + 4, at.Width, at.Height);
     }
 
-    private void ShowError(string message, TextField? field)
-    {
-        _error.Text = message;
-        _error.Visible = true;
-        if (field is not null)
-        {
-            field.HasError = true;
-            field.Focus();
-        }
-        InvalidateLayout();
-    }
-
     private void ClearError(TextField field)
     {
         field.HasError = false;
-        if (_error.Visible)
-        {
-            _error.Visible = false;
-            InvalidateLayout();
-        }
+        ClearError();
     }
 
     protected override void Accept()
     {
+        FormPage general = PageAt(GeneralTab);
         string host = _host.Text.Trim();
         if (host.Length == 0 || host.AsSpan().IndexOfAny(" \t") >= 0)
         {
-            ShowError(host.Length == 0 ? "Enter the host name or IP address." : "The host name must not contain spaces.", _host);
+            ShowError(host.Length == 0 ? "Enter the host name or IP address." : "The host name must not contain spaces.", general, _host);
             return;
         }
         if (!int.TryParse(_port.Text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out int port) || port is < 1 or > 65535)
         {
-            ShowError("The port must be a number between 1 and 65535.", _port);
+            ShowError("The port must be a number between 1 and 65535.", general, _port);
+            return;
+        }
+        HostOptions options = _entry.Options.Clone(); // keeps members a newer client added
+        if (_options.Store(options) is { } problem)
+        {
+            ShowError(problem.Message, problem.Page, problem.Field);
+            return;
+        }
+        if (_tunnels.Collect() is not { } tunnels)
+        {
+            ShowTab(TunnelsTab);
             return;
         }
 
@@ -154,10 +186,11 @@ public sealed class HostEditorDialog : DialogBase
         _entry.IdentityId = _identity.SelectedIndex > 0 ? _identities[_identity.SelectedIndex - 1].Id : null;
         _entry.TagColor = _color.Selected;
         _entry.Notes = _notes.Text.Trim() is { Length: > 0 } notes ? notes : null;
+        _entry.Options = options;
+        _entry.Tunnels = tunnels;
 
         string groupName = _group.Text.Trim();
-        HostGroup? group = groupName.Length == 0 ? null
-            : _vault.Current.Groups.Find(g => string.Equals(g.Name, groupName, StringComparison.OrdinalIgnoreCase));
+        HostGroup? group = FindGroup(groupName);
         if (groupName.Length > 0 && group is null)
         {
             group = new HostGroup { Name = groupName, SortOrder = _vault.Current.Groups.Select(g => g.SortOrder).DefaultIfEmpty(-1).Max() + 1 };
@@ -172,11 +205,28 @@ public sealed class HostEditorDialog : DialogBase
 
     private async void Delete()
     {
-        bool confirmed = await ConfirmDialog.ShowAsync(View, "Delete host?",
-            $"“{_entry.DisplayName}” will be removed from your vault on all devices. Open sessions stay connected.",
-            "Delete", danger: true);
-        if (confirmed && View.RunVault(() => _vault.DeleteHostAsync(_entry.Id)))
+        if (await ConfirmDelete(View, _entry) && View.RunVault(() => _vault.DeleteHostAsync(_entry.Id)))
             Close();
+    }
+
+    /// <summary>
+    /// Asks before deleting <paramref name="host"/>. Hosts, groups and defaults that use it as their jump host are
+    /// named: they keep pointing at it (the editors show "Deleted host") and can't connect until another is chosen.
+    /// </summary>
+    public static Task<bool> ConfirmDelete(TgkView view, HostEntry host)
+    {
+        VaultData vault = view.Services.Vault.Current;
+        List<string> users = vault.Hosts.Where(h => h.Id != host.Id && h.Options.JumpHostId == host.Id).Select(h => h.DisplayName)
+            .Concat(vault.Groups.Where(g => g.Options.JumpHostId == host.Id).Select(g => $"group {g.Name}"))
+            .ToList();
+        if (vault.Defaults.JumpHostId == host.Id)
+            users.Add("the connection defaults");
+        string jump = users.Count == 0 ? ""
+            : $" It is the jump host of {string.Join(", ", users.Take(4))}{(users.Count > 4 ? $" and {users.Count - 4} more" : "")}: "
+                + "those connections will fail until another jump host is chosen.";
+        return ConfirmDialog.ShowAsync(view, "Delete host?",
+            $"“{host.DisplayName}” will be removed from your vault on all devices. Open sessions stay connected.{jump}",
+            "Delete", danger: true);
     }
 
     /// <summary>Tag color picker: "none" plus <see cref="Theme.TagColors"/>.</summary>

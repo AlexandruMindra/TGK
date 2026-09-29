@@ -121,7 +121,8 @@ public sealed class HostCardGrid : Control
             Gfx.Text(c, host.DisplayName, tx, r.MidY - 9, Theme.FontMd, Theme.WeightSemibold, Theme.TextPrimary, TextAlignment.Left, textW - metaW);
             if (metaW > 0)
                 Gfx.Text(c, meta, r.Right - 14, r.MidY - 9, Theme.FontXs, Theme.WeightRegular, Theme.TextMuted, TextAlignment.Right);
-            Gfx.Text(c, HostFormat.Address(host, vault), tx, r.MidY + 10, Theme.FontSm, Theme.WeightRegular, Theme.TextMuted, TextAlignment.Left, textW);
+            float addressRight = HostHints.Draw(c, host, vault, r.Right - 14, r.MidY + 10, Theme.TextMuted);
+            Gfx.Text(c, HostFormat.Address(host, vault), tx, r.MidY + 10, Theme.FontSm, Theme.WeightRegular, Theme.TextMuted, TextAlignment.Left, addressRight - tx - 4);
         }
     }
 }

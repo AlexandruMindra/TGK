@@ -5,7 +5,8 @@ public sealed class ClientPrefs
 {
     public string? LastServer { get; set; }
     public string? LastUsername { get; set; }
-    public bool RememberLogin { get; set; }
+    /// <summary>State of the login form's "Keep me signed in" box.</summary>
+    public bool KeepSignedIn { get; set; } = true;
     public bool SidebarCollapsed { get; set; }
     public float SidebarWidth { get; set; } = 260;
     public TerminalSettings Terminal { get; set; } = new();

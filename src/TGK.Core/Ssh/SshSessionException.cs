@@ -27,6 +27,12 @@ public enum SshErrorKind
 
     /// <summary>The server or network dropped the connection, or an SSH protocol error occurred.</summary>
     ConnectionLost,
+
+    /// <summary>
+    /// The server and this client have no key exchange, host key, cipher or MAC algorithm in common. Usually an old
+    /// server: enabling "Legacy algorithms" for the host may help (the message says so when it is off).
+    /// </summary>
+    AlgorithmMismatch,
     Other,
 }
 
@@ -40,6 +46,12 @@ public sealed class SshSessionException : Exception
     }
 
     public SshErrorKind Kind { get; }
+
+    /// <summary>
+    /// Index into <see cref="SshConnectRequest.JumpChain"/> of the jump host the error is about (e.g. its password was
+    /// wrong, so ask for that one again), or null when it concerns the final host or the request as a whole.
+    /// </summary>
+    public int? JumpHostIndex { get; init; }
 }
 
 /// <summary>Translates SSH.NET and socket exceptions into friendly <see cref="SshSessionException"/>s.</summary>
@@ -60,7 +72,15 @@ internal static class SshErrors
                     return new(SshErrorKind.UnsupportedAuthMethod, NoSuitableMethod(auth.Message, request), exception);
                 case SshAuthenticationException:
                     return new(SshErrorKind.AuthenticationFailed,
-                        $"Authentication failed for {request.Username}@{request.Host}. Check the username, password or key.", exception);
+                        $"Authentication failed for {request.Username}@{request.Host} (tried {Offered(request)}). Check the username, password or key.", exception);
+                // OpenSSH disconnects once MaxAuthTries offers were rejected; that is a failed sign-in, not a network problem.
+                case SshConnectionException tooMany when tooMany.Message.Contains("Too many authentication failures", StringComparison.OrdinalIgnoreCase):
+                    return new(SshErrorKind.AuthenticationFailed,
+                        $"{request.Host} rejected the sign-in as {request.Username} (tried {Offered(request)}) and closed the connection. " +
+                        "Check the username and that the key is authorized on the server (~/.ssh/authorized_keys).", exception);
+                // SSH.NET: "No matching key exchange algorithm (server offers diffie-hellman-group1-sha1)".
+                case SshException negotiation when negotiation.Message.StartsWith("No matching ", StringComparison.Ordinal):
+                    return new(SshErrorKind.AlgorithmMismatch, NoCommonAlgorithm(negotiation.Message, request, target), exception);
                 case SshOperationTimeoutException or TimeoutException:
                     return new(SshErrorKind.Timeout, $"Timed out connecting to {target}.", exception);
                 case SocketException socket:
@@ -73,7 +93,7 @@ internal static class SshErrors
     }
 
     /// <summary>Short description of why an established connection ended.</summary>
-    public static string DescribeLoss(Exception exception) => exception switch
+    public static string DescribeLoss(Exception exception) => (exception switch
     {
         SocketException socket => socket.SocketErrorCode switch
         {
@@ -84,7 +104,7 @@ internal static class SshErrors
         },
         SshConnectionException connection => connection.Message,
         _ => exception.Message,
-    };
+    }).TrimEnd('.'); // callers end the sentence
 
     private static SshSessionException MapSocket(SocketException socket, SshConnectRequest request, string target, Exception original) =>
         socket.SocketErrorCode switch
@@ -101,6 +121,24 @@ internal static class SshErrors
                 new(SshErrorKind.ConnectionLost, $"{target} closed the connection.", original),
             _ => new(SshErrorKind.Other, $"Network error connecting to {target}: {socket.Message}", original),
         };
+
+    private static string Offered(SshConnectRequest request) =>
+        (string.IsNullOrWhiteSpace(request.PrivateKey), string.IsNullOrEmpty(request.Password)) switch
+        {
+            (false, false) => "private key and password",
+            (false, true) => "private key",
+            (true, false) => "password",
+            _ => "no key or password",
+        };
+
+    private static string NoCommonAlgorithm(string message, SshConnectRequest request, string target)
+    {
+        string detail = message["No matching ".Length..].TrimEnd('.');
+        return request.LegacyAlgorithms
+            ? $"{target} and this app have no algorithm in common: no matching {detail}."
+            : $"{request.Host} only supports older, weaker algorithms (no matching {detail}). " +
+              "If you trust this server, turn on \"Legacy algorithms\" in the host's settings.";
+    }
 
     // SSH.NET formats this as "No suitable authentication method found to complete authentication (publickey,password)."
     private static string NoSuitableMethod(string message, SshConnectRequest request)

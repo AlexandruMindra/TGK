@@ -12,6 +12,14 @@ public sealed class VaultData
     public List<Identity> Identities { get; set; } = [];
     public List<KnownHost> KnownHosts { get; set; } = [];
 
+    /// <summary>
+    /// Connection settings for every host (the global level of <see cref="HostOptions"/> inheritance). Synced as the
+    /// vault's single "settings" item; a vault without one uses the built-in defaults.
+    /// </summary>
+    public HostOptions Defaults { get => _defaults; set => _defaults = value ?? new(); }
+
+    private HostOptions _defaults = new();
+
     /// <summary>Incremented on every change; lets the client and server detect stale copies.</summary>
     public long Revision { get; set; }
 
@@ -23,6 +31,18 @@ public sealed class VaultData
 
     public KnownHost? FindKnownHost(string host, int port) => KnownHosts.Find(k => k.Matches(host, port));
 
+    /// <summary>A copy that shares the entities; edit it by replacing entities, never by changing them.</summary>
+    public VaultData ShallowCopy() => new()
+    {
+        Groups = [.. Groups],
+        Hosts = [.. Hosts],
+        Identities = [.. Identities],
+        KnownHosts = [.. KnownHosts],
+        Defaults = Defaults,
+        Revision = Revision,
+        UpdatedAt = UpdatedAt,
+    };
+
     /// <summary>Deep copy.</summary>
     public VaultData Clone() => new()
     {
@@ -30,6 +50,7 @@ public sealed class VaultData
         Hosts = Hosts.Select(h => h.Clone()).ToList(),
         Identities = Identities.Select(i => i.Clone()).ToList(),
         KnownHosts = KnownHosts.Select(k => k.Clone()).ToList(),
+        Defaults = Defaults.Clone(),
         Revision = Revision,
         UpdatedAt = UpdatedAt,
     };

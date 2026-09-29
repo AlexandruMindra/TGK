@@ -78,6 +78,9 @@ public abstract class DialogBase : VisualElement, IKeyInput
 
     private float HeaderHeight => Subtitle is null ? HeaderH : HeaderH + SubtitleH;
 
+    /// <summary>The tallest body that keeps the dialog inside the window (with a 16 px margin above and below).</summary>
+    protected float MaxBodyHeight => View.Height - 32 - (HeaderHeight + BodyBottom + FooterH);
+
     /// <summary>Adds a body element to the card; position it in <see cref="LayoutBody"/> with card-local coordinates.</summary>
     protected T AddBody<T>(T element) where T : VisualElement
     {
@@ -169,8 +172,8 @@ public abstract class DialogBase : VisualElement, IKeyInput
             Cancel();
         else if (k.IsEnter && (k.Modifiers & ~KeyModifiers.Ctrl) == 0 && EnterAccepts && enterReady)
             Accept();
-        else if (k.Key == Key.Tab && (k.Modifiers & ~KeyModifiers.Shift) == 0)
-            FocusNavigator.Move(_card, k.Shift);
+        else if (k.Key == Key.Tab && (k.Modifiers & ~KeyModifiers.Shift) == 0 && FocusNavigator.Move(_card, k.Shift))
+            InvalidateLayout(); // a scrolling page (FormPage) brings the focused field into view when it lays out
         return true; // modal: nothing leaks to the view behind
     }
 

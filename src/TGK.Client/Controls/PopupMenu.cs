@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Blossom;
+using Blossom.Core.Input;
 using Blossom.Core.Visual;
 using Silk.NET.Input;
 using SkiaSharp;
@@ -69,14 +70,15 @@ public sealed class PopupMenu : VisualElement, IKeyInput
         var view = ParentView;
         _panel.SetItems(items);
         float w = Math.Max(minWidth, _panel.PreferredWidth);
-        float h = _panel.PreferredHeight;
         float vw = view.Width, vh = view.Height;
+        float h = Math.Min(_panel.PreferredHeight, vh - 16); // taller lists scroll
         if (y + h > vh - 8 && y - anchorHeight - h >= 8)
             y = y - anchorHeight - h - 4;
         x = Math.Clamp(x, 8, Math.Max(8, vw - w - 8));
         y = Math.Clamp(y, 8, Math.Max(8, vh - h - 8));
 
         _panel.Transform.SetAbsoluteFrame(x, y, w, h);
+        _panel.ScrollToChecked();
         _onClosed = onClosed;
         _previousFocus = view.ActiveKeyboardElement;
         Visible = true;
@@ -138,6 +140,7 @@ public sealed class PopupMenu : VisualElement, IKeyInput
         private readonly PopupMenu _owner;
         private IReadOnlyList<MenuItem> _items = [];
         private int _hover = -1;
+        private float _scroll; // content offset of a list taller than the window
 
         public MenuPanel(PopupMenu owner)
         {
@@ -149,6 +152,12 @@ public sealed class PopupMenu : VisualElement, IKeyInput
             };
             Events.OnMouseDown += (_, e) => e.Handled = true;
             Events.OnMouseMove += (_, e) => SetHover(IndexAt(e.Relative.Y));
+            Events.OnScroll += (_, e) =>
+            {
+                e.Handled = true;
+                _hover = -1; // the pointer is over another item now; the next move highlights it
+                ScrollTo(_scroll - e.Offset.Y * 3 * RowH);
+            };
             Events.OnMouseUp += (_, e) =>
             {
                 e.Handled = true;
@@ -191,8 +200,38 @@ public sealed class PopupMenu : VisualElement, IKeyInput
         {
             _items = items;
             _hover = -1;
+            _scroll = 0;
             InvalidatePaint();
         }
+
+        /// <summary>Scrolls the checked item (a dropdown's current choice) into view.</summary>
+        public void ScrollToChecked()
+        {
+            int i = -1;
+            for (int n = 0; n < _items.Count && i < 0; n++)
+                i = _items[n].IsChecked ? n : -1;
+            if (i >= 0)
+                EnsureVisible(i);
+        }
+
+        private float Top(int index)
+        {
+            float top = PadY;
+            for (int i = 0; i < index; i++)
+                top += Height(_items[i]);
+            return top;
+        }
+
+        private void EnsureVisible(int index)
+        {
+            float top = Top(index), bottom = top + Height(_items[index]);
+            if (top - PadY < _scroll)
+                ScrollTo(top - PadY);
+            else if (bottom + PadY > _scroll + H)
+                ScrollTo(bottom + PadY - H);
+        }
+
+        private void ScrollTo(float offset) => SetAndPaint(ref _scroll, Math.Clamp(offset, 0, Math.Max(0, PreferredHeight - H)));
 
         public void MoveHover(int delta)
         {
@@ -205,6 +244,7 @@ public sealed class PopupMenu : VisualElement, IKeyInput
                 if (_items[i].IsSelectable)
                 {
                     SetHover(i);
+                    EnsureVisible(i);
                     return;
                 }
             }
@@ -214,6 +254,7 @@ public sealed class PopupMenu : VisualElement, IKeyInput
 
         private int IndexAt(float y)
         {
+            y += _scroll;
             float top = PadY;
             for (int i = 0; i < _items.Count; i++)
             {
@@ -238,6 +279,9 @@ public sealed class PopupMenu : VisualElement, IKeyInput
             var r = new SKRect(0, 0, W, H);
             Gfx.FillRound(c, r, Theme.RadiusLg, Theme.Overlay);
             Gfx.StrokeRound(c, r, Theme.RadiusLg, Theme.BorderStrong);
+            int save = c.Save();
+            c.ClipRect(SKRect.Inflate(r, -1, -2));
+            c.Translate(0, -_scroll);
             float y = PadY;
             for (int i = 0; i < _items.Count; i++)
             {
@@ -269,6 +313,7 @@ public sealed class PopupMenu : VisualElement, IKeyInput
                 }
                 y += h;
             }
+            c.RestoreToCount(save);
         }
     }
 }

@@ -7,8 +7,9 @@ namespace TGK.Client.Main;
 
 /// <summary>
 /// Connection state over a session's terminal: a centered card while connecting or after a failure, or a banner
-/// along the bottom once an established session has ended (the terminal above stays readable and selectable).
-/// The owner positions it: the full tab for the card, the bottom <see cref="BannerHeight"/> px for the banner.
+/// along the bottom once an established session has ended or is being reconnected automatically (the terminal above
+/// stays readable and selectable). The owner positions it: the full tab for the card, the bottom
+/// <see cref="BannerHeight"/> px for a banner (<see cref="IsBanner"/>).
 /// </summary>
 public sealed class SessionOverlay : Control
 {
@@ -40,15 +41,20 @@ public sealed class SessionOverlay : Control
         Connecting,
         Failed,
         Ended,
+
+        /// <summary>Banner: the connection was lost and is reconnected automatically.</summary>
+        Reconnecting,
     }
 
-    /// <summary>Retry (failed) or Reconnect (ended).</summary>
+    /// <summary>Retry (failed), Reconnect (ended) or Reconnect now (reconnecting).</summary>
     public event Action? PrimaryClicked;
 
-    /// <summary>Cancel (connecting) or Edit host (failed, saved hosts only).</summary>
+    /// <summary>Cancel (connecting, reconnecting) or Edit host (failed, saved hosts only).</summary>
     public event Action? SecondaryClicked;
 
     public OverlayMode Mode => _mode;
+
+    public bool IsBanner => _mode is OverlayMode.Ended or OverlayMode.Reconnecting;
 
     public void ShowConnecting(string title, string detail) => Show(OverlayMode.Connecting, title, detail, false, null, "Cancel");
 
@@ -57,6 +63,10 @@ public sealed class SessionOverlay : Control
         Show(OverlayMode.Failed, title, message, error, "Retry", secondary);
 
     public void ShowEnded(string message, bool error) => Show(OverlayMode.Ended, "", message, error, "Reconnect", null);
+
+    /// <param name="waiting">Counting down to the next attempt ("Reconnect now" is offered); false while an attempt runs.</param>
+    public void ShowReconnecting(string message, bool waiting) =>
+        Show(OverlayMode.Reconnecting, "", message, false, waiting ? "Reconnect now" : null, "Cancel");
 
     public void Hide()
     {
@@ -70,7 +80,7 @@ public sealed class SessionOverlay : Control
         _title = title;
         _message = message;
         _error = error;
-        _spinner.Visible = mode == OverlayMode.Connecting;
+        _spinner.Visible = mode == OverlayMode.Connecting || (mode == OverlayMode.Reconnecting && primary is null);
         _primary.Visible = primary is not null;
         _primary.Text = primary ?? "";
         _secondary.Visible = secondary is not null;
@@ -94,10 +104,20 @@ public sealed class SessionOverlay : Control
 
     protected override void LayoutChildren()
     {
-        if (_mode == OverlayMode.Ended)
+        if (IsBanner)
         {
-            float bw = Math.Max(96, _primary.PreferredWidth);
-            _primary.Transform.SetLocalFrame(W - 12 - bw, (H - 28) / 2f, bw, 28);
+            // Right-aligned [primary] [secondary].
+            float right = W - 12;
+            foreach (Button b in new[] { _secondary, _primary })
+            {
+                if (!b.Visible)
+                    continue;
+                float bw = Math.Max(96, b.PreferredWidth);
+                right -= bw;
+                b.Transform.SetLocalFrame(right, (H - 28) / 2f, bw, 28);
+                right -= 8;
+            }
+            _spinner.Transform.SetLocalFrame(16, (H - 16) / 2f, 16, 16);
             return;
         }
         SKRect card = CardRect();
@@ -124,7 +144,7 @@ public sealed class SessionOverlay : Control
 
     protected override void Paint(SKCanvas c)
     {
-        if (_mode == OverlayMode.Ended)
+        if (IsBanner)
         {
             PaintBanner(c);
             return;
@@ -159,11 +179,14 @@ public sealed class SessionOverlay : Control
         var r = new SKRect(0, 0, W, H);
         Gfx.FillRect(c, r, Theme.SurfaceRaised);
         Gfx.Line(c, 0, 0.5f, W, 0.5f, Theme.BorderStrong);
-        SKColor tint = _error ? Theme.Danger : Theme.TextMuted;
-        Icons.Draw(c, _error ? "alert" : "terminal", 24, H / 2f, 16, tint);
-        float textMax = _primary.Transform.Computed.X - Transform.Computed.X - 44 - 16;
-        Gfx.Text(c, _message, 44, H / 2f, Theme.FontBase, Theme.WeightRegular, _error ? Theme.Danger : Theme.TextSecondary,
-            TextAlignment.Left, textMax);
+        bool reconnecting = _mode == OverlayMode.Reconnecting;
+        SKColor tint = _error ? Theme.Danger : reconnecting ? Theme.Warning : Theme.TextMuted;
+        if (!_spinner.Visible)
+            Icons.Draw(c, _error ? "alert" : reconnecting ? "refresh" : "terminal", 24, H / 2f, 16, tint);
+        Button first = _primary.Visible ? _primary : _secondary;
+        float textMax = first.Transform.Computed.X - Transform.Computed.X - 44 - 16;
+        Gfx.Text(c, _message, 44, H / 2f, Theme.FontBase, Theme.WeightRegular,
+            _error ? Theme.Danger : reconnecting ? Theme.TextPrimary : Theme.TextSecondary, TextAlignment.Left, textMax);
     }
 
     /// <summary>An indeterminate progress ring; animates only while visible.</summary>

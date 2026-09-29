@@ -327,11 +327,12 @@ public sealed class TabStrip : Control
         _ => Theme.Idle,
     };
 
-    /// <summary>"Synced · 2m" chip; click to sync now.</summary>
+    /// <summary>"Synced · 2m" chip (amber when offline, red on errors); a click shows the details and "Sync now".</summary>
     private sealed class SyncChip : Control
     {
         private readonly MainView _main;
         private string _text = "";
+        private (Core.Services.SyncState, bool) _state;
         private long _nextRefresh;
 
         public SyncChip(MainView main)
@@ -341,7 +342,8 @@ public sealed class TabStrip : Control
             Events.OnClick += (_, e) =>
             {
                 e.Handled = true;
-                _main.SyncNow();
+                var r = Transform.Computed;
+                _main.ShowSyncMenu(r.X, r.Y, r.Height);
             };
             UiClock.Tick += OnTick;
             Refresh();
@@ -352,9 +354,12 @@ public sealed class TabStrip : Control
         public void Refresh()
         {
             _nextRefresh = UiClock.NowMs + 15_000;
-            string text = HostFormat.Sync(_main.Services.Vault, DateTimeOffset.UtcNow);
-            if (text == _text)
+            var vault = _main.Services.Vault;
+            string text = HostFormat.Sync(vault, DateTimeOffset.UtcNow);
+            var state = (vault.Status, vault.LastError is not null);
+            if (text == _text && state == _state)
                 return;
+            _state = state;
             bool resize = text.Length != _text.Length;
             _text = text;
             InvalidatePaint();
@@ -378,15 +383,24 @@ public sealed class TabStrip : Control
             var r = new SKRect(0, 0, W, H);
             if (IsHovered)
                 Gfx.FillRound(c, r, H / 2f, Theme.SurfaceHover);
-            SKColor dot = _main.Services.Vault.Status switch
+            // Offline with an error = signed in but the server is unreachable (amber); Offline alone = signed out.
+            var vault = _main.Services.Vault;
+            SKColor? alert = vault.Status switch
             {
-                Core.Services.SyncState.Syncing => Theme.Warning,
                 Core.Services.SyncState.Error => Theme.Danger,
+                Core.Services.SyncState.Offline when vault.LastError is not null => Theme.Warning,
+                _ => null,
+            };
+            SKColor dot = alert ?? vault.Status switch
+            {
+                Core.Services.SyncState.Syncing => Theme.Accent,
                 Core.Services.SyncState.Offline => Theme.Idle,
                 _ => Theme.Success,
             };
+            if (alert is { } a)
+                Gfx.FillRound(c, r, H / 2f, a.WithAlpha(IsHovered ? (byte)48 : (byte)30));
             Gfx.Circle(c, 14, H / 2f, 3.5f, dot);
-            Gfx.Text(c, _text, 24, H / 2f, Theme.FontSm, Theme.WeightRegular, IsHovered ? Theme.TextPrimary : Theme.TextSecondary);
+            Gfx.Text(c, _text, 24, H / 2f, Theme.FontSm, Theme.WeightRegular, alert ?? (IsHovered ? Theme.TextPrimary : Theme.TextSecondary));
         }
     }
 }

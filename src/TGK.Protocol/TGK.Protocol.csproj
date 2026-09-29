@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>TGK.Protocol</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="TGK.Core.Tests" />
+    <InternalsVisibleTo Include="TGK.Server.Tests" />
+  </ItemGroup>
+
+</Project>

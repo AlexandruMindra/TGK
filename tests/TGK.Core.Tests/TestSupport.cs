@@ -35,7 +35,8 @@ internal static class SshKeygen
 
     /// <summary>Creates a key pair in <paramref name="directory"/> and returns the private key path.</summary>
     /// <param name="format">Optional ssh-keygen <c>-m</c> format, e.g. <c>PEM</c> for a legacy RSA key.</param>
-    public static string Generate(string directory, string type, string passphrase, int? bits = null, string? format = null)
+    /// <param name="rounds">bcrypt KDF rounds for encrypted keys; 1 keeps tests fast (ssh-keygen's default is 16).</param>
+    public static string Generate(string directory, string type, string passphrase, int? bits = null, string? format = null, int rounds = 1)
     {
         string path = System.IO.Path.Combine(directory, $"id_{type}_{Guid.NewGuid():N}");
         var args = new List<string> { "-q", "-t", type, "-N", passphrase, "-C", "tgk-test", "-f", path };
@@ -43,6 +44,8 @@ internal static class SshKeygen
             args.AddRange(["-b", b.ToString()]);
         if (format is not null)
             args.AddRange(["-m", format]);
+        if (passphrase.Length > 0 && format is null)
+            args.AddRange(["-a", rounds.ToString()]);
         Run([.. args]);
         return path;
     }

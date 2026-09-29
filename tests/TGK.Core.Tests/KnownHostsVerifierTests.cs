@@ -17,10 +17,10 @@ public sealed class KnownHostsVerifierTests : IDisposable
 
     public void Dispose() => _dir.Dispose();
 
-    private async Task<KnownHostsVerifier> CreateAsync(bool userAccepts)
+    private async Task<KnownHostsVerifier> CreateAsync(bool userAccepts, TimeSpan? pushLatency = null)
     {
-        _vault = new MockVaultService(_dir.Path, TimeSpan.Zero);
-        Assert.True((await _vault.LoginAsync("https://tgk.test", "alice", "pw", TestContext.Current.CancellationToken)).Success);
+        _vault = new MockVaultService(_dir.Path, pushLatency ?? TimeSpan.Zero);
+        Assert.True((await _vault.LoginAsync("https://tgk.test", "alice", "pw", null, false, TestContext.Current.CancellationToken)).Success);
         return new KnownHostsVerifier(_vault, info =>
         {
             _prompts.Add(info);
@@ -58,6 +58,17 @@ public sealed class KnownHostsVerifierTests : IDisposable
         // Second connection: now known, no prompt.
         Assert.True(await verifier.VerifyAsync(Key("SHA256:new"), TestContext.Current.CancellationToken));
         Assert.Single(_prompts);
+    }
+
+    [Fact]
+    public async Task AcceptedKey_DoesNotWaitForTheServer()
+    {
+        KnownHostsVerifier verifier = await CreateAsync(userAccepts: true, pushLatency: TimeSpan.FromSeconds(1)); // the runner waits for the push at the end
+
+        Task<bool> verify = verifier.VerifyAsync(Key("SHA256:new"), TestContext.Current.CancellationToken);
+
+        Assert.True(await verify.WaitAsync(TimeSpan.FromMilliseconds(500), TestContext.Current.CancellationToken));
+        Assert.Equal("SHA256:new", _vault.Current.FindKnownHost("srv.example.com", 22)!.FingerprintSha256);
     }
 
     [Fact]
@@ -114,7 +125,7 @@ public sealed class KnownHostsVerifierTests : IDisposable
     public async Task CancelledPrompt_Throws()
     {
         _vault = new MockVaultService(_dir.Path, TimeSpan.Zero);
-        Assert.True((await _vault.LoginAsync("https://tgk.test", "alice", "pw", TestContext.Current.CancellationToken)).Success);
+        Assert.True((await _vault.LoginAsync("https://tgk.test", "alice", "pw", null, false, TestContext.Current.CancellationToken)).Success);
         var neverAnswered = new TaskCompletionSource<bool>();
         var verifier = new KnownHostsVerifier(_vault, (_, _) => neverAnswered.Task);
         using var cts = new CancellationTokenSource();

@@ -5,3 +5,10 @@ dist/
 .vs/
 .idea/
 TestResults/
+/data/
+
+# Server runtime data (SQLite DB with accounts and TOTP secrets)
+data/
+*.db
+*.db-wal
+*.db-shm

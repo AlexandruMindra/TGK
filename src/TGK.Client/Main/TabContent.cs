@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using Blossom.Core.Visual;
 using TGK.Client.Views;
+using TGK.Core.Ssh;
 
 namespace TGK.Client.Main;
 
@@ -28,6 +30,7 @@ public abstract class TabContent : VisualElement
     private string? _statusText;
     private string? _sizeText;
     private bool _needsAttention;
+    private IReadOnlyList<TunnelStatus> _tunnels = [];
 
     protected TabContent()
     {
@@ -47,10 +50,13 @@ public abstract class TabContent : VisualElement
     /// <summary>Right side of the status bar, e.g. the terminal size <c>120×32</c>; null hides it.</summary>
     public string? SizeText => _sizeText;
 
+    /// <summary>The live session's tunnels and how they are doing (the status bar's tunnel chip); empty when there are none.</summary>
+    public IReadOnlyList<TunnelStatus> Tunnels => _tunnels;
+
     /// <summary>Something happened in this background tab (e.g. a terminal bell); cleared when it is activated.</summary>
     public bool NeedsAttention => _needsAttention;
 
-    /// <summary>Raised on the UI thread when the title, status, attention flag or status-bar texts change.</summary>
+    /// <summary>Raised on the UI thread when the title, status, attention flag, tunnels or status-bar texts change.</summary>
     public event Action<TabContent>? Changed;
 
     /// <summary>Element to focus when the tab is activated or when keys arrive while nothing has focus.</summary>
@@ -101,6 +107,14 @@ public abstract class TabContent : VisualElement
     }
 
     internal void ClearAttention() => _needsAttention = false;
+
+    protected void SetTunnels(IReadOnlyList<TunnelStatus> tunnels)
+    {
+        if (_tunnels.Count == 0 && tunnels.Count == 0)
+            return;
+        _tunnels = tunnels;
+        Changed?.Invoke(this);
+    }
 
     protected void SetSizeText(string? sizeText)
     {

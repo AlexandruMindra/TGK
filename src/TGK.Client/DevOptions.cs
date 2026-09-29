@@ -11,8 +11,14 @@ public sealed class DevOptions
     public const string DevPassword = "demo";
     public const string DevServer = "mock://localhost";
 
-    /// <summary><c>--dev-login</c>: sign in to the mock server as <see cref="DevUser"/> without showing the login form.</summary>
+    /// <summary>
+    /// Sign in to the mock server as <see cref="DevUser"/> without showing the login form (when no kept session was
+    /// restored): <c>--dev-login</c>, <c>--dev-connect</c> or a scene that needs a vault.
+    /// </summary>
     public bool AutoLogin { get; private init; }
+
+    /// <summary>Don't restore a kept session at startup: <c>--dev-login</c>, <c>--dev-connect</c> or a login-form scene.</summary>
+    public bool SkipRestore { get; private init; }
 
     /// <summary><c>--scene=&lt;name&gt;</c>: open a UI state directly (for screenshots). See <see cref="Scenes"/>.</summary>
     public string? Scene { get; private init; }
@@ -32,7 +38,15 @@ public sealed class DevOptions
     /// <summary><c>--dev-send=&lt;text&gt;</c>: typed into the <c>--dev-connect</c> session once it is connected; \r \n \t \e \\ are unescaped.</summary>
     public string? Send { get; private init; }
 
-    public static readonly string[] Scenes = ["login", "main", "host-editor", "identities", "settings", "hostkey", "hostkey-changed", "password-prompt", "menu"];
+    public static readonly string[] Scenes =
+    [
+        "login", "login-totp", "register", "register-totp",
+        "main", "host-editor", "host-editor-connection", "host-editor-tunnels", "host-editor-appearance", "group-settings", "connection-defaults",
+        "identities", "settings", "hostkey", "hostkey-changed", "password-prompt", "menu", "devices", "change-password",
+    ];
+
+    /// <summary>Scenes of the login screen (the rest need a signed-in vault: a restored session, else the mock).</summary>
+    private static readonly string[] LoginScenes = ["login", "login-totp", "register", "register-totp"];
 
     public static DevOptions Parse(string[] args)
     {
@@ -59,9 +73,13 @@ public sealed class DevOptions
             Console.Error.WriteLine($"Unknown scene '{scene}'. Known: {string.Join(", ", Scenes)}");
             scene = null;
         }
-        // Every scene except the login form, and a dev connection, need a signed-in vault.
-        autoLogin |= (scene is not null && scene != "login") || connect is not null;
-        return new DevOptions { AutoLogin = autoLogin, Scene = scene, WindowSize = size, DebugOverlay = overlay, Connect = connect, Send = send };
+        bool loginScene = scene is not null && Array.IndexOf(LoginScenes, scene) >= 0;
+        bool skipRestore = autoLogin || connect is not null || loginScene;
+        autoLogin |= (scene is not null && !loginScene) || connect is not null;
+        return new DevOptions
+        {
+            AutoLogin = autoLogin, SkipRestore = skipRestore, Scene = scene, WindowSize = size, DebugOverlay = overlay, Connect = connect, Send = send,
+        };
     }
 
     /// <summary>Splits <see cref="Connect"/> into the address for quick connect and the optional password.</summary>

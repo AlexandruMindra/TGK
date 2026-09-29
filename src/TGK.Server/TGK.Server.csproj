@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <AssemblyName>tgk-server</AssemblyName>
+    <RootNamespace>TGK.Server</RootNamespace>
+    <Version>1.0.0</Version>
+    <!-- Plain API server: no static web assets, no IIS web.config in publish output. -->
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
+    <IsWebConfigTransformDisabled>true</IsWebConfigTransformDisabled>
+    <!-- Workstation GC: a small idle footprint suits a light personal server. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TGK.Protocol\TGK.Protocol.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="TGK.Server.Tests" />
+  </ItemGroup>
+</Project>

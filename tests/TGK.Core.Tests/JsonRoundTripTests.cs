@@ -59,7 +59,7 @@ public class JsonRoundTripTests
         var store = new PrefsStore(dir.Path);
         var prefs = new ClientPrefs
         {
-            LastServer = "https://tgk.example.com", LastUsername = "axel", RememberLogin = true,
+            LastServer = "https://tgk.example.com", LastUsername = "axel", KeepSignedIn = false,
             SidebarCollapsed = true, SidebarWidth = 300,
             Terminal = new TerminalSettings { FontSize = 16, ScrollbackLines = 500, CursorShape = TerminalSettings.CursorBar, CursorBlink = false, CopyOnSelect = true },
         };
@@ -70,6 +70,7 @@ public class JsonRoundTripTests
         Assert.Equal(Path.Combine(dir.Path, "prefs.json"), store.FilePath);
         Assert.Equal("https://tgk.example.com", loaded.LastServer);
         Assert.Equal(300, loaded.SidebarWidth);
+        Assert.False(loaded.KeepSignedIn);
         Assert.Equal(TerminalSettings.CursorBar, loaded.Terminal.CursorShape);
         Assert.True(loaded.Terminal.CopyOnSelect);
         Assert.DoesNotContain("password", File.ReadAllText(store.FilePath), StringComparison.OrdinalIgnoreCase);

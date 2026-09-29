@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Blossom;
 using Blossom.Core.Input;
 using Silk.NET.Input;
@@ -89,6 +90,9 @@ public class TextField : Control, IKeyInput, IFocusable
     public float FontSize { get; set; } = Theme.FontBase;
     public bool Mono { get; set; }
     public int MaxLength { get; set; } = 4096;
+
+    /// <summary>Accept only the digits 0-9 (typed or pasted); anything else is dropped.</summary>
+    public bool DigitsOnly { get; set; }
     public bool IsTabStop { get; set; } = true;
     public bool HasError { get => _hasError; set => SetAndPaint(ref _hasError, value); }
     public bool IsFocused => _focused;
@@ -237,8 +241,10 @@ public class TextField : Control, IKeyInput, IFocusable
     }
 
     // Single-line: pasted newlines become spaces, a trailing newline is dropped, other control characters vanish.
-    private static string Sanitize(string s)
+    private string Sanitize(string s)
     {
+        if (DigitsOnly)
+            return string.Concat(s.Where(char.IsAsciiDigit));
         if (s.AsSpan().IndexOfAnyInRange('\0', '\u001F') < 0 && !s.Contains('\u007F'))
             return s;
         s = s.Replace("\r\n", "\n").TrimEnd('\n').Replace('\n', ' ').Replace('\t', ' ');

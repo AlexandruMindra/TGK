@@ -7,6 +7,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
+using TGK.Core.Models;
 using TGK.Core.Ssh;
 using Xunit;
 
@@ -47,6 +48,36 @@ public class SshSessionTests
     }
 
     [Fact]
+    public async Task UnreachableJumpHost_IsNamedInTheError()
+    {
+        var (session, _) = NewSession();
+        SshConnectRequest request = Request("10.1.2.3", 22) with { JumpChain = [Request("127.0.0.1", UnusedPort()) with { Name = "bastion" }] };
+
+        var ex = await Assert.ThrowsAsync<SshSessionException>(() => session.ConnectAsync(request, TestContext.Current.CancellationToken));
+
+        Assert.Equal(SshErrorKind.ConnectionRefused, ex.Kind);
+        Assert.StartsWith("Jump host bastion (127.0.0.1): Connection refused by 127.0.0.1:", ex.Message);
+        Assert.Equal(0, ex.JumpHostIndex);
+    }
+
+    [Fact]
+    public async Task FailedConnect_StopsTheTunnels()
+    {
+        var (session, _) = NewSession();
+        int changes = 0;
+        session.TunnelsChanged += () => Interlocked.Increment(ref changes);
+        SshConnectRequest request = Request("127.0.0.1", UnusedPort()) with
+        {
+            Tunnels = [new PortForward { Kind = ForwardKind.Dynamic, BindPort = 1080 }, new PortForward { Kind = ForwardKind.Dynamic, BindPort = 1081, Enabled = false }],
+        };
+
+        await Assert.ThrowsAsync<SshSessionException>(() => session.ConnectAsync(request, TestContext.Current.CancellationToken));
+
+        Assert.Equal(TunnelState.Stopped, Assert.Single(session.Tunnels).State);
+        Assert.Equal(1, changes);
+    }
+
+    [Fact]
     public async Task InvalidRequest_FailsWithoutConnecting()
     {
         var (session, states) = NewSession();
@@ -75,7 +106,7 @@ public class SshSessionTests
     {
         Assert.SkipUnless(SshKeygen.IsAvailable, "ssh-keygen is not installed");
         using var dir = new TempDirectory();
-        string key = File.ReadAllText(SshKeygen.Generate(dir.Path, "ed25519", "secret"));
+        string key = File.ReadAllText(SshKeygen.Generate(dir.Path, "ed25519", "secret", rounds: 16));
         var (session, _) = NewSession();
         SshConnectRequest request = Request("127.0.0.1", UnusedPort()) with { Password = null, PrivateKey = key, Passphrase = "secret" };
 

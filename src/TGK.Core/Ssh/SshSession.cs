@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
@@ -7,6 +9,7 @@ using System.Threading.Channels;
 using System.Threading.Tasks;
 using Renci.SshNet;
 using Renci.SshNet.Common;
+using TGK.Core.Models;
 
 namespace TGK.Core.Ssh;
 
@@ -14,7 +17,13 @@ namespace TGK.Core.Ssh;
 /// <remarks>
 /// <para>Single-use: <see cref="ConnectAsync"/> may be called once; to reconnect, dispose and create a new session.</para>
 /// <para>
-/// Threading: <see cref="StateChanged"/> and <see cref="DataReceived"/> are raised on background threads, so UI
+/// Jump hosts (<see cref="SshConnectRequest.JumpChain"/>) are connected in turn, each next hop through a local
+/// forwarding on the previous one that listens on an ephemeral 127.0.0.1 port for the session's lifetime (SSH.NET
+/// cannot run SSH over a channel stream); like any <c>ssh -L</c>, other local processes could connect to that port,
+/// which only reaches the next hop's SSH port.
+/// </para>
+/// <para>
+/// Threading: <see cref="StateChanged"/>, <see cref="DataReceived"/> and <see cref="TunnelsChanged"/> are raised on background threads, so UI
 /// handlers must marshal (e.g. <c>Browser.Post</c>). <see cref="Send"/>, <see cref="Resize"/>, <see cref="Disconnect"/>
 /// and <see cref="Dispose"/> are thread-safe and do not wait on the network, so they are fine on the UI thread.
 /// </para>
@@ -29,6 +38,8 @@ public sealed class SshSession : IDisposable
     public static readonly TimeSpan PromptTimeout = TimeSpan.FromSeconds(100);
 
     private const int ReadBufferSize = 32 * 1024;
+    private static readonly TimeSpan ConnectionErrorGrace = TimeSpan.FromMilliseconds(250);
+    private const string JumpHostPrefix = "Jump host ";
 
     // Output SSH.NET may buffer ahead of the reader before its listener thread is held (see OnShellData), and input
     // that may wait for a server that stopped reading before further input is refused.
@@ -50,17 +61,18 @@ public sealed class SshSession : IDisposable
 
     // Guarded by _gate.
     private SessionState _state = SessionState.Idle;
-    private SshConnectRequest? _request;
     private CancellationTokenSource? _attempt; // live only while ConnectAsync runs
     private Connection? _connection;           // set once the shell is open; until then the connect task owns it
-    private string? _trustedFingerprint;
-    private bool _hostKeyRejected;
+    private SshConnectRequest? _currentHop;    // the hop being connected (the request itself for the final host)
+    private TimeSpan _stepTimeout;             // the current hop's connect timeout
+    private string? _trustedFingerprint;       // the final host's
+    private SshConnectRequest? _rejectedHop;    // whose host key the user did not trust
     private bool _promptDeclined;
     private bool _promptTimedOut;
-    private Exception? _connectionError;
     private TerminalSize _size;
     private TerminalSize _sentSize;
     private string? _lastError;
+    private TunnelStatus[] _tunnels = [];
     private bool _disposed;
 
     /// <param name="verifier">Decides whether to trust the server's host key.</param>
@@ -88,17 +100,27 @@ public sealed class SshSession : IDisposable
     /// </summary>
     public event Action<byte[], int>? DataReceived;
 
+    /// <summary>Raised on a background thread whenever <see cref="Tunnels"/> changed.</summary>
+    public event Action? TunnelsChanged;
+
     public SessionState State { get { lock (_gate) return _state; } }
+
+    /// <summary>
+    /// The enabled tunnels of the request and how they are doing: Starting until the shell is open, then Active or
+    /// Failed (with the reason); Stopped once the session ended. A failed tunnel never ends the session.
+    /// </summary>
+    public IReadOnlyList<TunnelStatus> Tunnels { get { lock (_gate) return _tunnels; } }
 
     /// <summary>The message of the last <see cref="SessionState.Failed"/> transition.</summary>
     public string? LastError { get { lock (_gate) return _lastError; } }
 
-    /// <summary>The server's host key fingerprint once it was trusted.</summary>
+    /// <summary>The (final) server's host key fingerprint once it was trusted.</summary>
     public string? HostKeyFingerprint { get { lock (_gate) return _trustedFingerprint; } }
 
     /// <summary>
-    /// Connects, authenticates (private key, then password, then keyboard-interactive) and opens a PTY shell.
-    /// Completes once <see cref="State"/> is <see cref="SessionState.Connected"/>.
+    /// Connects (through the jump hosts, if any), authenticates (private key, then password, then keyboard-interactive)
+    /// and opens a PTY shell. Completes once <see cref="State"/> is <see cref="SessionState.Connected"/>; the tunnels
+    /// start and the startup command is sent right after.
     /// </summary>
     /// <exception cref="SshSessionException">Connecting failed; the message is user-facing. State becomes Failed.</exception>
     /// <exception cref="OperationCanceledException">
@@ -113,10 +135,12 @@ public sealed class SshSession : IDisposable
             if (_state != SessionState.Idle)
                 throw new InvalidOperationException("A session connects only once; create a new SshSession to reconnect.");
             _state = SessionState.Connecting;
-            _request = request;
             _size = new TerminalSize(request.Cols, request.Rows, 0, 0);
+            _tunnels = request.Tunnels.Where(t => t.Enabled).Select(t => new TunnelStatus(t.Clone(), TunnelState.Starting)).ToArray();
         }
-        StateChanged?.Invoke(SessionState.Connecting, $"Connecting to {request.Host}:{request.Port}...");
+        StateChanged?.Invoke(SessionState.Connecting, request.JumpChain.Count == 0
+            ? $"Connecting to {request.Host}:{request.Port}..."
+            : $"Connecting to jump host {request.JumpChain[0].Label}...");
 
         using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct);
         Task<Connection>? openTask = null;
@@ -135,14 +159,16 @@ public sealed class SshSession : IDisposable
         }
         catch (Exception ex)
         {
-            bool cancelled, hostKeyRejected, promptTimedOut;
+            bool cancelled, promptTimedOut;
+            SshConnectRequest? rejected, hop;
             lock (_gate)
             {
                 _attempt = null;
                 _connection = null; // disposed below once the open task is done with it
                 cancelled = ct.IsCancellationRequested || _state == SessionState.Closed || _promptDeclined;
-                hostKeyRejected = _hostKeyRejected;
+                rejected = _rejectedHop;
                 promptTimedOut = _promptTimedOut;
+                hop = _currentHop ?? request;
             }
             if (openTask is not null)
                 DisposeWhenDone(openTask);
@@ -156,9 +182,12 @@ public sealed class SshSession : IDisposable
             SshSessionException error =
                 promptTimedOut ? new(SshErrorKind.Timeout,
                     $"The prompt was not answered within {PromptTimeout.TotalSeconds:0} seconds, and servers do not wait much longer for a sign-in. Retry to connect again.", ex)
-                : hostKeyRejected ? new(SshErrorKind.HostKeyRejected, $"The host key of {request.Host} was not trusted.", ex)
-                : ex is OperationCanceledException ? new(SshErrorKind.Timeout, $"Timed out connecting to {request.Host}:{request.Port}.", ex)
-                : SshErrors.Map(ex, request);
+                : rejected is not null ? new(SshErrorKind.HostKeyRejected, $"The host key of {rejected.Host} was not trusted.", ex)
+                : ex is OperationCanceledException ? new(SshErrorKind.Timeout, $"Timed out connecting to {hop.Host}:{hop.Port}.", ex)
+                : SshErrors.Map(ex, hop);
+            int jumpIndex = IndexOf(request.JumpChain, hop);
+            if (jumpIndex >= 0 && error.JumpHostIndex is null)
+                error = new SshSessionException(error.Kind, $"{JumpHostPrefix}{hop.Label}: {error.Message}", ex) { JumpHostIndex = jumpIndex };
             TryTransition(SessionState.Failed, error.Message);
             throw error;
         }
@@ -172,6 +201,10 @@ public sealed class SshSession : IDisposable
         new Thread(() => ReadLoop(shell)) { IsBackground = true, Name = $"SSH reader {request.Host}" }.Start();
         _ = Task.Run(() => WriteLoopAsync(shell));
         SyncWindowSize();
+        if (!string.IsNullOrEmpty(request.StartupCommand))
+            SendText(request.StartupCommand.ReplaceLineEndings("\r") + "\r");
+        if (Tunnels.Count > 0)
+            _ = Task.Run(() => StartTunnels(connection.Final));
     }
 
     /// <summary>
@@ -219,30 +252,69 @@ public sealed class SshSession : IDisposable
             _disposed = true;
     }
 
-    /// <summary>Creates the connection and opens the shell; runs on a worker thread and disposes its connection if it fails.</summary>
+    /// <summary>
+    /// Connects every hop and opens the shell on the last one; runs on a worker thread and disposes its connection if
+    /// it fails. Each jump host forwards a local port to the next hop, which is connected through it.
+    /// </summary>
     private async Task<Connection> OpenAsync(SshConnectRequest request, CancellationToken token)
     {
-        Connection connection = CreateConnection(request);
+        var connection = new Connection();
         try
         {
-            lock (_gate)
-                _attempt?.CancelAfter(request.ConnectTimeout); // the limit starts once the key is loaded
-            token.ThrowIfCancellationRequested();
+            SshConnectRequest[] hops = [.. request.JumpChain, request];
+            Hop? previous = null;
+            for (int i = 0; i < hops.Length; i++)
+            {
+                SshConnectRequest target = hops[i];
+                lock (_gate)
+                    _currentHop = target;
+                if (previous is not null)
+                    TryTransition(SessionState.Connecting, $"Connecting to {target.Label} through {previous.Request.Label}...");
 
-            SshClient client = connection.Client;
-            await client.ConnectAsync(token).ConfigureAwait(false);
-            client.ConnectionInfo.Timeout = request.ConnectTimeout; // prompts are over
-            token.ThrowIfCancellationRequested();
+                Hop hop = CreateHop(target, isFinal: i == hops.Length - 1, via: previous?.Forward);
+                connection.Hops.Add(hop);
+                lock (_gate)
+                {
+                    _stepTimeout = target.ConnectTimeout;
+                    _attempt?.CancelAfter(target.ConnectTimeout); // the limit starts once the key is loaded
+                }
+                token.ThrowIfCancellationRequested();
 
+                try
+                {
+                    await hop.Client.ConnectAsync(token).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (previous is not null && hop.Client.ConnectionInfo.ServerVersion is null
+                    && ex is SshConnectionException or SocketException && !token.IsCancellationRequested)
+                {
+                    // The local end of the forwarding always accepts; no SSH banner came back through it, so the jump host
+                    // could not open its connection onward (SSH.NET does not report the jump host's reason).
+                    throw new SshSessionException(SshErrorKind.HostUnreachable,
+                        $"{JumpHostPrefix}{previous.Request.Label} could not reach an SSH server at {target.Host}:{target.Port} " +
+                        "(connection refused, unreachable from the jump host, or port forwarding is disabled there).", ex) { JumpHostIndex = i - 1 };
+                }
+                hop.Client.ConnectionInfo.Timeout = target.ConnectTimeout; // prompts are over
+                token.ThrowIfCancellationRequested();
+
+                if (i < hops.Length - 1)
+                    hop.ForwardTo(hops[i + 1]);
+                previous = hop;
+            }
+
+            SshClient client = connection.Final;
             TerminalSize size;
             lock (_gate)
                 size = _size;
-            ShellStream shell = client.CreateShellStream(request.TermType,
-                (uint)size.Cols, (uint)size.Rows, (uint)size.PixelWidth, (uint)size.PixelHeight, ReadBufferSize);
+            ShellStream shell = request.Environment.Count > 0 && EnvironmentShell.IsSupported
+                ? EnvironmentShell.Open(client, request.TermType, (uint)size.Cols, (uint)size.Rows, (uint)size.PixelWidth, (uint)size.PixelHeight,
+                    ReadBufferSize, request.Environment)
+                : client.CreateShellStream(request.TermType, (uint)size.Cols, (uint)size.Rows, (uint)size.PixelWidth, (uint)size.PixelHeight, ReadBufferSize);
             shell.DataReceived += OnShellData;
             // From here on SSH.NET's timeout only limits how long a write may wait for the server to accept more input
-            // (its channel window). A busy program may not read its input for a long time; that is not an error.
-            client.ConnectionInfo.Timeout = Timeout.InfiniteTimeSpan;
+            // (its channel window). A busy program may not read its input for a long time; that is not an error. The
+            // jump hosts carry that input too.
+            foreach (Hop hop in connection.Hops)
+                hop.Client.ConnectionInfo.Timeout = Timeout.InfiniteTimeSpan;
 
             lock (_gate)
             {
@@ -261,7 +333,11 @@ public sealed class SshSession : IDisposable
         }
     }
 
-    private Connection CreateConnection(SshConnectRequest request)
+    /// <summary>
+    /// Loads the key and creates the client for one hop, connecting directly or, for a hop behind a jump host, to
+    /// <paramref name="via"/>'s local port. Its host key is always verified against the hop's own host and port.
+    /// </summary>
+    private Hop CreateHop(SshConnectRequest request, bool isFinal, ForwardedPortLocal? via)
     {
         string username = request.Username.Trim();
         PrivateKeyFile? keyFile = string.IsNullOrWhiteSpace(request.PrivateKey)
@@ -269,9 +345,10 @@ public sealed class SshSession : IDisposable
             : KeyInspector.Load(request.PrivateKey, request.Passphrase);
 
         // SSH.NET tries the methods the server allows in the order listed here.
+        ConnectionInfo? info = null;
         var methods = new List<AuthenticationMethod>();
         if (keyFile is not null)
-            methods.Add(new PrivateKeyAuthenticationMethod(username, keyFile));
+            methods.Add(new PrivateKeyAuthenticationMethod(username, new SingleSignatureKeySource(keyFile, () => info?.ServerVersion)));
         if (!string.IsNullOrEmpty(request.Password))
             methods.Add(new PasswordAuthenticationMethod(username, request.Password));
         if (!string.IsNullOrEmpty(request.Password) || _promptUser is not null)
@@ -286,18 +363,22 @@ public sealed class SshSession : IDisposable
             methods.Add(interactive);
         }
 
-        var info = new ConnectionInfo(request.Host.Trim(), request.Port, username, methods.ToArray())
-        {
-            // SSH.NET waits for key exchange and authentication, which include our prompts, with this timeout.
-            Timeout = request.ConnectTimeout + PromptTimeout,
-        };
+        info = via is null
+            ? new ConnectionInfo(request.Host.Trim(), request.Port, username, methods.ToArray())
+            : new ConnectionInfo(via.BoundHost, (int)via.BoundPort, username, methods.ToArray());
+        // SSH.NET waits for key exchange and authentication, which include our prompts, with this timeout.
+        info.Timeout = request.ConnectTimeout + PromptTimeout;
+        if (!request.LegacyAlgorithms)
+            SshAlgorithms.RemoveLegacy(info);
+
         var client = new SshClient(info)
         {
             KeepAliveInterval = request.KeepAlive > TimeSpan.Zero ? request.KeepAlive : Timeout.InfiniteTimeSpan,
         };
-        client.HostKeyReceived += OnHostKeyReceived;
-        client.ErrorOccurred += OnConnectionError;
-        return new Connection(client, keyFile);
+        var hop = new Hop(request, isFinal, client, keyFile);
+        client.HostKeyReceived += (_, e) => OnHostKeyReceived(hop, e);
+        client.ErrorOccurred += (_, e) => OnConnectionError(hop, e.Exception);
+        return hop;
     }
 
     // Runs on an SSH.NET worker thread; throwing fails the keyboard-interactive method (and so the sign-in).
@@ -331,36 +412,36 @@ public sealed class SshSession : IDisposable
         && !Array.Exists(SecondFactorWords, w => text.Contains(w, StringComparison.OrdinalIgnoreCase));
 
     // Raised on SSH.NET's message-listener thread during key exchange; the connection waits for our answer.
-    private void OnHostKeyReceived(object? sender, HostKeyEventArgs e)
+    private void OnHostKeyReceived(Hop hop, HostKeyEventArgs e)
     {
         string fingerprint = "SHA256:" + e.FingerPrintSHA256;
-        SshConnectRequest? request;
         lock (_gate)
         {
-            if (_trustedFingerprint is not null)
+            if (hop.TrustedFingerprint is not null)
             {
                 // Re-key on an established connection: the host key must not change mid-session.
-                e.CanTrust = fingerprint == _trustedFingerprint;
+                e.CanTrust = fingerprint == hop.TrustedFingerprint;
                 return;
             }
-            request = _request;
-        }
-        if (request is null)
-        {
-            e.CanTrust = false;
-            return;
         }
 
+        SshConnectRequest request = hop.Request;
         var info = new HostKeyInfo(request.Host, request.Port, e.HostKeyName, fingerprint);
         bool trusted = WaitForUser(token => _verifier.VerifyAsync(info, token), false);
         lock (_gate)
         {
             if (trusted)
-                _trustedFingerprint = fingerprint;
+            {
+                hop.TrustedFingerprint = fingerprint;
+                if (hop.IsFinal)
+                    _trustedFingerprint = fingerprint;
+            }
             else
-                _hostKeyRejected = true;
+            {
+                _rejectedHop = request;
+            }
         }
-        if (trusted)
+        if (trusted && hop.IsFinal)
             TryTransition(SessionState.Authenticating, $"Authenticating as {request.Username}...");
         e.CanTrust = trusted;
     }
@@ -373,13 +454,11 @@ public sealed class SshSession : IDisposable
     private T WaitForUser<T>(Func<CancellationToken, Task<T>> ask, T fallback)
     {
         CancellationToken attemptToken;
-        TimeSpan connectTimeout;
         lock (_gate)
         {
-            if (_attempt is null || _request is null)
+            if (_attempt is null)
                 return fallback; // the attempt was abandoned
             attemptToken = _attempt.Token;
-            connectTimeout = _request.ConnectTimeout;
             _attempt.CancelAfter(Timeout.InfiniteTimeSpan);
         }
 
@@ -402,18 +481,27 @@ public sealed class SshSession : IDisposable
                 _promptTimedOut = true;
                 result = fallback;
             }
-            _attempt?.CancelAfter(connectTimeout); // a fresh budget for the rest of the sign-in
+            _attempt?.CancelAfter(_stepTimeout); // a fresh budget for the rest of the sign-in
         }
         return result;
     }
 
-    private void OnConnectionError(object? sender, ExceptionEventArgs e)
+    // SSH.NET's listener thread. A dropped connection (the server died, the network went away) is reported only here:
+    // the shell stream stays open and the reader would wait forever, and a jump host's connection carries the hops
+    // behind it. So the session ends as lost: at once for a jump host (the root cause, reported before the hops behind
+    // it notice), after a moment for the final host, in which a shell that exited just before (and whose server then
+    // disconnected) ends it as closed instead.
+    private void OnConnectionError(Hop hop, Exception error)
     {
-        lock (_gate)
+        if (State != SessionState.Connected)
+            return;
+        if (!hop.IsFinal)
         {
-            if (_state == SessionState.Connected)
-                _connectionError ??= e.Exception;
+            Close(SessionState.Failed, $"Connection lost: {JumpHostPrefix}{hop.Request.Label}: {SshErrors.DescribeLoss(error)}.");
+            return;
         }
+        _ = Task.Delay(ConnectionErrorGrace).ContinueWith(
+            _ => Close(SessionState.Failed, $"Connection lost: {SshErrors.DescribeLoss(error)}."), TaskScheduler.Default);
     }
 
     // SSH.NET's listener thread, after it buffered the data for the reader. SSH.NET re-opens the channel window as
@@ -454,13 +542,10 @@ public sealed class SshSession : IDisposable
             failure = ex;
         }
 
-        Exception? error;
-        lock (_gate)
-            error = failure ?? _connectionError;
-        if (error is null)
+        if (failure is null)
             Close(SessionState.Closed, "Connection closed.");
         else
-            Close(SessionState.Failed, $"Connection lost: {SshErrors.DescribeLoss(error)}.");
+            Close(SessionState.Failed, $"Connection lost: {SshErrors.DescribeLoss(failure)}.");
     }
 
     private async Task WriteLoopAsync(ShellStream shell)
@@ -510,9 +595,63 @@ public sealed class SshSession : IDisposable
         }
     }
 
+    /// <summary>Starts the tunnels one by one on a worker thread; each ends up Active or Failed, never failing the session.</summary>
+    private void StartTunnels(SshClient client)
+    {
+        TunnelStatus[] tunnels;
+        lock (_gate)
+            tunnels = _tunnels;
+        for (int i = 0; i < tunnels.Length; i++)
+        {
+            PortForward forward = tunnels[i].Forward;
+            TunnelStatus status;
+            try
+            {
+                ForwardedPort port = forward.Kind switch
+                {
+                    ForwardKind.Local => new ForwardedPortLocal(forward.BindAddress, (uint)forward.BindPort, forward.DestinationHost!, (uint)forward.DestinationPort!.Value),
+                    ForwardKind.Remote => new ForwardedPortRemote(forward.BindAddress, (uint)forward.BindPort, forward.DestinationHost!, (uint)forward.DestinationPort!.Value),
+                    _ => new ForwardedPortDynamic(forward.BindAddress, (uint)forward.BindPort),
+                };
+                // One forwarded connection failing (e.g. its destination refused it) leaves the tunnel running.
+                port.Exception += (_, e) => CoreLog.Warn($"Tunnel {forward}: {e.Exception.Message}");
+                client.AddForwardedPort(port);
+                port.Start();
+                status = tunnels[i] with { State = TunnelState.Active };
+            }
+            catch (Exception ex)
+            {
+                status = tunnels[i] with { State = TunnelState.Failed, Error = DescribeTunnelFailure(forward, ex) };
+            }
+
+            lock (_gate)
+            {
+                if (_state != SessionState.Connected)
+                    return; // closed meanwhile: Close reported the tunnels stopped
+                _tunnels = [.. _tunnels];
+                _tunnels[i] = status;
+            }
+            TunnelsChanged?.Invoke();
+        }
+    }
+
+    private static string DescribeTunnelFailure(PortForward forward, Exception ex) => ex switch
+    {
+        SocketException { SocketErrorCode: SocketError.AddressAlreadyInUse } =>
+            $"Port {forward.BindPort} on {forward.BindAddress} is already in use.",
+        SocketException { SocketErrorCode: SocketError.AccessDenied } =>
+            $"Not allowed to listen on port {forward.BindPort} (ports below 1024 need administrator rights).",
+        SocketException { SocketErrorCode: SocketError.AddressNotAvailable } =>
+            $"{forward.BindAddress} is not an address of this computer.",
+        SshException when forward.Kind == ForwardKind.Remote =>
+            $"The server refused to listen on {forward.BindAddress}:{forward.BindPort} (port forwarding may be disabled there, or the port is in use).",
+        _ => ex.Message,
+    };
+
     /// <summary>Moves to <paramref name="next"/> unless the session has already ended. Returns false if it had.</summary>
     private bool TryTransition(SessionState next, string? message)
     {
+        bool tunnelsStopped;
         lock (_gate)
         {
             if (_state is SessionState.Closed or SessionState.Failed)
@@ -520,8 +659,20 @@ public sealed class SshSession : IDisposable
             _state = next;
             if (next == SessionState.Failed)
                 _lastError = message;
+            tunnelsStopped = (next is SessionState.Closed or SessionState.Failed) && StopTunnels();
         }
         StateChanged?.Invoke(next, message);
+        if (tunnelsStopped)
+            TunnelsChanged?.Invoke();
+        return true;
+    }
+
+    /// <summary>Marks the tunnels that are not Failed as Stopped; returns whether any changed. Caller holds <see cref="_gate"/>.</summary>
+    private bool StopTunnels()
+    {
+        if (!Array.Exists(_tunnels, t => t.State is TunnelState.Starting or TunnelState.Active))
+            return false;
+        _tunnels = _tunnels.Select(t => t.State == TunnelState.Failed ? t : t with { State = TunnelState.Stopped }).ToArray();
         return true;
     }
 
@@ -529,6 +680,7 @@ public sealed class SshSession : IDisposable
     {
         Connection? connection;
         CancellationTokenSource? attempt;
+        bool tunnelsStopped;
         lock (_gate)
         {
             if (_state is SessionState.Idle or SessionState.Closed or SessionState.Failed)
@@ -539,6 +691,7 @@ public sealed class SshSession : IDisposable
             connection = _connection;
             _connection = null;
             attempt = _attempt;
+            tunnelsStopped = StopTunnels();
         }
 
         try
@@ -553,10 +706,22 @@ public sealed class SshSession : IDisposable
         lock (_outputFlow)
             Monitor.PulseAll(_outputFlow); // releases a listener held by OnShellData
         StateChanged?.Invoke(state, message);
+        if (tunnelsStopped)
+            TunnelsChanged?.Invoke();
 
         // Disconnecting waits for SSH.NET's listener thread, so keep it off the caller's (UI) thread.
         if (connection is not null)
             _ = Task.Run(connection.Dispose);
+    }
+
+    private static int IndexOf(IReadOnlyList<SshConnectRequest> chain, SshConnectRequest hop)
+    {
+        for (int i = 0; i < chain.Count; i++)
+        {
+            if (ReferenceEquals(chain[i], hop))
+                return i;
+        }
+        return -1;
     }
 
     /// <summary>Disposes the connection of an abandoned attempt once its open task is done (a failed task disposed its own).</summary>
@@ -572,36 +737,68 @@ public sealed class SshSession : IDisposable
     private readonly record struct TerminalSize(int Cols, int Rows, int PixelWidth, int PixelHeight);
 
     /// <summary>The SSH.NET objects behind one connection attempt, disposed together (once).</summary>
-    private sealed class Connection(SshClient client, PrivateKeyFile? keyFile) : IDisposable
+    private sealed class Connection : IDisposable
     {
         private int _disposed;
 
-        public SshClient Client { get; } = client;
+        /// <summary>Jump hosts in connection order, then the final host.</summary>
+        public List<Hop> Hops { get; } = [];
+
+        public SshClient Final => Hops[^1].Client;
         public ShellStream? Shell { get; set; }
 
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0)
                 return;
+            Try(() => Shell?.Dispose());
+            for (int i = Hops.Count - 1; i >= 0; i--) // innermost first: each hop runs through the ones before it
+                Hops[i].Dispose();
+        }
+    }
+
+    /// <summary>One SSH connection of a (possibly jumped) session.</summary>
+    private sealed class Hop(SshConnectRequest request, bool isFinal, SshClient client, PrivateKeyFile? keyFile) : IDisposable
+    {
+        public SshConnectRequest Request { get; } = request;
+        public bool IsFinal { get; } = isFinal;
+        public SshClient Client { get; } = client;
+
+        /// <summary>Guarded by the session's gate.</summary>
+        public string? TrustedFingerprint { get; set; }
+
+        /// <summary>The local port leading to the next hop (jump hosts only).</summary>
+        public ForwardedPortLocal? Forward { get; private set; }
+
+        /// <summary>Listens on an ephemeral loopback port whose connections this hop forwards to <paramref name="next"/>.</summary>
+        public void ForwardTo(SshConnectRequest next)
+        {
+            var forward = new ForwardedPortLocal(IPAddress.Loopback.ToString(), 0, next.Host.Trim(), (uint)next.Port);
+            Client.AddForwardedPort(forward);
+            forward.Start();
+            Forward = forward;
+        }
+
+        public void Dispose()
+        {
             IList<AuthenticationMethod> methods = Client.ConnectionInfo.AuthenticationMethods; // unreadable once disposed
             // Best effort: each step runs even if an earlier one fails on a half-closed connection.
-            Try(() => Shell?.Dispose());
             Try(Client.Dispose);
             foreach (AuthenticationMethod method in methods)
                 Try(() => (method as IDisposable)?.Dispose());
             Try(() => keyFile?.Dispose());
         }
+    }
 
-        private static void Try(Action action)
+    private static void Try(Action action)
+    {
+        try
         {
-            try
-            {
-                action();
-            }
-            catch (Exception)
-            {
-                // Teardown errors are irrelevant: the connection is gone either way.
-            }
+            action();
+        }
+        catch (Exception)
+        {
+            // Teardown errors are irrelevant: the connection is gone either way.
         }
     }
 }

@@ -50,7 +50,7 @@ public sealed class HostKeyDialog : DialogBase
             AddButton("Trust & connect", ButtonVariant.Primary, Trust);
             // The prompt takes the focus from wherever the user is typing (e.g. another tab): a stray Enter must
             // not trust a key nobody has looked at.
-            EnterGuardMs = 1000;
+            EnterGuardMs = PromptDialog.UnsolicitedEnterGuardMs;
         }
     }
 

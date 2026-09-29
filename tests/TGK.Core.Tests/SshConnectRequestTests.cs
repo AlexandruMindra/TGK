@@ -34,6 +34,11 @@ public class SshConnectRequestTests
         Valid with { TermType = "" },
         Valid with { ConnectTimeout = TimeSpan.Zero },
         Valid with { KeepAlive = TimeSpan.FromSeconds(-1) },
+        Valid with { JumpChain = [Valid with { Password = null }] },
+        Valid with { JumpChain = [Valid, Valid, Valid, Valid, Valid] },
+        Valid with { Tunnels = [new PortForward { Kind = ForwardKind.Local, BindPort = 8080 }] },
+        Valid with { Tunnels = [new PortForward { Kind = ForwardKind.Dynamic, BindPort = 0 }] },
+        Valid with { Environment = [new EnvVar { Name = "" }] },
     ];
 
     [Theory]
@@ -47,6 +52,13 @@ public class SshConnectRequestTests
     public void Validate_AcceptsKeyOnly_AndZeroKeepAlive()
     {
         Assert.Null((Valid with { Password = null, PrivateKey = "KEY", KeepAlive = TimeSpan.Zero }).Validate());
+    }
+
+    [Fact]
+    public void Validate_NamesTheFailingJumpHost()
+    {
+        var request = Valid with { JumpChain = [Valid with { Name = "bastion", Host = "10.0.0.1", Username = "" }] };
+        Assert.Equal("Jump host bastion (10.0.0.1): Enter a username.", request.Validate());
     }
 
     [Fact]

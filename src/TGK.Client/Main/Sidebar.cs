@@ -254,12 +254,18 @@ public sealed class HostList : Control, IKeyInput
         e.Handled = true;
         int index = RowAt(e.Relative.Y);
         if (index < 0)
+        {
+            if (e.Button == 1)
+                _main.ShowGroupMenu(null, e.Global.X, e.Global.Y);
             return;
+        }
         Row row = _rows[index];
         if (row.Kind == RowKind.Group)
         {
             if (e.Button == 0)
                 ToggleGroup(row);
+            else if (e.Button == 1)
+                _main.ShowGroupMenu(row.Group, e.Global.X, e.Global.Y);
             return;
         }
         if (row.Host is not { } host)
@@ -370,7 +376,8 @@ public sealed class HostList : Control, IKeyInput
                     Gfx.FillRound(c, r, Theme.Radius, Theme.SurfaceRaised);
                 SKColor tag = Theme.ParseHex(host.TagColor, Theme.Idle);
                 Gfx.Circle(c, 22, y + 16, 4, tag);
-                Gfx.Text(c, host.DisplayName, 34, y + 16, Theme.FontBase, Theme.WeightRegular, Theme.TextPrimary, TextAlignment.Left, W - 50);
+                float nameRight = HostHints.Draw(c, host, vault, W - 14, y + 16, selected ? Theme.TextSecondary : Theme.TextMuted);
+                Gfx.Text(c, host.DisplayName, 34, y + 16, Theme.FontBase, Theme.WeightRegular, Theme.TextPrimary, TextAlignment.Left, nameRight - 38);
                 Gfx.Text(c, HostFormat.Address(host, vault), 34, y + 33, Theme.FontSm, Theme.WeightRegular,
                     selected ? Theme.TextSecondary : Theme.TextMuted, TextAlignment.Left, W - 50);
                 break;

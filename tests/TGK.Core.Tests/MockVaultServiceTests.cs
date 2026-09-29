@@ -20,7 +20,7 @@ public sealed class MockVaultServiceTests : IDisposable
     private async Task<MockVaultService> LoggedInAsync(string user = "alice")
     {
         MockVaultService vault = NewService();
-        LoginResult result = await vault.LoginAsync(Server, user, "secret", TestContext.Current.CancellationToken);
+        LoginResult result = await vault.LoginAsync(Server, user, "secret", null, false, TestContext.Current.CancellationToken);
         Assert.True(result.Success, result.Error);
         return vault;
     }
@@ -33,7 +33,7 @@ public sealed class MockVaultServiceTests : IDisposable
         vault.Changed += () => changes++;
         Assert.Equal(SyncState.Offline, vault.Status);
 
-        LoginResult result = await vault.LoginAsync(Server, "Alice", "secret", TestContext.Current.CancellationToken);
+        LoginResult result = await vault.LoginAsync(Server, "Alice", "secret", null, false, TestContext.Current.CancellationToken);
 
         Assert.True(result.Success);
         Assert.Null(result.Error);
@@ -65,7 +65,7 @@ public sealed class MockVaultServiceTests : IDisposable
     {
         MockVaultService vault = NewService();
 
-        LoginResult result = await vault.LoginAsync(server, user, password, TestContext.Current.CancellationToken);
+        LoginResult result = await vault.LoginAsync(server, user, password, null, false, TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.False(string.IsNullOrWhiteSpace(result.Error));
@@ -111,6 +111,26 @@ public sealed class MockVaultServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Defaults_AndHostOptions_PersistAcrossInstances()
+    {
+        MockVaultService vault = await LoggedInAsync();
+        var defaults = new HostOptions { KeepAliveSeconds = 10, Environment = [new EnvVar { Name = "LANG", Value = "C" }] };
+        await vault.SaveDefaultsAsync(defaults);
+        defaults.KeepAliveSeconds = 99; // the vault stored a copy
+        HostEntry host = vault.Current.Hosts[0].Clone();
+        host.Options.TerminalType = "vt100";
+        host.Tunnels.Add(new PortForward { Kind = ForwardKind.Dynamic, BindPort = 1080 });
+        await vault.SaveHostAsync(host);
+
+        MockVaultService reopened = await LoggedInAsync();
+        Assert.Equal(10, reopened.Current.Defaults.KeepAliveSeconds);
+        Assert.Equal("LANG", Assert.Single(reopened.Current.Defaults.Environment!).Name);
+        HostEntry stored = reopened.Current.FindHost(host.Id)!;
+        Assert.Equal("vt100", stored.Options.TerminalType);
+        Assert.Equal(ForwardKind.Dynamic, Assert.Single(stored.Tunnels).Kind);
+    }
+
+    [Fact]
     public async Task SaveHost_RejectsInvalidInput()
     {
         MockVaultService vault = await LoggedInAsync();
@@ -132,7 +152,7 @@ public sealed class MockVaultServiceTests : IDisposable
         MockVaultService reopened = await LoggedInAsync();
         Assert.DoesNotContain(reopened.Current.Groups, g => g.Id == production.Id);
         Assert.Contains(reopened.Current.Groups, g => g.Name == "Lab");
-        Assert.All(hostIds, id => Assert.Null(reopened.Current.FindHost(id)!.GroupId));
+        Assert.All(hostIds, id => Assert.Null(reopened.Current.FindGroup(reopened.Current.FindHost(id)!.GroupId)));
     }
 
     [Fact]
@@ -154,7 +174,7 @@ public sealed class MockVaultServiceTests : IDisposable
         await reopened.DeleteIdentityAsync(identity.Id);
         MockVaultService third = await LoggedInAsync();
         Assert.Null(third.Current.FindIdentity(identity.Id));
-        Assert.Null(third.Current.FindHost(host.Id)!.IdentityId);
+        Assert.Null(third.Current.FindIdentity(third.Current.FindHost(host.Id)!.IdentityId));
     }
 
     [Fact]
@@ -203,7 +223,7 @@ public sealed class MockVaultServiceTests : IDisposable
     public async Task Logout_FlushesPendingChanges_AndClearsState()
     {
         var vault = new MockVaultService(_dir.Path, TimeSpan.FromMilliseconds(200));
-        Assert.True((await vault.LoginAsync(Server, "alice", "secret", TestContext.Current.CancellationToken)).Success);
+        Assert.True((await vault.LoginAsync(Server, "alice", "secret", null, false, TestContext.Current.CancellationToken)).Success);
         var host = new HostEntry { Name = "late", Host = "late.example.com" };
 
         Task save = vault.SaveHostAsync(host); // still "in flight" when logging out

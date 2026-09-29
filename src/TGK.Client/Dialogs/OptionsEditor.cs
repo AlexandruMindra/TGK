@@ -1,0 +1,452 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using Blossom.Core.Visual;
+using TGK.Client.Controls;
+using TGK.Client.Terminal;
+using TGK.Client.Views;
+using TGK.Core.Models;
+
+namespace TGK.Client.Dialogs;
+
+/// <summary>Which level an <see cref="OptionsEditor"/> edits: it decides what "inherited" means.</summary>
+public enum OptionsLevel
+{
+    /// <summary>The vault's connection defaults: they inherit the built-in defaults.</summary>
+    Global,
+    Group,
+    Host,
+}
+
+/// <summary>A validation problem of an options editor: the page and field to show it on.</summary>
+public sealed record OptionsError(string Message, FormPage Page, TextField? Field);
+
+/// <summary>
+/// The inheritable <see cref="HostOptions"/> on three pages (Connection, Session, Appearance), shared by the host
+/// editor, the group settings and the connection defaults. An empty field (or "Inherit") inherits; its caption says
+/// what it inherits and from where, and a "Reset to …" link clears an overridden value.
+/// </summary>
+public sealed class OptionsEditor
+{
+    private const float Gap = 16, RowGap = 16, CaptionGap = 6, HelpH = 16, HelpGap = 6;
+    private static readonly string[] TerminalTypes = ["xterm-256color", "xterm", "screen-256color", "tmux-256color", "vt100"];
+
+    private readonly TgkView _view;
+    private readonly OptionsLevel _level;
+    private readonly Guid? _hostId;
+    private readonly Func<EffectiveHostOptions> _resolveInherited;
+    private readonly Func<HostOptions, VaultData> _candidate;
+    private readonly FormPage _connection, _session, _appearance;
+    private readonly List<Guid?> _jumpValues = [];
+    private Guid? _deletedJump; // this level's own jump host, when that host no longer exists
+    private EffectiveHostOptions _inherited;
+
+    private readonly OptionCaption _jumpCaption, _keepAliveCaption, _timeoutCaption, _reconnectCaption;
+    private readonly Dropdown _jump;
+    private readonly Label _route, _reconnectHelp;
+    private readonly TextField _keepAlive, _timeout;
+    private readonly SegmentedControl _reconnect;
+
+    private readonly OptionCaption _startupCaption, _termCaption, _envCaption;
+    private readonly TextField _startup, _term;
+    private readonly Label _startupHelp;
+    private readonly EnvEditor _env;
+    private bool _startupOverridden;
+
+    private readonly OptionCaption _schemeCaption, _fontCaption, _legacyCaption;
+    private readonly SchemePicker _scheme;
+    private readonly FontStepper _font;
+    private readonly SegmentedControl _legacy;
+    private readonly Label _legacyHelp;
+
+    /// <param name="options">The values to edit (not modified; see <see cref="Store"/>).</param>
+    /// <param name="inherited">What applies when this level sets nothing (called again by <see cref="RefreshInherited"/>).</param>
+    /// <param name="candidate">
+    /// The vault as it would be with the given options saved at this level: jump-host routes are checked against it,
+    /// since a change of one level can create a loop through hosts, groups and defaults.
+    /// </param>
+    /// <param name="hostId">The edited host, which is not offered as its own jump host.</param>
+    public OptionsEditor(TgkView view, HostOptions options, OptionsLevel level, Func<EffectiveHostOptions> inherited,
+        Func<HostOptions, VaultData> candidate, FormPage connection, FormPage session, FormPage appearance, Guid? hostId = null)
+    {
+        _view = view;
+        _level = level;
+        _hostId = hostId;
+        _resolveInherited = inherited;
+        _candidate = candidate;
+        _inherited = inherited();
+        (_connection, _session, _appearance) = (connection, session, appearance);
+        string inheritWord = level == OptionsLevel.Global ? "Default" : "Inherit";
+
+        // ---- Connection ----
+        _jumpCaption = connection.Add(new OptionCaption("Jump host (ProxyJump)"));
+        _jump = connection.Add(new Dropdown());
+        _jump.SelectionChanged += _ => { UpdateJumpCaption(); UpdateRoute(); };
+        _jumpCaption.ResetClicked += () => { _jump.SelectedIndex = 0; UpdateJumpCaption(); UpdateRoute(); };
+        _route = connection.Add(new Label("", Theme.FontXs, Theme.TextMuted) { MaxLines = 2 });
+        _keepAliveCaption = connection.Add(new OptionCaption("Keep-alive (seconds, 0 = off)"));
+        _keepAlive = connection.Add(NumberField(_keepAliveCaption, 4));
+        _timeoutCaption = connection.Add(new OptionCaption("Connect timeout (seconds)"));
+        _timeout = connection.Add(NumberField(_timeoutCaption, 3));
+        _reconnectCaption = connection.Add(new OptionCaption("Auto-reconnect"));
+        _reconnect = connection.Add(TriState(_reconnectCaption, inheritWord));
+        _reconnectHelp = connection.Add(new Label("Reconnects after an unexpected disconnect, waiting longer between attempts (at most 10).",
+            Theme.FontXs, Theme.TextMuted) { MaxLines = 2 });
+
+        // ---- Session ----
+        _startupCaption = session.Add(new OptionCaption("Startup command"));
+        _startup = session.Add(new TextField { Mono = true, MaxLength = 1024 });
+        _startup.Changed += _ =>
+        {
+            _startupOverridden = true;
+            _startupCaption.Overridden = true;
+            UpdateStartupPlaceholder();
+        };
+        _startupCaption.ResetClicked += () =>
+        {
+            _startup.Text = "";
+            _startupOverridden = false;
+            _startupCaption.Overridden = false;
+            UpdateStartupPlaceholder();
+        };
+        _startupHelp = session.Add(new Label("Typed into the shell once it opens, followed by Enter.", Theme.FontXs, Theme.TextMuted));
+        _termCaption = session.Add(new OptionCaption("Terminal type (TERM)"));
+        _term = session.Add(new TextField { Mono = true, MaxLength = 64, TrailingIcon = "chevron-down" });
+        _term.Changed += text => _termCaption.Overridden = text.Trim().Length > 0;
+        _term.TrailingClicked += ShowTerminalTypes;
+        _termCaption.ResetClicked += () => { _term.Text = ""; _termCaption.Overridden = false; };
+        _envCaption = session.Add(new OptionCaption("Environment variables"));
+        _env = session.Add(new EnvEditor("Sent before the shell starts. OpenSSH only accepts names its AcceptEnv setting allows (often LANG, LC_*)."));
+        _env.Changed += () =>
+        {
+            _envCaption.Overridden = _env.Overridden;
+            LayoutChanged?.Invoke();
+        };
+        _envCaption.ResetClicked += _env.Reset;
+
+        // ---- Appearance ----
+        _schemeCaption = appearance.Add(new OptionCaption("Color scheme"));
+        _scheme = appearance.Add(new SchemePicker(inheritWord));
+        _scheme.Changed += () => _schemeCaption.Overridden = _scheme.Selected is not null;
+        _schemeCaption.ResetClicked += () => { _scheme.Selected = null; _schemeCaption.Overridden = false; };
+        _fontCaption = appearance.Add(new OptionCaption("Font size (px)"));
+        _font = appearance.Add(new FontStepper());
+        _font.Changed += () => _fontCaption.Overridden = _font.Field.Text.Length > 0;
+        _fontCaption.ResetClicked += () => { _font.Value = null; _fontCaption.Overridden = false; };
+        _legacyCaption = appearance.Add(new OptionCaption("Legacy algorithms (old network devices)"));
+        _legacy = appearance.Add(TriState(_legacyCaption, inheritWord));
+        _legacyHelp = appearance.Add(new Label("Weakens security: also allows SHA-1 and CBC algorithms.", Theme.FontXs, Theme.Warning) { MaxLines = 2 });
+
+        connection.Layout = ArrangeConnection;
+        session.Layout = ArrangeSession;
+        appearance.Layout = ArrangeAppearance;
+        Load(options);
+        RefreshInherited();
+    }
+
+    /// <summary>The content height of a page changed (e.g. a variable was added): the owner re-lays out the dialog.</summary>
+    public event Action? LayoutChanged;
+
+    private VaultData Vault => _view.Services.Vault.Current;
+
+    private TextField NumberField(OptionCaption caption, int maxLength)
+    {
+        var field = new TextField { DigitsOnly = true, MaxLength = maxLength, Mono = true };
+        field.Changed += text => caption.Overridden = text.Length > 0;
+        caption.ResetClicked += () => { field.Text = ""; caption.Overridden = false; };
+        return field;
+    }
+
+    private static SegmentedControl TriState(OptionCaption caption, string inheritWord)
+    {
+        var control = new SegmentedControl(inheritWord, "On", "Off");
+        control.SelectionChanged += i => caption.Overridden = i > 0;
+        caption.ResetClicked += () => { control.SelectedIndex = 0; caption.Overridden = false; };
+        return control;
+    }
+
+    private static bool? TriValue(SegmentedControl control) => control.SelectedIndex switch { 1 => true, 2 => false, _ => null };
+
+    private static int TriIndex(bool? value) => value switch { true => 1, false => 2, null => 0 };
+
+    // ---- load / store ----
+
+    private void Load(HostOptions o)
+    {
+        _deletedJump = o.JumpHostId is { } jump && jump != HostOptions.NoJumpHost && Vault.FindHost(jump) is null ? jump : null;
+        BuildJumpOptions();
+        _jump.SelectedIndex = Math.Max(0, _jumpValues.IndexOf(o.JumpHostId));
+        _keepAlive.Text = o.KeepAliveSeconds?.ToString(CultureInfo.InvariantCulture) ?? "";
+        _timeout.Text = o.ConnectTimeoutSeconds?.ToString(CultureInfo.InvariantCulture) ?? "";
+        _reconnect.SelectedIndex = TriIndex(o.AutoReconnect);
+        _startup.Text = o.StartupCommand ?? "";
+        _startupOverridden = o.StartupCommand is not null;
+        _term.Text = o.TerminalType ?? "";
+        _env.Load(o.Environment);
+        _scheme.Selected = o.ColorScheme;
+        _font.Value = o.FontSize;
+        _legacy.SelectedIndex = TriIndex(o.LegacyAlgorithms);
+
+        UpdateJumpCaption();
+        _keepAliveCaption.Overridden = o.KeepAliveSeconds is not null;
+        _timeoutCaption.Overridden = o.ConnectTimeoutSeconds is not null;
+        _reconnectCaption.Overridden = o.AutoReconnect is not null;
+        _startupCaption.Overridden = _startupOverridden;
+        _termCaption.Overridden = o.TerminalType is not null;
+        _envCaption.Overridden = o.Environment is not null;
+        _schemeCaption.Overridden = o.ColorScheme is not null;
+        _fontCaption.Overridden = o.FontSize is not null;
+        _legacyCaption.Overridden = o.LegacyAlgorithms is not null;
+    }
+
+    /// <summary>Writes the edited values into <paramref name="target"/>; returns the first problem instead (target untouched).</summary>
+    public OptionsError? Store(HostOptions target)
+    {
+        if (!TryNumber(_keepAlive, 0, HostOptions.MaxKeepAliveSeconds, out int? keepAlive))
+            return new($"The keep-alive interval must be between 0 (off) and {HostOptions.MaxKeepAliveSeconds} seconds.", _connection, _keepAlive);
+        if (!TryNumber(_timeout, 1, HostOptions.MaxConnectTimeoutSeconds, out int? timeout))
+            return new($"The connect timeout must be between 1 and {HostOptions.MaxConnectTimeoutSeconds} seconds.", _connection, _timeout);
+        string term = _term.Text.Trim();
+        if (term.Any(char.IsWhiteSpace))
+            return new("The terminal type must be a single word, e.g. xterm-256color.", _session, _term);
+        List<EnvVar>? environment = _env.Collect(out string? envError, out TextField? envField);
+        if (envError is not null)
+            return new(envError, _session, envField);
+        if (!TryNumber(_font.Field, (int)HostOptions.MinFontSize, (int)HostOptions.MaxFontSize, out int? fontSize))
+            return new($"The font size must be between {HostOptions.MinFontSize} and {HostOptions.MaxFontSize}.", _appearance, _font.Field);
+
+        var result = new HostOptions
+        {
+            JumpHostId = _jumpValues[Math.Max(0, _jump.SelectedIndex)],
+            KeepAliveSeconds = keepAlive,
+            ConnectTimeoutSeconds = timeout,
+            AutoReconnect = TriValue(_reconnect),
+            StartupCommand = _startupOverridden ? _startup.Text : null,
+            Environment = environment,
+            TerminalType = term.Length > 0 ? term : null,
+            FontSize = fontSize,
+            ColorScheme = _scheme.Selected,
+            LegacyAlgorithms = TriValue(_legacy),
+        };
+        if (result.Validate() is { } problem)
+            return new(problem, _connection, null);
+        if (EffectiveOptions.NewJumpChainProblem(Vault, _candidate(result)) is { } route)
+            return new(route, _connection, null);
+        target.JumpHostId = result.JumpHostId;
+        target.KeepAliveSeconds = result.KeepAliveSeconds;
+        target.ConnectTimeoutSeconds = result.ConnectTimeoutSeconds;
+        target.AutoReconnect = result.AutoReconnect;
+        target.StartupCommand = result.StartupCommand;
+        target.Environment = result.Environment;
+        target.TerminalType = result.TerminalType;
+        target.FontSize = result.FontSize;
+        target.ColorScheme = result.ColorScheme;
+        target.LegacyAlgorithms = result.LegacyAlgorithms;
+        return null;
+    }
+
+    private static bool TryNumber(TextField field, int min, int max, out int? value)
+    {
+        value = null;
+        string text = field.Text.Trim();
+        if (text.Length == 0)
+            return true;
+        if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int n) || n < min || n > max)
+            return false;
+        value = n;
+        return true;
+    }
+
+    // ---- inherited values ----
+
+    /// <summary>Re-reads what this level inherits (e.g. after the host's group changed) and updates hints and placeholders.</summary>
+    public void RefreshInherited()
+    {
+        _inherited = _resolveInherited();
+        EffectiveHostOptions i = _inherited;
+
+        BuildJumpOptions();
+        UpdateJumpCaption();
+        Set(_keepAliveCaption, Seconds(i.KeepAliveSeconds.Value), i.KeepAliveSeconds.Source);
+        _keepAlive.Placeholder = i.KeepAliveSeconds.Value == 0 ? "0 (off)" : i.KeepAliveSeconds.Value.ToString(CultureInfo.InvariantCulture);
+        Set(_timeoutCaption, Seconds(i.ConnectTimeoutSeconds.Value), i.ConnectTimeoutSeconds.Source);
+        _timeout.Placeholder = i.ConnectTimeoutSeconds.Value.ToString(CultureInfo.InvariantCulture);
+        Set(_reconnectCaption, OnOff(i.AutoReconnect.Value), i.AutoReconnect.Source);
+
+        Set(_startupCaption, i.StartupCommand.Value.Length == 0 ? "none" : i.StartupCommand.Value, i.StartupCommand.Source);
+        UpdateStartupPlaceholder();
+        Set(_termCaption, i.TerminalType.Value, i.TerminalType.Source);
+        _term.Placeholder = i.TerminalType.Value;
+        int envCount = i.Environment.Value.Count;
+        Set(_envCaption, envCount == 0 ? "none" : envCount == 1 ? "1 variable" : $"{envCount} variables", i.Environment.Source);
+        _env.SetInherited(i.Environment.Value);
+
+        Set(_schemeCaption, i.ColorScheme.Value, i.ColorScheme.Source);
+        _scheme.SetInherited(ColorScheme.Find(i.ColorScheme.Value));
+        string size = MathF.Round(i.FontSize.Value).ToString(CultureInfo.InvariantCulture) + " px";
+        Set(_fontCaption, i.FontSize.Source == OptionSource.Default ? size + " (this device's terminal setting)" : size, i.FontSize.Source);
+        _font.SetInherited(i.FontSize.Value);
+        Set(_legacyCaption, OnOff(i.LegacyAlgorithms.Value), i.LegacyAlgorithms.Source);
+        UpdateRoute();
+    }
+
+    private void Set(OptionCaption caption, string value, OptionSource source) => caption.SetInherited(value, source switch
+    {
+        OptionSource.Group => $"from group {_inherited.GroupName}",
+        OptionSource.Global => "from connection defaults",
+        _ => null,
+    });
+
+    private static string Seconds(int seconds) => seconds == 0 ? "off" : $"{seconds} s";
+
+    private static string OnOff(bool value) => value ? "on" : "off";
+
+    private void UpdateStartupPlaceholder()
+    {
+        string inherited = _inherited.StartupCommand.Value;
+        _startup.Placeholder = _startupOverridden ? "None (the inherited command is not sent)"
+            : inherited.Length > 0 ? inherited
+            : "None, e.g. tmux new -A -s main";
+    }
+
+    // ---- jump host ----
+
+    private void BuildJumpOptions()
+    {
+        Guid? selected = _jumpValues.Count > 0 && _jump.SelectedIndex >= 0 ? _jumpValues[_jump.SelectedIndex] : null;
+        _jumpValues.Clear();
+        var names = new List<string>();
+        if (_level != OptionsLevel.Global)
+        {
+            _jumpValues.Add(null);
+            names.Add($"Inherit · {JumpName(_inherited.JumpHostId.Value)}");
+        }
+        _jumpValues.Add(_level == OptionsLevel.Global ? null : HostOptions.NoJumpHost);
+        names.Add("None (connect directly)");
+        if (_deletedJump is not null)
+        {
+            // Kept (not shown as "Inherit"), so saving does not silently change the route: choosing is up to the user.
+            _jumpValues.Add(_deletedJump);
+            names.Add("Deleted host (choose another one)");
+        }
+        foreach (HostEntry host in Vault.Hosts.Where(h => h.Id != _hostId).OrderBy(h => h.DisplayName, StringComparer.OrdinalIgnoreCase))
+        {
+            _jumpValues.Add(host.Id);
+            names.Add($"{host.DisplayName}  ·  {host.Host}");
+        }
+        _jump.Options = names;
+        _jump.SelectedIndex = Math.Max(0, _jumpValues.IndexOf(selected));
+    }
+
+    private string JumpName(Guid? id) => id is { } jump ? Vault.FindHost(jump)?.DisplayName ?? "a deleted host" : "none (direct)";
+
+    private Guid? SelectedJump => _jumpValues[Math.Max(0, _jump.SelectedIndex)];
+
+    private void UpdateJumpCaption()
+    {
+        Set(_jumpCaption, JumpName(_inherited.JumpHostId.Value), _inherited.JumpHostId.Source);
+        _jumpCaption.Overridden = SelectedJump is not null;
+    }
+
+    /// <summary>
+    /// "Route: bastion → gateway → this host", or why it can't be used: a loop or too many jump hosts that the chosen
+    /// value would create for any host (saving is refused then, see <see cref="Store"/>), or a deleted jump host.
+    /// </summary>
+    private void UpdateRoute()
+    {
+        Guid? jumpId = SelectedJump is { } own ? (own == HostOptions.NoJumpHost ? null : own) : _inherited.JumpHostId.Value;
+        VaultData candidate = _candidate(new HostOptions { JumpHostId = SelectedJump }); // only the jump host matters here
+        string target = _level == OptionsLevel.Host ? "this host" : "each host";
+        string? problem = EffectiveOptions.NewJumpChainProblem(Vault, candidate);
+        string text = "";
+        if (problem is null)
+        {
+            if (jumpId is null)
+            {
+                text = $"Route: connects directly to {target}.";
+            }
+            else if (candidate.FindHost(jumpId.Value) is not { } jump)
+            {
+                problem = "The jump host no longer exists. Choose another one.";
+            }
+            else
+            {
+                // A host's own route (also shows a loop through it saved earlier); otherwise the jump host's route and it.
+                IReadOnlyList<HostEntry> hops = _hostId is { } id && candidate.FindHost(id) is { } self
+                    ? EffectiveOptions.ResolveJumpChain(candidate, self, out problem)
+                    : [.. EffectiveOptions.ResolveJumpChain(candidate, jump, out problem), jump];
+                if (problem is null && hops.Count > EffectiveOptions.MaxJumpHosts)
+                    problem = $"Too many jump hosts: a connection can go through at most {EffectiveOptions.MaxJumpHosts}.";
+                text = $"Route: {string.Join(" → ", hops.Select(h => h.DisplayName))} → {target}";
+            }
+        }
+        _route.Text = problem ?? text;
+        _route.Color = problem is null ? Theme.TextMuted : Theme.Warning;
+    }
+
+    private void ShowTerminalTypes()
+    {
+        string current = _term.Text.Trim();
+        List<MenuItem> items = TerminalTypes.Select(type => new MenuItem
+        {
+            Text = type,
+            IsChecked = type == current,
+            Action = () =>
+            {
+                _term.Text = type;
+                _termCaption.Overridden = true;
+            },
+        }).ToList();
+        var at = _term.Transform.Computed;
+        _view.Menu.Show(items, at.X, at.Y + at.Height + 4, at.Width, at.Height);
+    }
+
+    // ---- layout (content-local; each returns the page height) ----
+
+    private static float Place(OptionCaption caption, VisualElement control, float x, float y, float w, float h = Theme.FieldHeight)
+    {
+        caption.Transform.SetLocalFrame(x, y, w, OptionCaption.Height);
+        control.Transform.SetLocalFrame(x, y + OptionCaption.Height + CaptionGap, w, h);
+        return y + OptionCaption.Height + CaptionGap + h;
+    }
+
+    private static float Help(Label label, float x, float y, float w)
+    {
+        float h = Math.Max(HelpH, label.MeasureHeight(w) - 3);
+        label.Transform.SetLocalFrame(x, y + HelpGap, w, h);
+        return y + HelpGap + h;
+    }
+
+    private float ArrangeConnection(float w)
+    {
+        float col = MathF.Floor((w - Gap) / 2f);
+        float y = Place(_jumpCaption, _jump, 0, 0, w);
+        y = Help(_route, 0, y, w) + RowGap;
+        Place(_keepAliveCaption, _keepAlive, 0, y, col);
+        y = Place(_timeoutCaption, _timeout, col + Gap, y, w - col - Gap) + RowGap;
+        y = Place(_reconnectCaption, _reconnect, 0, y, col);
+        return Help(_reconnectHelp, 0, y, w);
+    }
+
+    private float ArrangeSession(float w)
+    {
+        float col = MathF.Floor((w - Gap) / 2f);
+        float y = Place(_startupCaption, _startup, 0, 0, w);
+        y = Help(_startupHelp, 0, y, w) + RowGap;
+        y = Place(_termCaption, _term, 0, y, col) + RowGap;
+        float envH = _env.MeasureHeight();
+        y = Place(_envCaption, _env, 0, y, w, envH);
+        _env.Arrange(w);
+        return y;
+    }
+
+    private float ArrangeAppearance(float w)
+    {
+        float col = MathF.Floor((w - Gap) / 2f);
+        float y = Place(_schemeCaption, _scheme, 0, 0, w, SchemePicker.MeasureHeight()) + RowGap;
+        Place(_fontCaption, _font, 0, y, col);
+        y = Place(_legacyCaption, _legacy, col + Gap, y, w - col - Gap);
+        return Help(_legacyHelp, col + Gap, y, w - col - Gap);
+    }
+}

@@ -1,24 +1,25 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using TGK.Core.Models;
+using TGK.Protocol;
 
 namespace TGK.Core.Services;
 
 /// <summary>
-/// DEV ONLY — stands in for the TGK server until it exists. Simulates network latency, accepts any
-/// non-empty username and password except the password <c>wrong</c>, and keeps the "server-side" vault
-/// in <c>dev-vault-&lt;user&gt;.json</c> in the config directory, seeded with sample data on first login.
-/// A server URL containing <c>offline</c> simulates an unreachable server.
+/// DEV ONLY — serves <c>mock://</c> server addresses (see <see cref="RoutingVaultService"/>) for the client's dev
+/// flags and screenshots. Simulates network latency, accepts any non-empty username and password except the
+/// password <c>wrong</c> (authenticator codes are ignored), and keeps the "server-side" vault in
+/// <c>dev-vault-&lt;user&gt;.json</c> in the config directory, seeded with sample data on first login.
+/// A server URL containing <c>offline</c> simulates an unreachable server. Nothing is kept signed in.
 /// </summary>
 /// <remarks>
-/// TODO: replace with the real server client. The real server will own secret storage; this mock writes
-/// identities (including any passwords and private keys entered) to its dev file in plain JSON (0600 on Unix).
+/// This mock writes identities (including any passwords and private keys entered) to its dev file in plain
+/// JSON (0600 on Unix); the real <see cref="RemoteVaultService"/> encrypts everything end to end.
 /// </remarks>
 public sealed class MockVaultService : IVaultService
 {
@@ -51,6 +52,9 @@ public sealed class MockVaultService : IVaultService
 
     public event Action? Changed;
 
+    // Sessions are never ended by the mock "server".
+    public event Action<string>? SessionEnded { add { } remove { } }
+
     public bool IsLoggedIn { get { lock (_gate) return _user is not null; } }
     public string? CurrentUser { get { lock (_gate) return _user; } }
     public string? ServerUrl { get { lock (_gate) return _serverUrl; } }
@@ -58,6 +62,7 @@ public sealed class MockVaultService : IVaultService
     public SyncState Status { get { lock (_gate) return _status; } }
     public DateTimeOffset? LastSync { get { lock (_gate) return _lastSync; } }
     public string? LastError { get { lock (_gate) return _lastError; } }
+    public int PendingChanges { get { lock (_gate) return _pendingPushes; } }
 
     /// <summary>Path of the dev vault file for <paramref name="username"/>.</summary>
     public string GetVaultFilePath(string username)
@@ -68,19 +73,58 @@ public sealed class MockVaultService : IVaultService
         return Path.Combine(_baseDirectory, $"dev-vault-{name}.json");
     }
 
-    public async Task<LoginResult> LoginAsync(string serverUrl, string username, string password, CancellationToken ct = default)
+    public async Task<ServerInfo?> GetServerInfoAsync(string serverUrl, CancellationToken ct = default)
+    {
+        await Task.Delay(_latency, ct).ConfigureAwait(false);
+        return serverUrl.Contains("offline", StringComparison.OrdinalIgnoreCase) ? null : new ServerInfo("tgk-mock", "dev", 1, RegistrationOpen: true);
+    }
+
+    public TotpEnrollment BeginTotpEnrollment(string username)
+    {
+        string secret = Totp.GenerateSecret();
+        return new TotpEnrollment(secret, Totp.BuildUri(username.Trim(), secret));
+    }
+
+    public Task<LoginResult> LoginAsync(string serverUrl, string username, string password, string? totpCode, bool keepSignedIn, CancellationToken ct = default) =>
+        LoginAsync(serverUrl, username, password, ct);
+
+    public Task<LoginResult> CompleteTotpSetupAsync(string serverUrl, string username, string password, string newSecret, string code, bool keepSignedIn, CancellationToken ct = default) =>
+        LoginAsync(serverUrl, username, password, ct);
+
+    public Task<LoginResult> RegisterAsync(string serverUrl, string username, string password, string? inviteCode, string totpSecret, string totpCode, bool keepSignedIn, CancellationToken ct = default) =>
+        LoginAsync(serverUrl, username, password, ct);
+
+    public Task<bool> TryRestoreSessionAsync(CancellationToken ct = default) => Task.FromResult(false);
+
+    public Task<IReadOnlyList<DeviceSession>> ListSessionsAsync(CancellationToken ct = default)
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        IReadOnlyList<DeviceSession> sessions = [new DeviceSession("mock", Environment.MachineName, "mock", now, now, "127.0.0.1", Current: true)];
+        return Task.FromResult(sessions);
+    }
+
+    public Task RevokeSessionAsync(string sessionId, CancellationToken ct = default) => Task.CompletedTask;
+
+    public Task<int> RevokeOtherSessionsAsync(CancellationToken ct = default) => Task.FromResult(0);
+
+    public Task ChangePasswordAsync(string currentPassword, string totpCode, string newPassword, bool revokeOtherSessions, CancellationToken ct = default) =>
+        currentPassword == "wrong"
+            ? Task.FromException(new VaultException(VaultError.InvalidCredentials, "Invalid username or password."))
+            : Task.Delay(_latency, ct);
+
+    private async Task<LoginResult> LoginAsync(string serverUrl, string username, string password, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(serverUrl))
-            return LoginResult.Fail("Enter the server address.");
+            return LoginResult.Fail(VaultError.InsecureUrl, "Enter the server address.");
         if (string.IsNullOrWhiteSpace(username) || string.IsNullOrEmpty(password))
-            return LoginResult.Fail("Enter your username and password.");
+            return LoginResult.Fail(VaultError.ValidationFailed, "Enter your username and password.");
 
         await Task.Delay(_latency, ct).ConfigureAwait(false);
 
         if (serverUrl.Contains("offline", StringComparison.OrdinalIgnoreCase))
-            return LoginResult.Fail($"Cannot reach the server at {serverUrl.Trim()}.");
+            return LoginResult.Fail(VaultError.Network, $"Cannot reach the server at {serverUrl.Trim()}.");
         if (password == "wrong")
-            return LoginResult.Fail("Invalid username or password.");
+            return LoginResult.Fail(VaultError.InvalidCredentials, "Invalid username or password.");
 
         if (IsLoggedIn)
             await LogoutAsync().ConfigureAwait(false);
@@ -101,7 +145,7 @@ public sealed class MockVaultService : IVaultService
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
-            return LoginResult.Fail($"Could not load your vault: {ex.Message}");
+            return LoginResult.Fail(VaultError.Server, $"Could not load your vault: {ex.Message}");
         }
         finally
         {
@@ -224,84 +268,23 @@ public sealed class MockVaultService : IVaultService
         }
     }
 
-    public Task SaveHostAsync(HostEntry host)
-    {
-        ArgumentNullException.ThrowIfNull(host);
-        if (string.IsNullOrWhiteSpace(host.Host))
-            throw new ArgumentException("A host needs an address.", nameof(host));
-        if (host.Port is < 1 or > 65535)
-            throw new ArgumentException("Port must be between 1 and 65535.", nameof(host));
-        if (host.Id == Guid.Empty)
-            host.Id = Guid.NewGuid();
+    public Task SaveHostAsync(HostEntry host) => MutateAsync(VaultEdits.SaveHost(host));
 
-        HostEntry copy = host.Clone();
-        return MutateAsync(vault => Upsert(vault.Hosts, copy, h => h.Id == copy.Id));
-    }
+    public Task DeleteHostAsync(Guid hostId) => MutateAsync(VaultEdits.DeleteHost(hostId));
 
-    public Task DeleteHostAsync(Guid hostId) =>
-        MutateAsync(vault => vault.Hosts.RemoveAll(h => h.Id == hostId));
+    public Task SaveGroupAsync(HostGroup group) => MutateAsync(VaultEdits.SaveGroup(group));
 
-    public Task SaveGroupAsync(HostGroup group)
-    {
-        ArgumentNullException.ThrowIfNull(group);
-        if (string.IsNullOrWhiteSpace(group.Name))
-            throw new ArgumentException("A group needs a name.", nameof(group));
-        if (group.Id == Guid.Empty)
-            group.Id = Guid.NewGuid();
+    public Task DeleteGroupAsync(Guid groupId) => MutateAsync(VaultEdits.DeleteGroup(groupId));
 
-        HostGroup copy = group.Clone();
-        return MutateAsync(vault => Upsert(vault.Groups, copy, g => g.Id == copy.Id));
-    }
+    public Task SaveIdentityAsync(Identity identity) => MutateAsync(VaultEdits.SaveIdentity(identity));
 
-    public Task DeleteGroupAsync(Guid groupId) =>
-        MutateAsync(vault =>
-        {
-            vault.Groups.RemoveAll(g => g.Id == groupId);
-            foreach (HostEntry host in vault.Hosts.Where(h => h.GroupId == groupId))
-                host.GroupId = null;
-        });
+    public Task DeleteIdentityAsync(Guid identityId) => MutateAsync(VaultEdits.DeleteIdentity(identityId));
 
-    public Task SaveIdentityAsync(Identity identity)
-    {
-        ArgumentNullException.ThrowIfNull(identity);
-        if (string.IsNullOrWhiteSpace(identity.Name))
-            throw new ArgumentException("An identity needs a name.", nameof(identity));
-        if (identity.Id == Guid.Empty)
-            identity.Id = Guid.NewGuid();
+    public Task SaveDefaultsAsync(HostOptions defaults) => MutateAsync(VaultEdits.SaveDefaults(defaults));
 
-        Identity copy = identity.Clone();
-        return MutateAsync(vault => Upsert(vault.Identities, copy, i => i.Id == copy.Id));
-    }
+    public Task AddKnownHostAsync(KnownHost knownHost) => MutateAsync(VaultEdits.AddKnownHost(knownHost));
 
-    public Task DeleteIdentityAsync(Guid identityId) =>
-        MutateAsync(vault =>
-        {
-            vault.Identities.RemoveAll(i => i.Id == identityId);
-            foreach (HostEntry host in vault.Hosts.Where(h => h.IdentityId == identityId))
-                host.IdentityId = null;
-        });
-
-    public Task AddKnownHostAsync(KnownHost knownHost)
-    {
-        ArgumentNullException.ThrowIfNull(knownHost);
-        if (string.IsNullOrWhiteSpace(knownHost.Host) || string.IsNullOrWhiteSpace(knownHost.FingerprintSha256))
-            throw new ArgumentException("A known host needs a host name and fingerprint.", nameof(knownHost));
-
-        KnownHost copy = knownHost.Clone();
-        if (copy.AddedAt == default)
-            copy.AddedAt = DateTimeOffset.UtcNow;
-        return MutateAsync(vault => Upsert(vault.KnownHosts, copy, k => k.Matches(copy.Host, copy.Port)));
-    }
-
-    public Task TouchHostAsync(Guid hostId)
-    {
-        DateTimeOffset now = DateTimeOffset.UtcNow;
-        return MutateAsync(vault =>
-        {
-            if (vault.FindHost(hostId) is { } host)
-                host.LastConnected = now;
-        });
-    }
+    public Task TouchHostAsync(Guid hostId) => MutateAsync(VaultEdits.TouchHost(hostId, DateTimeOffset.UtcNow));
 
     /// <summary>Applies <paramref name="edit"/> to a copy of the vault, publishes it, then pushes it to the dev file.</summary>
     private async Task MutateAsync(Action<VaultData> edit)
@@ -392,15 +375,6 @@ public sealed class MockVaultService : IVaultService
     {
         if (_user is null)
             throw new InvalidOperationException("Not logged in.");
-    }
-
-    private static void Upsert<T>(List<T> list, T item, Predicate<T> match)
-    {
-        int index = list.FindIndex(match);
-        if (index >= 0)
-            list[index] = item;
-        else
-            list.Add(item);
     }
 
     private void RaiseChanged() => Changed?.Invoke();

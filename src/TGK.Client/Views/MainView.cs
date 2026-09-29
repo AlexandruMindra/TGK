@@ -1,14 +1,19 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using Blossom;
 using Blossom.Core.Visual;
 using Silk.NET.Input;
+using SkiaSharp;
 using TGK.Client.Controls;
 using TGK.Client.Dialogs;
 using TGK.Client.Input;
 using TGK.Client.Main;
 using TGK.Client.Terminal;
 using TGK.Core.Models;
+using TGK.Core.Services;
+using TGK.Core.Ssh;
 
 namespace TGK.Client.Views;
 
@@ -29,6 +34,9 @@ public sealed class MainView : TgkView
     private bool _sidebarVisible;
     private bool _vaultRefreshQueued;
     private bool _torndown;
+    private TabContent? _tunnelMenuTab; // the tab whose tunnels the open tunnel menu lists
+    private IReadOnlyList<TunnelStatus>? _tunnelMenuTunnels;
+    private SKRect _tunnelMenuChip;
 
     public MainView(ClientServices services) : base("Main", services)
     {
@@ -51,6 +59,7 @@ public sealed class MainView : TgkView
         _sidebar = new Sidebar(this);
         _content = new ContentHost();
         _status = new StatusBar();
+        _status.TunnelsClicked += ShowTunnelMenu;
         _root.AddChild(_content);
         _root.AddChild(_sidebar);
         _root.AddChild(_strip);
@@ -241,7 +250,13 @@ public sealed class MainView : TgkView
         });
     }
 
-    private void OnTabChanged(TabContent tab) => SyncChrome();
+    private void OnTabChanged(TabContent tab)
+    {
+        SyncChrome();
+        // An open tunnel menu follows its tunnels (Starting → Active/Failed) and closes when the session ends.
+        if (tab == _tunnelMenuTab && !ReferenceEquals(tab.Tunnels, _tunnelMenuTunnels))
+            ShowTunnelMenu(_tunnelMenuChip);
+    }
 
     private void CycleTab(int delta)
     {
@@ -257,7 +272,7 @@ public sealed class MainView : TgkView
         TabContent? tab = ActiveTab;
         string sync = HostFormat.Sync(Services.Vault, DateTimeOffset.UtcNow);
         _status.Set(tab?.StatusText ?? (tab is HomeTabContent ? $"{Services.Vault.Current.Hosts.Count} saved hosts" : ""),
-            tab?.Status ?? TabStatus.None, tab?.SizeText, sync);
+            tab?.Status ?? TabStatus.None, tab?.SizeText, sync, tab?.Tunnels ?? []);
         App.Title = tab is null or HomeTabContent ? "TGK" : $"{tab.Title} — TGK";
     }
 
@@ -283,6 +298,8 @@ public sealed class MainView : TgkView
         _sidebar.Refresh();
         foreach (HomeTabContent home in _tabs.OfType<HomeTabContent>())
             home.Refresh();
+        foreach (SessionTabContent session in _tabs.OfType<SessionTabContent>())
+            session.OnVaultChanged();
         SyncChrome();
     }
 
@@ -294,8 +311,14 @@ public sealed class MainView : TgkView
 
     // ---- hosts ----
 
-    /// <summary>Opens the host editor for <paramref name="host"/>, or for a new host when null.</summary>
-    public void EditHost(HostEntry? host) => new HostEditorDialog(this, host).Open();
+    /// <summary>Opens the host editor for <paramref name="host"/> (or for a new host when null) on <paramref name="tab"/>.</summary>
+    public void EditHost(HostEntry? host, int tab = HostEditorDialog.GeneralTab)
+    {
+        var dialog = new HostEditorDialog(this, host);
+        dialog.Open();
+        if (tab != HostEditorDialog.GeneralTab)
+            dialog.ShowTab(tab);
+    }
 
     public void DuplicateHost(HostEntry host)
     {
@@ -306,10 +329,7 @@ public sealed class MainView : TgkView
 
     public async void DeleteHost(HostEntry host)
     {
-        bool confirmed = await ConfirmDialog.ShowAsync(this, "Delete host?",
-            $"“{host.DisplayName}” will be removed from your vault on all devices. Open sessions stay connected.",
-            "Delete", danger: true);
-        if (confirmed)
+        if (await HostEditorDialog.ConfirmDelete(this, host))
             RunVault(() => Services.Vault.DeleteHostAsync(host.Id));
     }
 
@@ -328,6 +348,87 @@ public sealed class MainView : TgkView
         ], x, y);
     }
 
+    // ---- groups ----
+
+    /// <summary>Opens the settings of <paramref name="group"/>, or creates a new group when null.</summary>
+    public void EditGroup(HostGroup? group, int tab = GroupSettingsDialog.GeneralTab)
+    {
+        var dialog = new GroupSettingsDialog(this, group);
+        dialog.Open();
+        if (tab != GroupSettingsDialog.GeneralTab)
+            dialog.ShowTab(tab);
+    }
+
+    public async void DeleteGroup(HostGroup group)
+    {
+        if (await GroupSettingsDialog.ConfirmDelete(this, group))
+            RunVault(() => Services.Vault.DeleteGroupAsync(group.Id));
+    }
+
+    /// <summary>Context menu for a group header (null: the "Ungrouped" section or the empty list).</summary>
+    public void ShowGroupMenu(HostGroup? group, float x, float y)
+    {
+        var items = new List<MenuItem>();
+        if (group is not null)
+        {
+            items.Add(new MenuItem { Text = "Group settings…", Icon = "settings", Action = () => EditGroup(group) });
+            items.Add(new MenuItem { Text = "New host in group…", Icon = "server", Action = () => new HostEditorDialog(this, null, new HostEntry { GroupId = group.Id }).Open() });
+            items.Add(MenuItem.Separator);
+        }
+        items.Add(new MenuItem { Text = "New group…", Icon = "folder", Action = () => EditGroup(null) });
+        if (group is not null)
+        {
+            items.Add(MenuItem.Separator);
+            items.Add(new MenuItem { Text = "Delete group…", Icon = "trash", IsDanger = true, Action = () => DeleteGroup(group) });
+        }
+        Menu.Show(items, x, y);
+    }
+
+    // ---- tunnels ----
+
+    /// <summary>
+    /// The active session's tunnels above the status bar chip (<paramref name="chip"/>); a click copies the listening
+    /// address. While open it is rebuilt when they change (<see cref="OnTabChanged"/>).
+    /// </summary>
+    private void ShowTunnelMenu(SKRect chip)
+    {
+        if (ActiveTab is not { Tunnels.Count: > 0 } tab)
+        {
+            if (_tunnelMenuTab is not null)
+                Menu.Close();
+            return;
+        }
+        var items = new List<MenuItem> { new() { Text = "Tunnels of this session · click to copy the address", IsHeader = true } };
+        foreach (TunnelStatus tunnel in tab.Tunnels)
+        {
+            PortForward forward = tunnel.Forward;
+            string address = $"{forward.BindAddress}:{forward.BindPort}";
+            bool failed = tunnel.State == TunnelState.Failed;
+            items.Add(new MenuItem
+            {
+                Text = forward.Description is { Length: > 0 } description ? $"{forward}  ·  {description}" : forward.ToString(),
+                Icon = failed ? "alert" : "tunnel",
+                Hint = tunnel.State switch
+                {
+                    TunnelState.Active => "Active",
+                    TunnelState.Starting => "Starting…",
+                    TunnelState.Failed => "Failed",
+                    _ => "Stopped",
+                },
+                IsDanger = failed,
+                Action = () =>
+                {
+                    Browser.SetClipboardText(address);
+                    ShowToast($"Copied {address}", ToastKind.Success);
+                },
+            });
+            if (failed && tunnel.Error is { } error)
+                items.AddRange(Gfx.Wrap(error, Gfx.Font(Theme.FontSm), 420, 3).Select(line => new MenuItem { Text = line, IsHeader = true }));
+        }
+        Menu.Show(items, chip.Right - 320, chip.Bottom, 320, chip.Height, onClosed: () => _tunnelMenuTab = null);
+        (_tunnelMenuTab, _tunnelMenuTunnels, _tunnelMenuChip) = (tab, tab.Tunnels, chip);
+    }
+
     // ---- account ----
 
     public void ShowAccountMenu()
@@ -342,27 +443,77 @@ public sealed class MainView : TgkView
             new MenuItem { Text = "Settings", Icon = "settings", Hint = "Ctrl+,", Action = ShowSettings },
             new MenuItem { Text = "Sync now", Icon = "refresh", Action = SyncNow },
             MenuItem.Separator,
-            new MenuItem { Text = "Sign out", Icon = "logout", Action = SignOut },
+            new MenuItem { Text = "Devices & sessions…", Icon = "shield", Action = ShowDevices },
+            new MenuItem { Text = "Change password…", Icon = "lock", Action = ShowChangePassword },
+            MenuItem.Separator,
+            new MenuItem { Text = "Sign out", Icon = "logout", Action = () => SignOut() },
         ], at.X + at.Width, at.Y + at.Height + 6, 220, at.Height);
+    }
+
+    /// <summary>Drops down from the sync chip (window rect <paramref name="x"/>, <paramref name="y"/>, <paramref name="h"/>): the sync state in words and "Sync now".</summary>
+    public void ShowSyncMenu(float x, float y, float h)
+    {
+        IVaultService vault = Services.Vault;
+        string last = $"Last synced {HostFormat.Ago(vault.LastSync, DateTimeOffset.UtcNow)}";
+        string status = vault.Status switch
+        {
+            SyncState.Syncing => "Syncing…",
+            SyncState.Offline => "Offline. " + (vault.LastError ?? "The server can't be reached."),
+            SyncState.Error => "Sync error. " + (vault.LastError ?? "The last sync failed."),
+            _ => last,
+        };
+        // Headers are single lines: wrap long errors over several.
+        var items = Gfx.Wrap(status, Gfx.Font(Theme.FontSm), 340, 5).Select(line => new MenuItem { Text = line, IsHeader = true }).ToList();
+        if (vault.Status is SyncState.Offline or SyncState.Error)
+            items.Add(new MenuItem { Text = last, IsHeader = true });
+        items.Add(MenuItem.Separator);
+        items.Add(new MenuItem { Text = "Sync now", Icon = "refresh", Action = SyncNow });
+        Menu.Show(items, x, y + h + 6, 220, h);
     }
 
     public void ShowIdentities() => new IdentitiesDialog(this).Open();
 
     public void ShowSettings() => new SettingsDialog(this).Open();
 
-    public async void SignOut()
+    public void ShowDevices() => new DevicesDialog(this).Open();
+
+    public void ShowChangePassword() => new ChangePasswordDialog(this).Open();
+
+    /// <summary>
+    /// Signs this device out and returns to the login screen. Asks first when sessions are open (unless
+    /// <paramref name="confirmed"/>) and, always, when changes could not be uploaded: signing out discards them.
+    /// </summary>
+    public async void SignOut(bool confirmed = false)
     {
         int sessions = _tabs.Count(t => t is not HomeTabContent);
-        if (sessions > 0 && !await ConfirmDialog.ShowAsync(this, "Sign out?",
+        if (!confirmed && sessions > 0 && !await ConfirmDialog.ShowAsync(this, "Sign out?",
                 $"{sessions} open session{(sessions == 1 ? "" : "s")} will be closed.", "Sign out"))
             return;
+        if (Services.Vault.PendingChanges > 0)
+        {
+            try
+            {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await Services.Vault.SyncAsync(timeout.Token);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            if (!Services.Vault.IsLoggedIn)
+                return; // the server ended the session meanwhile; the login screen is already on its way
+            int unsent = Services.Vault.PendingChanges;
+            if (unsent > 0 && !await ConfirmDialog.ShowAsync(this, "Discard unsynced changes?",
+                    $"{unsent} change{(unsent == 1 ? " has" : "s have")} not reached the server yet ({Services.Vault.LastError ?? "it is not reachable"}). Signing out now discards {(unsent == 1 ? "it" : "them")}.",
+                    "Sign out anyway", danger: true))
+                return;
+        }
         Teardown();
         await Services.Vault.LogoutAsync();
         App.ShowLogin();
     }
 
     /// <summary>Closes all tabs and detaches from services and shortcuts; the view is discarded afterwards.</summary>
-    private void Teardown()
+    internal void Teardown()
     {
         if (_torndown)
             return;
@@ -433,6 +584,23 @@ public sealed class MainView : TgkView
             case "host-editor" when web is not null:
                 EditHost(web);
                 break;
+            case "host-editor-connection" when web is not null:
+                EditHost(web, HostEditorDialog.ConnectionTab);
+                break;
+            case "host-editor-tunnels" when (vault.Hosts.Find(h => h.Tunnels.Count > 0) ?? web) is { } tunneled:
+                EditHost(tunneled, HostEditorDialog.TunnelsTab);
+                break;
+            case "host-editor-appearance" when (vault.Hosts.Find(h => h.Options.ColorScheme is not null) ?? web) is { } styled:
+                EditHost(styled, HostEditorDialog.AppearanceTab);
+                break;
+            case "group-settings" when vault.Groups.OrderBy(g => g.SortOrder).FirstOrDefault() is { } group:
+                EditGroup(group, GroupSettingsDialog.ConnectionTab);
+                break;
+            case "connection-defaults":
+                var settings = new SettingsDialog(this);
+                settings.Open();
+                settings.ShowTab(SettingsDialog.ConnectionTab);
+                break;
             case "identities":
                 ShowIdentities();
                 break;
@@ -452,6 +620,12 @@ public sealed class MainView : TgkView
                 break;
             case "menu":
                 ShowAccountMenu();
+                break;
+            case "devices":
+                ShowDevices();
+                break;
+            case "change-password":
+                ShowChangePassword();
                 break;
         }
     }

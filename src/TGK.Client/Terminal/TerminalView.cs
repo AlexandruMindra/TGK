@@ -42,7 +42,7 @@ public sealed partial class TerminalView : VisualElement, IKeyInput
 
     private readonly ConcurrentQueue<byte[]> _incoming = new();
     private readonly ManualResetEventSlim _queueHasRoom = new(true);
-    private readonly TerminalPalette _palette = new();
+    private TerminalPalette _palette;
     private long _queuedBytes;
     private byte[]? _feeding; // the chunk Pump is part-way through
     private int _feedingOffset;
@@ -57,8 +57,9 @@ public sealed partial class TerminalView : VisualElement, IKeyInput
     private bool _paintedSinceTick;
     private int _tick;
 
-    public TerminalView(TerminalSettings settings)
+    public TerminalView(TerminalSettings settings, ColorScheme? scheme = null)
     {
+        _palette = new TerminalPalette(scheme ?? ColorScheme.TgkDark);
         _settings = settings.Clone();
         _font = new TerminalFont(_settings.FontSize);
         Emulator = new TerminalEmulator(80, 24, Math.Max(0, _settings.ScrollbackLines));
@@ -93,6 +94,21 @@ public sealed partial class TerminalView : VisualElement, IKeyInput
 
     /// <summary>When false (no live session) keys are not sent to the host but bubble to the parent instead.</summary>
     public bool InputEnabled { get; set; }
+
+    /// <summary>The color scheme; changing it repaints the whole screen, history included.</summary>
+    public ColorScheme Scheme
+    {
+        get => _palette.Scheme;
+        set
+        {
+            if (value == _palette.Scheme)
+                return;
+            _palette = new TerminalPalette(value);
+            Style.BackColor = value.Background;
+            InvalidateAllRows();
+            InvalidatePaint();
+        }
+    }
 
     public int Cols => Emulator.Cols;
     public int Rows => Emulator.Rows;

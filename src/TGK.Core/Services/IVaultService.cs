@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using TGK.Core.Models;
@@ -16,15 +17,25 @@ public enum SyncState
     /// <summary>The last sync failed; local changes are kept and retried on the next change or sync. See <see cref="IVaultService.LastError"/>.</summary>
     Error,
 
-    /// <summary>Not logged in.</summary>
+    /// <summary>Not logged in, or logged in but the server is unreachable (then <see cref="IVaultService.LastError"/> is set and local changes are kept for later).</summary>
     Offline,
 }
 
-public sealed record LoginResult(bool Success, string? Error)
+/// <summary>Outcome of a login or registration. <see cref="Error"/> is a message for the user.</summary>
+public sealed record LoginResult(bool Success, string? Error, VaultError ErrorCode = VaultError.None)
 {
     public static LoginResult Ok { get; } = new(true, null);
-    public static LoginResult Fail(string error) => new(false, error);
+    public static LoginResult Fail(VaultError code, string error) => new(false, error, code);
 }
+
+/// <summary>What <c>GET /api/info</c> reports about a server.</summary>
+public sealed record ServerInfo(string Name, string Version, int Protocol, bool RegistrationOpen);
+
+/// <summary>A new authenticator secret: show <see cref="OtpAuthUri"/> as a QR code and <see cref="Secret"/> for manual entry.</summary>
+public sealed record TotpEnrollment(string Secret, string OtpAuthUri);
+
+/// <summary>A signed-in device of the current user; <see cref="Current"/> marks this device.</summary>
+public sealed record DeviceSession(string Id, string DeviceName, string Platform, DateTimeOffset CreatedAt, DateTimeOffset LastSeenAt, string? LastIp, bool Current);
 
 /// <summary>
 /// Client-side access to the user's vault (hosts, groups, identities, known host keys) held by the TGK server.
@@ -37,8 +48,9 @@ public sealed record LoginResult(bool Success, string? Error)
 /// </para>
 /// <para>
 /// Mutations are applied to <see cref="Current"/> immediately (optimistically) and then pushed to the server;
-/// the returned task completes once the push finished. A failed push does not throw: it sets
-/// <see cref="Status"/> to <see cref="SyncState.Error"/> and is retried with the next change or sync.
+/// the returned task completes once the next push attempt finished. A failed push does not throw: it sets
+/// <see cref="Status"/> to <see cref="SyncState.Error"/> (or <see cref="SyncState.Offline"/>) and is retried
+/// with backoff, with the next change or sync.
 /// Mutations throw <see cref="InvalidOperationException"/> when not logged in and <see cref="ArgumentException"/> for invalid input.
 /// </para>
 /// <para>All members are thread-safe and may be called from the UI thread; IO happens asynchronously.</para>
@@ -58,6 +70,9 @@ public interface IVaultService
     /// <summary>Human-readable reason for <see cref="SyncState.Error"/>, otherwise null.</summary>
     string? LastError { get; }
 
+    /// <summary>Local changes the server has not accepted yet (0 when logged out).</summary>
+    int PendingChanges { get; }
+
     /// <summary>
     /// Raised after <see cref="Current"/>, <see cref="Status"/> or the login state changed.
     /// May be raised on ANY thread (often a thread-pool thread): UI handlers must marshal to the UI thread
@@ -65,11 +80,67 @@ public interface IVaultService
     /// </summary>
     event Action? Changed;
 
-    /// <summary>Logs in and downloads the vault. Returns a failed result (never throws) for bad credentials or an unreachable server.</summary>
-    Task<LoginResult> LoginAsync(string serverUrl, string username, string password, CancellationToken ct = default);
+    /// <summary>
+    /// Raised once when the server ended this device's session (signed out from another device, expired, account
+    /// disabled). The vault is already cleared and the stored sign-in wiped; the argument is a message for the user.
+    /// Changes that were not pushed yet are kept (encrypted) on this device and pushed after the next sign-in to the same account.
+    /// Raised on a thread-pool thread, after the <see cref="Changed"/> that reports the logout.
+    /// </summary>
+    event Action<string>? SessionEnded;
 
-    /// <summary>Flushes pending changes, then clears all in-memory vault data.</summary>
+    /// <summary>Returns the server's info, or null when it is unreachable, not a TGK server or the address is unusable.</summary>
+    Task<ServerInfo?> GetServerInfoAsync(string serverUrl, CancellationToken ct = default);
+
+    /// <summary>
+    /// Logs in and downloads the vault. Returns a failed result (never throws) for bad credentials, a missing or wrong
+    /// authenticator code (<see cref="VaultError.TotpRequired"/>, <see cref="VaultError.TotpInvalid"/>), an account
+    /// that must enroll a new authenticator (<see cref="VaultError.TotpSetupRequired"/>: use <see cref="CompleteTotpSetupAsync"/>),
+    /// an insecure address or an unreachable server. With <paramref name="keepSignedIn"/> the session and an
+    /// encrypted vault cache are stored on this device for <see cref="TryRestoreSessionAsync"/>.
+    /// </summary>
+    Task<LoginResult> LoginAsync(string serverUrl, string username, string password, string? totpCode, bool keepSignedIn, CancellationToken ct = default);
+
+    /// <summary>Logs in to an account whose authenticator was reset, enrolling <paramref name="newSecret"/> (from <see cref="BeginTotpEnrollment"/>) with a current <paramref name="code"/> for it.</summary>
+    Task<LoginResult> CompleteTotpSetupAsync(string serverUrl, string username, string password, string newSecret, string code, bool keepSignedIn, CancellationToken ct = default);
+
+    /// <summary>Creates a new authenticator secret for <paramref name="username"/> (generated locally; nothing is sent).</summary>
+    TotpEnrollment BeginTotpEnrollment(string username);
+
+    /// <summary>
+    /// Creates an account (the code proves the authenticator holds <paramref name="totpSecret"/>) and logs in to its
+    /// empty vault. <paramref name="inviteCode"/> (from the server admin) claims an invited username, also when
+    /// registration is closed.
+    /// </summary>
+    Task<LoginResult> RegisterAsync(string serverUrl, string username, string password, string? inviteCode, string totpSecret, string totpCode, bool keepSignedIn, CancellationToken ct = default);
+
+    /// <summary>
+    /// Restores a "keep me signed in" session at startup: logs in from the stored device credentials and shows the
+    /// cached vault immediately, then syncs in the background (an ended session raises <see cref="SessionEnded"/>).
+    /// Returns false when nothing is stored.
+    /// </summary>
+    Task<bool> TryRestoreSessionAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Flushes pending changes (best effort), signs this device out on the server and clears all local vault data and
+    /// stored credentials. Changes the flush could not push are discarded: check <see cref="PendingChanges"/> first.
+    /// </summary>
     Task LogoutAsync();
+
+    /// <summary>The account's signed-in devices. Account methods throw <see cref="VaultException"/> on failure.</summary>
+    Task<IReadOnlyList<DeviceSession>> ListSessionsAsync(CancellationToken ct = default);
+
+    /// <summary>Signs a device out. Revoking this device's own session logs out (and raises <see cref="SessionEnded"/>).</summary>
+    Task RevokeSessionAsync(string sessionId, CancellationToken ct = default);
+
+    /// <summary>Signs out every other device; returns how many sessions were revoked.</summary>
+    Task<int> RevokeOtherSessionsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Changes the account password (the vault key is re-wrapped; items are untouched). Throws
+    /// <see cref="VaultException"/> with <see cref="VaultError.InvalidCredentials"/> for a wrong current password
+    /// or <see cref="VaultError.TotpInvalid"/> for a wrong code.
+    /// </summary>
+    Task ChangePasswordAsync(string currentPassword, string totpCode, string newPassword, bool revokeOtherSessions, CancellationToken ct = default);
 
     /// <summary>Pushes pending changes and pulls the latest vault from the server.</summary>
     Task SyncAsync(CancellationToken ct = default);
@@ -91,9 +162,15 @@ public interface IVaultService
     /// <summary>Deletes an identity; hosts that used it keep their other settings but lose the link.</summary>
     Task DeleteIdentityAsync(Guid identityId);
 
+    /// <summary>
+    /// Replaces the connection defaults every host inherits (<see cref="VaultData.Defaults"/>; see <see cref="EffectiveOptions"/>).
+    /// The vault stores a copy.
+    /// </summary>
+    Task SaveDefaultsAsync(HostOptions defaults);
+
     /// <summary>Trusts a host key, replacing any previous key for the same host and port.</summary>
     Task AddKnownHostAsync(KnownHost knownHost);
 
-    /// <summary>Records that a host was just connected to (sets <see cref="HostEntry.LastConnected"/>).</summary>
+    /// <summary>Records that a host was just connected to (sets <see cref="HostEntry.LastConnected"/>, which is kept per device and not synced).</summary>
     Task TouchHostAsync(Guid hostId);
 }

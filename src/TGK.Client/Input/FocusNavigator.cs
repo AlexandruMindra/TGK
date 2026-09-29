@@ -24,14 +24,16 @@ public static class FocusNavigator
         return true;
     }
 
-    /// <summary>Focuses the first tab stop inside <paramref name="scope"/>.</summary>
-    public static bool FocusFirst(VisualElement scope)
+    /// <summary>Focuses the first tab stop inside <paramref name="scope"/>; <paramref name="byKeyboard"/> as for Tab (e.g. selects its text).</summary>
+    public static bool FocusFirst(VisualElement scope, bool byKeyboard = false)
     {
         var stops = new List<VisualElement>();
         Collect(scope, stops);
         if (stops.Count == 0 || scope.ParentView is not { } view)
             return false;
         view.SetActiveKeyboardElement(stops[0]);
+        if (byKeyboard)
+            ((IFocusable)stops[0]).OnTabFocus();
         return true;
     }
 

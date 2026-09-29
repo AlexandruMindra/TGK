@@ -44,21 +44,26 @@ public sealed class KnownHostsVerifier : IHostKeyVerifier
         if (!accepted)
             return false;
 
+        // Stored without waiting for the server: the push can take long (or fail and be retried), and this runs
+        // inside the SSH handshake.
+        Task stored;
         try
         {
-            await _vault.AddKnownHostAsync(new KnownHost
+            stored = _vault.AddKnownHostAsync(new KnownHost
             {
                 Host = info.Host,
                 Port = info.Port,
                 KeyType = info.KeyType,
                 FingerprintSha256 = info.FingerprintSha256,
                 AddedAt = DateTimeOffset.UtcNow,
-            }).ConfigureAwait(false);
+            });
         }
         catch (InvalidOperationException)
         {
-            // Not logged in: the key is trusted for this connection only.
+            return true; // not logged in: the key is trusted for this connection only
         }
+        _ = stored.ContinueWith(t => CoreLog.Warn($"Could not store the host key of {info.Host}: {t.Exception!.GetBaseException().Message}"),
+            CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
         return true;
     }
 }

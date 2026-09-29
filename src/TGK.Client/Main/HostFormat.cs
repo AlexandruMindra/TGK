@@ -1,4 +1,7 @@
 using System;
+using System.Linq;
+using SkiaSharp;
+using TGK.Client.Controls;
 using TGK.Core.Models;
 using TGK.Core.Services;
 
@@ -51,4 +54,27 @@ public static class HostFormat
         d < TimeSpan.FromHours(1) ? $"{(int)d.TotalMinutes}m"
         : d < TimeSpan.FromDays(1) ? $"{(int)d.TotalHours}h"
         : $"{(int)d.TotalDays}d";
+}
+
+/// <summary>Small icons after a host's name: it connects through a jump host, it has enabled tunnels.</summary>
+public static class HostHints
+{
+    private const float Size = 13, Step = 18;
+
+    /// <summary>Draws the icons right-aligned at <paramref name="right"/>; returns the x where they start (= <paramref name="right"/> when none).</summary>
+    public static float Draw(SKCanvas c, HostEntry host, VaultData vault, float right, float cy, SKColor color)
+    {
+        float x = right;
+        if (host.Tunnels.Any(t => t.Enabled))
+        {
+            Icons.Draw(c, "tunnel", x - Size / 2f, cy, Size, color);
+            x -= Step;
+        }
+        if (EffectiveOptions.Resolve(vault, host).JumpHostId.Value is not null)
+        {
+            Icons.Draw(c, "route", x - Size / 2f, cy, Size, color);
+            x -= Step;
+        }
+        return x;
+    }
 }

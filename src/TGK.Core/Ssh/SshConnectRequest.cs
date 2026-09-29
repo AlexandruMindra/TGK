@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using TGK.Core.Models;
 
 namespace TGK.Core.Ssh;
@@ -6,6 +8,9 @@ namespace TGK.Core.Ssh;
 /// <summary>Everything needed to open one interactive SSH session. <see cref="ToString"/> never includes secrets.</summary>
 public sealed record SshConnectRequest
 {
+    /// <summary>Saved host name, for messages about this hop (e.g. "Jump host bastion (10.0.0.1): ..."); optional.</summary>
+    public string? Name { get; init; }
+
     public string Host { get; init; } = "";
     public int Port { get; init; } = 22;
     public string Username { get; init; } = "";
@@ -17,21 +22,44 @@ public sealed record SshConnectRequest
     public string? Passphrase { get; init; }
     public int Cols { get; init; } = 80;
     public int Rows { get; init; } = 24;
-    public string TermType { get; init; } = "xterm-256color";
+    public string TermType { get; init; } = EffectiveOptions.DefaultTerminalType;
 
     /// <summary>Limit for reaching an interactive shell, not counting time spent in the host-key prompt.</summary>
-    public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(15);
+    public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(EffectiveOptions.DefaultConnectTimeoutSeconds);
 
     /// <summary>Interval between SSH keep-alive messages; zero disables them.</summary>
-    public TimeSpan KeepAlive { get; init; } = TimeSpan.FromSeconds(30);
+    public TimeSpan KeepAlive { get; init; } = TimeSpan.FromSeconds(EffectiveOptions.DefaultKeepAliveSeconds);
 
-    /// <summary>Builds a request for a saved host; the host's username wins over the identity's.</summary>
+    /// <summary>Also offer the weak algorithms of <see cref="SshAlgorithms"/>.</summary>
+    public bool LegacyAlgorithms { get; init; }
+
+    /// <summary>
+    /// Jump hosts to connect through (ProxyJump), outermost first. Each hop has its own credentials, timeouts and
+    /// algorithms, and its host key is verified against its own host and port; a hop's own
+    /// <see cref="JumpChain"/>, <see cref="Tunnels"/>, <see cref="Environment"/> and <see cref="StartupCommand"/> are ignored.
+    /// </summary>
+    public IReadOnlyList<SshConnectRequest> JumpChain { get; init; } = [];
+
+    /// <summary>Port forwardings started once the shell is open (disabled ones are skipped).</summary>
+    public IReadOnlyList<PortForward> Tunnels { get; init; } = [];
+
+    /// <summary>Sent as SSH "env" requests before the shell starts; variables the server refuses are ignored.</summary>
+    public IReadOnlyList<EnvVar> Environment { get; init; } = [];
+
+    /// <summary>Typed into the shell once it is open, followed by Enter; null or empty for none.</summary>
+    public string? StartupCommand { get; init; }
+
+    /// <summary>"bastion (10.0.0.1)", or just the address when there is no distinct name.</summary>
+    internal string Label => string.IsNullOrWhiteSpace(Name) || Name.Trim() == Host.Trim() ? Host : $"{Name.Trim()} ({Host})";
+
+    /// <summary>Builds a request for a saved host; the host's username wins over the identity's. Uses no options (see the vault overload).</summary>
     public static SshConnectRequest ForHost(HostEntry host, Identity? identity, int cols = 80, int rows = 24)
     {
         ArgumentNullException.ThrowIfNull(host);
         bool useKey = identity?.AuthKind == AuthKind.PrivateKey;
         return new SshConnectRequest
         {
+            Name = host.DisplayName,
             Host = host.Host.Trim(),
             Port = host.Port,
             Username = (string.IsNullOrWhiteSpace(host.Username) ? identity?.Username : host.Username)?.Trim() ?? "",
@@ -40,6 +68,33 @@ public sealed record SshConnectRequest
             Passphrase = useKey ? identity!.Passphrase : null,
             Cols = cols,
             Rows = rows,
+        };
+    }
+
+    /// <summary>
+    /// Builds the request for a saved host with its effective options (<see cref="EffectiveOptions"/>): the jump
+    /// chain (each hop with its own identity and options), enabled tunnels, environment, startup command, terminal
+    /// type, timeouts and algorithms.
+    /// </summary>
+    /// <exception cref="SshSessionException">
+    /// <see cref="SshErrorKind.InvalidRequest"/>: the jump hosts form a loop, one was deleted or there are too many.
+    /// </exception>
+    public static SshConnectRequest ForHost(VaultData vault, HostEntry host, int cols = 80, int rows = 24)
+    {
+        ArgumentNullException.ThrowIfNull(vault);
+        ArgumentNullException.ThrowIfNull(host);
+        IReadOnlyList<HostEntry> jumps = EffectiveOptions.ResolveJumpChain(vault, host, out string? error);
+        if (error is not null)
+            throw new SshSessionException(SshErrorKind.InvalidRequest, error);
+
+        EffectiveHostOptions options = EffectiveOptions.Resolve(vault, host);
+        return WithConnectionOptions(ForHost(host, vault.FindIdentity(host.IdentityId), cols, rows), options) with
+        {
+            JumpChain = jumps.Select(j => WithConnectionOptions(ForHost(j, vault.FindIdentity(j.IdentityId)), EffectiveOptions.Resolve(vault, j))).ToList(),
+            Tunnels = host.Tunnels.Where(t => t.Enabled).Select(t => t.Clone()).ToList(),
+            Environment = options.Environment.Value,
+            StartupCommand = options.StartupCommand.Value,
+            TermType = options.TerminalType.Value,
         };
     }
 
@@ -64,8 +119,32 @@ public sealed record SshConnectRequest
             return "The connect timeout must be positive.";
         if (KeepAlive < TimeSpan.Zero)
             return "The keep-alive interval must not be negative.";
+        if (JumpChain.Count > EffectiveOptions.MaxJumpHosts)
+            return $"A connection can go through at most {EffectiveOptions.MaxJumpHosts} jump hosts.";
+        foreach (SshConnectRequest hop in JumpChain)
+        {
+            if (hop.Validate() is { } problem)
+                return $"Jump host {hop.Label}: {problem}";
+        }
+        foreach (PortForward tunnel in Tunnels)
+        {
+            if (tunnel.Validate() is { } problem)
+                return $"Tunnel {tunnel}: {problem}";
+        }
+        foreach (EnvVar variable in Environment)
+        {
+            if (!EnvVar.IsValidName(variable.Name))
+                return $"\"{variable.Name}\" is not a valid environment variable name.";
+        }
         return null;
     }
 
     public override string ToString() => $"{Username}@{Host}:{Port}";
+
+    private static SshConnectRequest WithConnectionOptions(SshConnectRequest request, EffectiveHostOptions options) => request with
+    {
+        ConnectTimeout = TimeSpan.FromSeconds(options.ConnectTimeoutSeconds.Value),
+        KeepAlive = TimeSpan.FromSeconds(options.KeepAliveSeconds.Value),
+        LegacyAlgorithms = options.LegacyAlgorithms.Value,
+    };
 }

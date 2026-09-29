@@ -6,6 +6,16 @@
 
   <ItemGroup>
     <PackageReference Include="SSH.NET" Version="2026.0.0" />
+    <!-- DPAPI for the Windows "keep me signed in" credentials. -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TGK.Protocol\TGK.Protocol.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="TGK.Core.Tests" />
   </ItemGroup>
 
 </Project>
