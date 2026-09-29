@@ -49,7 +49,7 @@ entirely on one machine.
 Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download). Tested mainly on Linux; Windows is supported but less tested.
 
 ```bash
-git clone --recurse-submodules https://github.com/<you>/TGK.git
+git clone --recurse-submodules https://github.com/AlexandruMindra/TGK.git
 cd TGK
 dotnet run --project src/TGK.Client
 ```
