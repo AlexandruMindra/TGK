@@ -10,6 +10,8 @@ shows the current Unreleased section.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-01
+
 ### Added
 
 - **Move panes by drag and drop**: drag a pane's title bar (or a tab from the tab strip) over the split view. Near an
@@ -98,7 +100,8 @@ First release.
   vault on one device; moving between the two; encrypted backups.
 - Linux and Windows builds.
 
-[Unreleased]: https://github.com/AlexandruMindra/TGK/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/AlexandruMindra/TGK/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/AlexandruMindra/TGK/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/AlexandruMindra/TGK/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/AlexandruMindra/TGK/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/AlexandruMindra/TGK/releases/tag/v0.1.0
