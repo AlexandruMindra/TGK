@@ -10,6 +10,10 @@ shows the current Unreleased section.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-30
+
+Coming from 0.1.0? It can't update itself: download this version once, and from here on TGK updates in place.
+
 ### Added
 
 - **Split view**: show several sessions at once. The layout button in the tab strip offers 2 or 3 side by side,
@@ -22,8 +26,9 @@ shows the current Unreleased section.
 - **Updates**: a while after start, and about twice a day, TGK checks GitHub for a newer release and says so in a
   small note in the status bar. "Update now" downloads it in the background, verifies it against GitHub's checksum and
   installs it when TGK restarts or closes. "Check for updates" in the account menu asks right away.
-- **macOS builds** for Apple Silicon (`TGK-osx-arm64`) and Intel (`TGK-osx-x64`), as a `.dmg` and as a `TGK.app`
-  archive. `⌘` works like `Ctrl` (⌘C / ⌘V copy and paste in the terminal), and the system file dialogs are used.
+- **macOS builds** (preview) for Apple Silicon (`TGK-osx-arm64`) and Intel (`TGK-osx-x64`), as a `.dmg` and as a
+  `TGK.app` archive. `⌘` works like `Ctrl` (⌘C / ⌘V copy and paste in the terminal), and the system file dialogs are
+  used. The app is not notarized by Apple yet: open it the first time with right-click → Open.
 - **One-file downloads**: a Windows installer (`TGK-win-x64-setup.exe`, per user, no administrator rights) and a Linux
   AppImage (`TGK-x86_64.AppImage`). The archives stay available for portable use.
 - Tab strip: when not all tabs fit, `‹ ›` arrows (hold to keep scrolling) and a list of all tabs; right-click a tab
@@ -53,5 +58,6 @@ First release.
   vault on one device; moving between the two; encrypted backups.
 - Linux and Windows builds.
 
-[Unreleased]: https://github.com/AlexandruMindra/TGK/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/AlexandruMindra/TGK/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/AlexandruMindra/TGK/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/AlexandruMindra/TGK/releases/tag/v0.1.0
