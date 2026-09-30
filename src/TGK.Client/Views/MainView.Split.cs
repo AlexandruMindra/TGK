@@ -362,6 +362,9 @@ public sealed partial class MainView
         {
             if (!pane.Rect.Contains(x, y))
                 continue;
+            // The title bar handles its own clicks (its close button must not focus the pane it closes).
+            if (y < pane.Rect.Top + PaneHeader.Height)
+                return;
             if (pane.Item != ActiveTab && _tabs.Contains(pane.Item))
                 ActivateTab(pane.Item);
             return;
