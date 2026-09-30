@@ -98,6 +98,9 @@ public abstract class TgkView : View, IKeyInput
     /// </summary>
     protected virtual VisualElement? DefaultFocus => null;
 
+    /// <summary>Where keys go while nothing is focused (<see cref="DefaultFocus"/> when it is shown), or null.</summary>
+    internal VisualElement? UnfocusedKeyTarget => TopDialog is null && DefaultFocus is { EffectiveVisible: true } element ? element : null;
+
     public sealed override void Init()
     {
         KeyboardHub.Install(Application);

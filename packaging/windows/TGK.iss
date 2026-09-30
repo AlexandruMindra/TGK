@@ -1,7 +1,8 @@
 ; Windows installer (Inno Setup 6): TGK-win-x64-setup.exe.
 ; Installs for the current user only (no administrator rights) into %LOCALAPPDATA%\Programs\TGK, a folder the user
-; can write to, so the app can update itself there ("Update now"). Uninstalling removes the whole folder; the vault,
-; settings and logs live in %APPDATA%\tgk and are kept.
+; can write to, so the app can update itself there ("Update now"). The folder can't be changed: uninstalling removes
+; it as a whole (in-app updates add files the installer doesn't know), which must never hit a folder of the user's.
+; The vault, settings and logs live in %APPDATA%\tgk and are kept.
 ;
 ; Build: ISCC /DAppVersion=<version> /DNumericVersion=<X.Y.Z> /DSourceDir=<publish folder> /DOutputDir=<dir> TGK.iss
 
@@ -31,7 +32,7 @@ AppSupportURL=https://github.com/AlexandruMindra/TGK/issues
 AppUpdatesURL=https://github.com/AlexandruMindra/TGK/releases
 DefaultDirName={localappdata}\Programs\TGK
 DisableProgramGroupPage=yes
-DisableDirPage=auto
+DisableDirPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible

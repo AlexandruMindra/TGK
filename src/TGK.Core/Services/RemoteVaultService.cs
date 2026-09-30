@@ -722,6 +722,13 @@ public sealed class RemoteVaultService : IVaultService, IVaultEditor, IDisposabl
     /// <summary>Sends the outbox in batches.</summary>
     private async Task PushAsync(Session session, CancellationToken ct)
     {
+        // Saved tabs go by the latest save (see VaultItems.IsNewerWorkspace): look at the server's copy before
+        // pushing ours, since the server itself keeps whatever is pushed last.
+        bool workspaceQueued;
+        lock (_gate)
+            workspaceQueued = _session == session && session.Pending.ContainsKey(session.Codec.WorkspaceId);
+        if (workspaceQueued)
+            await PullAsync(session, ct).ConfigureAwait(false);
         while (true)
         {
             List<VaultChange> batch;
@@ -828,7 +835,14 @@ public sealed class RemoteVaultService : IVaultService, IVaultEditor, IDisposabl
                 session.Items.Remove(item.Id);
             else
                 session.Items[item.Id] = new CachedItem(item.Id, item.Revision, data);
-            if (vault is null || session.Pending.ContainsKey(item.Id))
+            if (session.Pending.TryGetValue(item.Id, out byte[]? queued))
+            {
+                // A queued edit wins until it is pushed, except saved tabs that another device saved later.
+                if (!session.Codec.IsNewerWorkspace(item.Id, data, queued))
+                    continue;
+                session.Pending.Remove(item.Id);
+            }
+            if (vault is null)
                 continue;
             next ??= vault.ShallowCopy();
             TryApply(next, session, item.Id, data);

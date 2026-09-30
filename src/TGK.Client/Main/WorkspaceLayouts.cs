@@ -46,7 +46,7 @@ public static class WorkspaceLayouts
         foreach (float w in weights)
             total += w;
         for (int i = 0; i < weights.Count; i++)
-            weights[i] = MathF.Round(weights[i] / total, 4);
+            weights[i] = Math.Max(0.0001f, MathF.Round(weights[i] / total, 4)); // never 0: the vault rejects that
         return new WorkspacePane { Stacked = split.Orientation == SplitOrientation.Vertical, Children = children, Weights = weights };
     }
 

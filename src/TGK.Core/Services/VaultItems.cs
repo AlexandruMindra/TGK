@@ -127,6 +127,35 @@ internal sealed class VaultItems(byte[] vaultKey)
         }
     }
 
+    /// <summary>
+    /// For the workspace item: whether the server's version (<paramref name="remote"/>) was saved after the one queued
+    /// on this device (<paramref name="queued"/>). Saved tabs follow the latest save rather than the usual "a local
+    /// edit wins until pushed", so a copy left unsent (offline, closed too fast) never replaces what the user saved
+    /// on another device since. False for anything else or anything unreadable.
+    /// </summary>
+    public bool IsNewerWorkspace(string id, byte[]? remote, byte[]? queued)
+    {
+        if (id != WorkspaceId || remote is null)
+            return false;
+        try
+        {
+            var theirs = new VaultData();
+            Apply(theirs, id, remote);
+            DateTimeOffset? ours = null;
+            if (queued is not null)
+            {
+                var mine = new VaultData();
+                Apply(mine, id, queued);
+                ours = mine.Workspace.SavedAt;
+            }
+            return theirs.Workspace.SavedAt is { } saved && (ours is null || saved > ours);
+        }
+        catch (Exception ex) when (ex is CryptographicException or JsonException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>The items that differ between two snapshots, compared by reference (edits replace entities).</summary>
     public List<ItemChange> Diff(VaultData before, VaultData after)
     {

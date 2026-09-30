@@ -46,6 +46,13 @@ public sealed partial class MainView
     private void StartUpdateChecks()
     {
         _nextUpdateCheck = UiClock.NowMs + FirstUpdateCheckDelayMs;
+        // An update downloaded before a sign-out or lock in this run is still waiting to be installed.
+        if (App.PendingUpdate is not null && App.PendingUpdateInfo is { } pending)
+        {
+            _update = pending;
+            _updateStage = UpdateStage.Ready;
+            RefreshUpdateChip();
+        }
         // An update that failed to install when TGK last closed is mentioned once.
         if (Services.Prefs.UpdateError is { } error)
         {
@@ -59,7 +66,7 @@ public sealed partial class MainView
         if (_nextUpdateCheck < 0 || UiClock.NowMs < _nextUpdateCheck || _updateChecking)
             return;
         _nextUpdateCheck = UiClock.NowMs + (long)UpdateCheckInterval.TotalMilliseconds;
-        if (SelfUpdate.PackageName is not null && _updateStage < UpdateStage.Downloading)
+        if (SelfUpdate.PackageName is not null && _updateStage < UpdateStage.Downloading && App.PendingUpdate is null)
             Task.Run(() => { using UpdateInstaller installer = SelfUpdate.CreateInstaller(); installer.CleanUp(); }); // files an update replaced
         ClientPrefs prefs = Services.Prefs;
         if (!prefs.CheckForUpdates || _updateStage >= UpdateStage.Downloading)
@@ -260,9 +267,10 @@ public sealed partial class MainView
                 RefreshUpdateChip();
             });
             string staged = await Task.Run(() => installer.DownloadAsync(update, progress, ct), ct);
+            App.PendingUpdate = staged; // kept by the app: installed on exit even if this view is gone by now
+            App.PendingUpdateInfo = update;
             if (_torndown)
                 return;
-            App.PendingUpdate = staged;
             _updateStage = UpdateStage.Ready;
             RefreshUpdateChip();
             ShowToast($"TGK {update.Version} is ready: restart to finish updating (or it installs when you close TGK).", ToastKind.Success);
@@ -286,9 +294,13 @@ public sealed partial class MainView
         }
     }
 
+    /// <summary>A download in progress stops with the view (sign-out, lock); a finished one stays with the app.</summary>
+    private void StopUpdates() => _download?.Cancel();
+
     private void DiscardUpdate()
     {
         App.PendingUpdate = null;
+        App.PendingUpdateInfo = null;
         Task.Run(() => { using UpdateInstaller installer = SelfUpdate.CreateInstaller(); installer.DeleteStaging(); });
         _updateStage = UpdateStage.Available;
         RefreshUpdateChip();

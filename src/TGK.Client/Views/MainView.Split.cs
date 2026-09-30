@@ -148,6 +148,7 @@ public sealed partial class MainView
             SetActiveKeyboardElement(null);
         _content.InvalidateLayout();
         _content.ForceLayoutSubtree();
+        WorkspaceChanged(); // the active tab or a split view changed
         foreach (TabContent tab in appeared)
         {
             tab.ClearAttention();
@@ -293,7 +294,12 @@ public sealed partial class MainView
     {
         if (ActiveTab is not { } active || tab == active || !_tabs.Contains(tab) || (tab.Split is not null && tab.Split == active.Split))
             return;
-        LeaveSplit(tab);
+        if (tab.Split is not null)
+        {
+            // Out of its old split view's block first, so that block stays together in the strip.
+            MoveTab(tab, Block(_tabs.IndexOf(tab)).Last + 1);
+            LeaveSplit(tab);
+        }
         PaneLayout<TabContent> layout = active.Split ?? new PaneLayout<TabContent>(active);
         active.Split = layout;
         layout.SplitAt(active, tab, SplitOrientation.Horizontal);

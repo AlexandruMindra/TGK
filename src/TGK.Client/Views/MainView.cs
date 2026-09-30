@@ -249,6 +249,7 @@ public sealed partial class MainView : TgkView
         _content.AddChild(tab);
         _content.InvalidateLayout();
         tab.OnAttached();
+        WorkspaceChanged();
     }
 
     /// <summary>Removes <paramref name="tab"/> (and its pane); <c>_active</c> keeps pointing at the active tab, or is -1 when that was this one.</summary>
@@ -261,6 +262,7 @@ public sealed partial class MainView : TgkView
         tab.Changed -= OnTabChanged;
         LeaveSplit(tab);
         _tabs.RemoveAt(index);
+        WorkspaceChanged();
         if (index == _active)
             _active = -1;
         else if (index < _active)
@@ -295,7 +297,6 @@ public sealed partial class MainView : TgkView
     {
         _strip.SetTabs(_tabs, _active);
         _strip.RefreshSync();
-        WorkspaceChanged();
         foreach (PaneHeader header in _paneHeaders)
         {
             if (header.Visible)
@@ -606,6 +607,7 @@ public sealed partial class MainView : TgkView
         if (_torndown)
             return;
         _torndown = true;
+        StopUpdates();
         Services.Vault.Changed -= OnVaultChanged;
         UiClock.Tick -= OnUiTick;
         foreach (IDisposable shortcut in _shortcuts)

@@ -11,13 +11,24 @@ public class MacKeysTests
     {
         var copy = new KeyStroke(Key.C, KeyModifiers.Super);
 
-        var terminal = MacKeys.Translate(copy, terminalFocused: true)!.Value;
-        var field = MacKeys.Translate(copy, terminalFocused: false)!.Value;
+        var terminal = MacKeys.Translate(copy, terminalTarget: true)!.Value;
+        var field = MacKeys.Translate(copy, terminalTarget: false)!.Value;
 
         Assert.Equal(new KeyStroke(Key.C, KeyModifiers.Ctrl | KeyModifiers.Shift), terminal.ShortcutFirst);
         Assert.Equal(new KeyStroke(Key.C, KeyModifiers.Ctrl), terminal.ShortcutSecond);
-        Assert.Equal(new KeyStroke(Key.C, KeyModifiers.Ctrl | KeyModifiers.Shift), terminal.ForFocused); // copy, not ^C
-        Assert.Equal(new KeyStroke(Key.C, KeyModifiers.Ctrl), field.ForFocused);
+        Assert.Equal(new KeyStroke(Key.C, KeyModifiers.Ctrl | KeyModifiers.Shift), terminal.ForTarget); // copy, not ^C
+        Assert.Equal(new KeyStroke(Key.C, KeyModifiers.Ctrl), field.ForTarget);
+    }
+
+    [Theory]
+    [InlineData(Key.D)] // ^D would end the remote shell
+    [InlineData(Key.Z)]
+    [InlineData(Key.K)]
+    public void Other_command_keys_never_reach_a_terminal(Key key)
+    {
+        Assert.Null(MacKeys.Translate(new KeyStroke(key, KeyModifiers.Super), terminalTarget: true)!.Value.ForTarget);
+        Assert.Null(MacKeys.Translate(new KeyStroke(Key.C, KeyModifiers.Super | KeyModifiers.Shift), terminalTarget: true)!.Value.ForTarget);
+        Assert.Equal(new KeyStroke(key, KeyModifiers.Ctrl), MacKeys.Translate(new KeyStroke(key, KeyModifiers.Super), terminalTarget: false)!.Value.ForTarget);
     }
 
     [Fact]

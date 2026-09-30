@@ -138,6 +138,9 @@ public sealed class TgkApplication : Application
     /// <summary>A downloaded, unpacked update (<see cref="UpdateInstaller.DownloadAsync"/>) to install when the window closes.</summary>
     internal string? PendingUpdate { get; set; }
 
+    /// <summary>The release <see cref="PendingUpdate"/> holds.</summary>
+    internal UpdateInfo? PendingUpdateInfo { get; set; }
+
     /// <summary>TGK starts again once the window has closed and the pending update is installed.</summary>
     internal bool RelaunchRequested { get; private set; }
 

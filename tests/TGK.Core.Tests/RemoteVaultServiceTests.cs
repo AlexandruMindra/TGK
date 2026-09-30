@@ -149,6 +149,43 @@ public sealed class RemoteVaultServiceTests : IDisposable
         Assert.True(deviceA.Current.Workspace.IsEmpty);
     }
 
+    [Fact]
+    public async Task Unsent_saved_tabs_never_replace_tabs_saved_later_on_another_device()
+    {
+        RemoteVaultService deviceA = await LoggedInAsync();
+        _server.Offline = true;
+        Workspace stale = WorkspaceTests.Sample();
+        stale.SavedAt = DateTimeOffset.UtcNow.AddMinutes(-10);
+        stale.SavedOn = "A";
+        await deviceA.SaveWorkspaceAsync(stale); // queued: the server can't be reached
+        Assert.True(deviceA.PendingChanges > 0);
+
+        // Meanwhile device B saves newer tabs.
+        Workspace newer = WorkspaceTests.Sample();
+        newer.SavedAt = DateTimeOffset.UtcNow;
+        newer.SavedOn = "B";
+        _server.PutItem(User, Codec.WorkspaceId, Seal(newer));
+
+        _server.Offline = false;
+        await deviceA.SyncAsync(Ct);
+
+        Assert.Equal("B", deviceA.Current.Workspace.SavedOn);
+        Assert.Equal(0, deviceA.PendingChanges);
+        VaultItem? stored = _server.GetItem(User, Codec.WorkspaceId);
+        var onServer = new VaultData();
+        Codec.Apply(onServer, Codec.WorkspaceId, stored!.Data);
+        Assert.Equal("B", onServer.Workspace.SavedOn);
+
+        // A later save on A still goes through.
+        Workspace latest = WorkspaceTests.Sample();
+        latest.SavedAt = DateTimeOffset.UtcNow.AddSeconds(5);
+        latest.SavedOn = "A";
+        await deviceA.SaveWorkspaceAsync(latest);
+        await deviceA.SyncAsync(Ct);
+        Codec.Apply(onServer, Codec.WorkspaceId, _server.GetItem(User, Codec.WorkspaceId)!.Data);
+        Assert.Equal("A", onServer.Workspace.SavedOn);
+    }
+
     [Theory]
     [InlineData("wrong-password", VaultError.InvalidCredentials)]
     [InlineData("unknown-user", VaultError.InvalidCredentials)]

@@ -17,7 +17,10 @@ namespace TGK.Client.Views;
 // item, which syncs like the rest of the vault, and reopened when the main view opens — on this device or on the next
 // one the user signs in on. They are saved when this client closes, signs out or locks, and a few seconds after they
 // change (so a crash loses little and another device can pick them up while this one is still open). A client only
-// saves after its own tabs changed: one left open and idle never overwrites what the user did elsewhere since.
+// saves after the user changed its tabs (opened, closed, moved or activated one, changed a split view): one left
+// open and idle never overwrites what the user did elsewhere since, even when a vault change (a host deleted on
+// another device) alters how its tabs would be saved. Saves carry their time; the vault keeps the latest
+// (VaultItems.IsNewerWorkspace).
 public sealed partial class MainView
 {
     private const long WorkspaceSaveDelayMs = 5_000;
@@ -26,6 +29,8 @@ public sealed partial class MainView
     private bool _workspaceReady; // the startup restore is done; saving before it would overwrite what it restores
     private long _workspaceSaveAt = -1; // UiClock time of the pending save check
     private string? _workspaceContent; // what this client last saved or reopened (see WorkspaceContent)
+    private bool _workspaceDirty; // the user changed the tabs since they were last saved or reopened
+    private bool _restoring; // tab changes made by RestoreWorkspace itself are not the user's
 
     /// <summary>Reopens the saved tabs when the preference is on. Runs once, after <see cref="Build"/>.</summary>
     private async void StartWorkspace()
@@ -63,11 +68,32 @@ public sealed partial class MainView
         {
             _workspaceReady = true;
             if (!_torndown)
+            {
                 _workspaceContent = WorkspaceContent(CaptureWorkspace());
+                // Tabs the user opened while the saved ones were on their way are saved too.
+                if (_workspaceDirty)
+                {
+                    _workspaceContent = null;
+                    WorkspaceChanged();
+                }
+            }
         }
     }
 
     private void RestoreWorkspace(Workspace saved)
+    {
+        _restoring = true;
+        try
+        {
+            ReopenTabs(saved);
+        }
+        finally
+        {
+            _restoring = false;
+        }
+    }
+
+    private void ReopenTabs(Workspace saved)
     {
         // The new-tab page the window opened with gives way, unless the user already typed into it meanwhile.
         HomeTabContent? blank = _tabs.Count == 1 && _tabs[0] is HomeTabContent { IsBlank: true } home ? home : null;
@@ -144,9 +170,12 @@ public sealed partial class MainView
 
     private static string DeviceName => Environment.MachineName;
 
-    /// <summary>Something that may be saved changed (tabs, their order, split views, the active tab): save soon.</summary>
+    /// <summary>The user changed what is saved (tabs, their order, split views, the active tab): save soon.</summary>
     private void WorkspaceChanged()
     {
+        if (_restoring)
+            return;
+        _workspaceDirty = true;
         if (_workspaceReady && _workspaceSaveAt < 0 && Services.Vault.Current.Workspace.RestoreTabs)
             _workspaceSaveAt = UiClock.NowMs + WorkspaceSaveDelayMs;
     }
@@ -165,15 +194,21 @@ public sealed partial class MainView
     internal Task? SaveWorkspace()
     {
         _workspaceSaveAt = -1;
-        if (!_workspaceReady || _torndown || !Services.Vault.IsLoggedIn || !Services.Vault.Current.Workspace.RestoreTabs)
+        if (!_workspaceReady || !_workspaceDirty || _torndown || !Services.Vault.IsLoggedIn || !Services.Vault.Current.Workspace.RestoreTabs)
             return null;
         Workspace workspace = CaptureWorkspace();
         string content = WorkspaceContent(workspace);
         if (content == _workspaceContent)
+        {
+            _workspaceDirty = false;
             return null;
+        }
         Task? task = Store(workspace);
         if (task is not null)
+        {
             _workspaceContent = content;
+            _workspaceDirty = false;
+        }
         return task;
     }
 
@@ -188,7 +223,8 @@ public sealed partial class MainView
         if (!on)
         {
             _workspaceSaveAt = -1;
-            RunVault(() => Services.Vault.SaveWorkspaceAsync(new Workspace()));
+            // Dated like any save, so it also wins over tabs another device saved earlier but has not sent yet.
+            RunVault(() => Services.Vault.SaveWorkspaceAsync(new Workspace { SavedAt = DateTimeOffset.UtcNow, SavedOn = DeviceName }));
             return;
         }
         Workspace workspace = CaptureWorkspace();

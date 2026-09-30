@@ -153,11 +153,15 @@ public static class KeyboardHub
         try
         {
             View? view = _app?.ActiveView;
-            if (OperatingSystem.IsMacOS() && MacKeys.Translate(stroke, view is not null && FocusedElement(view) is ISendsControlKeys) is { } mac)
+            // The element the keys go to: the focused one or, with nothing focused, the view's default (a tab's terminal).
+            VisualElement? target = view is null ? null : FocusedElement(view) ?? (view as Views.TgkView)?.UnfocusedKeyTarget;
+            if (OperatingSystem.IsMacOS() && MacKeys.Translate(stroke, target is ISendsControlKeys) is { } mac)
             {
                 if (Shortcuts.TryHandle(mac.ShortcutFirst) || Shortcuts.TryHandle(mac.ShortcutSecond))
                     return;
-                stroke = mac.ForFocused;
+                if (mac.ForTarget is not { } forTarget)
+                    return;
+                stroke = forTarget;
             }
             else if (Shortcuts.TryHandle(stroke))
             {
