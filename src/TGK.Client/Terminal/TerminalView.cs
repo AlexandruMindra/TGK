@@ -22,7 +22,7 @@ namespace TGK.Client.Terminal;
 /// queue is bounded: <see cref="Write"/> blocks the producer while it is full, which slows a flooding host down to
 /// the speed the terminal can parse instead of buffering without limit.
 /// </remarks>
-public sealed partial class TerminalView : VisualElement, IKeyInput
+public sealed partial class TerminalView : VisualElement, IKeyInput, ISendsControlKeys
 {
     private const float PadX = 8, PadY = 6;
     private const int ResizeDebounceMs = 60;

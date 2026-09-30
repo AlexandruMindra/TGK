@@ -10,7 +10,10 @@
 4. **Published releases are immutable.** Never move, delete or re-push a `v*` tag and never replace its files.
    A broken release is fixed by a new PATCH release.
 5. **Right after releasing, bump `<Version>`** to the next planned version (usually the next MINOR) and push.
-6. **`nightly` is not a release.** Every push to `main` replaces the `nightly` pre-release (tag and files) with that
+6. **Every user-visible change is written down in [CHANGELOG.md](../CHANGELOG.md)** under `## [Unreleased]`, in the
+   same commit or pull request as the change. The release's section becomes its GitHub release notes; CI refuses to
+   release a version without one. The nightly's notes show the Unreleased section.
+7. **`nightly` is not a release.** Every push to `main` replaces the `nightly` pre-release (tag and files) with that
    commit's build, versioned `X.Y.Z-nightly.N` (X.Y.Z = the upcoming version, N = CI run number). Pull request
    builds are `X.Y.Z-ci.N` and are only kept as run artifacts.
 
@@ -22,20 +25,28 @@ Clients look for updates on GitHub and install them in place ("Update now" in th
 the nightly) must keep publishing:
 
 - `TGK-linux-x64.tar.gz` and `TGK-win-x64.zip`, each holding one top-level `TGK/` folder with the self-contained
-  publish output (the executable `TGK` / `TGK.exe` and `TGK.dll` among it);
+  publish output (the executable `TGK` / `TGK.exe` and `TGK.dll` among it). The Windows installer installs the same
+  folder (per user, so it stays writable) and those installs update from the zip;
+- `TGK-osx-arm64.tar.gz` and `TGK-osx-x64.tar.gz`, each holding one top-level `TGK.app/` bundle (the publish output in
+  `Contents/MacOS/`);
+- `TGK-x86_64.AppImage`, which an AppImage replaces as a whole;
 - a `TGK.dll` whose informational version equals the release (`X.Y.Z` for `vX.Y.Z`, the title's `X.Y.Z-nightly.N`
   for the nightly) — the client refuses an archive holding another version;
 - the release title of the nightly as `Nightly X.Y.Z-nightly.N`.
 
-The client verifies each archive against the SHA-256 digest GitHub reports for the asset. Renaming the assets or
+The client verifies each package against the SHA-256 digest GitHub reports for the asset. Renaming the assets or
 changing the archive layout breaks updating for every installed client (they fall back to "Download from GitHub").
+The other assets — `TGK-win-x64-setup.exe` and `TGK-osx-*.dmg` — are for first installs only. Packaging scripts:
+`packaging/` (macOS bundle and disk image, AppImage, Inno Setup script).
 
 ## Cutting a release
 
 ```bash
 # 1. <Version> in Directory.Build.props already holds X.Y.Z (rule 1); main is green.
+#    In CHANGELOG.md rename "## [Unreleased]" to "## [X.Y.Z] - YYYY-MM-DD", start a new empty "## [Unreleased]" above
+#    it and update the compare links at the bottom; commit and push that first.
 git tag -a vX.Y.Z -m "TGK X.Y.Z"
-git push origin vX.Y.Z          # CI: tests -> Linux/Windows builds -> GitHub release "TGK X.Y.Z"
+git push origin vX.Y.Z          # CI: tests -> Linux/Windows/macOS builds -> GitHub release "TGK X.Y.Z"
 
 # 2. Bump to the next version (rule 5)
 #    edit Directory.Build.props: <Version>X.(Y+1).0</Version>

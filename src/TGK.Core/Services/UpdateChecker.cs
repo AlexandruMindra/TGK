@@ -101,11 +101,17 @@ public sealed class UpdateChecker : IDisposable
         _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
     }
 
-    /// <summary>The release archive for a runtime identifier (what CI publishes), or null for platforms without builds.</summary>
-    public static string? PackageName(string runtimeIdentifier) => runtimeIdentifier switch
+    /// <summary>
+    /// The release package a build installs from (what CI publishes; docs/RELEASING.md): the archive for its runtime
+    /// identifier, or the AppImage when it runs as one. Null for platforms without builds.
+    /// </summary>
+    public static string? PackageName(string runtimeIdentifier, bool appImage = false) => (runtimeIdentifier, appImage) switch
     {
-        "linux-x64" => "TGK-linux-x64.tar.gz",
-        "win-x64" => "TGK-win-x64.zip",
+        ("linux-x64", true) => "TGK-x86_64.AppImage",
+        ("linux-x64", false) => "TGK-linux-x64.tar.gz",
+        ("win-x64", false) => "TGK-win-x64.zip",
+        ("osx-arm64", false) => "TGK-osx-arm64.tar.gz",
+        ("osx-x64", false) => "TGK-osx-x64.tar.gz",
         _ => null,
     };
 

@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Threading;
@@ -14,12 +15,43 @@ namespace TGK.Core.Services;
 /// <summary>An update could not be downloaded or installed; the message is for the user.</summary>
 public sealed class UpdateException(string message, Exception? inner = null) : Exception(message, inner);
 
+/// <summary>How a TGK installation is laid out, so an update knows what to replace.</summary>
+public sealed record InstallLayout
+{
+    private InstallLayout(string root, string? archiveRoot, string executable)
+    {
+        Root = Path.GetFullPath(root);
+        ArchiveRoot = archiveRoot;
+        Executable = executable;
+    }
+
+    /// <summary>The installation folder (or, for <see cref="SingleFile"/>, the file).</summary>
+    public string Root { get; }
+
+    /// <summary>The top-level folder of the release archive that becomes <see cref="Root"/>; null for a single file.</summary>
+    public string? ArchiveRoot { get; }
+
+    /// <summary>The executable, relative to <see cref="Root"/> and to <see cref="ArchiveRoot"/> (empty for a single file).</summary>
+    public string Executable { get; }
+
+    public bool IsSingleFile => ArchiveRoot is null;
+
+    /// <summary>
+    /// A folder installed from an archive: <c>TGK/</c> (Linux, Windows: executable <c>TGK</c> / <c>TGK.exe</c>) or a
+    /// macOS bundle <c>TGK.app/</c> (executable <c>Contents/MacOS/TGK</c>).
+    /// </summary>
+    public static InstallLayout Folder(string root, string archiveRoot, string executable) => new(root, archiveRoot, executable);
+
+    /// <summary>A self-contained single file that is replaced as a whole (an AppImage).</summary>
+    public static InstallLayout SingleFile(string path) => new(path, null, "");
+}
+
 /// <summary>
-/// Installs a release over a TGK installation (the folder the release archive unpacks to): downloads the archive for
-/// this platform, checks its size and SHA-256 against what GitHub reports, unpacks it next to the installation and
-/// checks that it holds the expected version (<see cref="DownloadAsync"/>); then swaps the files in
-/// (<see cref="Apply"/>). The running files are renamed aside rather than overwritten — allowed while they are in use,
-/// also on Windows — and removed by <see cref="CleanUp"/> on a later start. A failed swap puts everything back.
+/// Installs a release over a TGK installation (<see cref="InstallLayout"/>): downloads the package for this platform,
+/// checks its size and SHA-256 against what GitHub reports, unpacks an archive next to the installation and checks
+/// that it holds the expected version (<see cref="DownloadAsync"/>); then swaps it in (<see cref="Apply"/>). The
+/// running files are renamed aside rather than overwritten — allowed while they are in use, also on Windows — and
+/// removed by <see cref="CleanUp"/> on a later start. A failed swap puts everything back.
 /// </summary>
 public sealed class UpdateInstaller : IDisposable
 {
@@ -32,27 +64,31 @@ public sealed class UpdateInstaller : IDisposable
     private const long MaxPackageBytes = 1L << 30;
     private readonly HttpClient _http;
 
-    /// <param name="installDir">The installation folder (where <paramref name="executable"/> is).</param>
-    /// <param name="executable">File name of the app's executable: <c>TGK</c>, or <c>TGK.exe</c> on Windows.</param>
+    /// <summary>A folder installed from a <c>TGK/</c> archive, with <paramref name="executable"/> (<c>TGK</c>, <c>TGK.exe</c>) in it.</summary>
     public UpdateInstaller(string installDir, string executable, HttpMessageHandler? handler = null)
+        : this(InstallLayout.Folder(installDir, "TGK", executable), handler)
     {
-        InstallDir = Path.GetFullPath(installDir);
-        Executable = executable;
+    }
+
+    public UpdateInstaller(InstallLayout layout, HttpMessageHandler? handler = null)
+    {
+        Layout = layout;
         _http = handler is null ? new HttpClient() : new HttpClient(handler, disposeHandler: false);
         _http.Timeout = TimeSpan.FromMinutes(10);
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("TGK-updater");
     }
 
-    public string InstallDir { get; }
+    public InstallLayout Layout { get; }
 
-    public string Executable { get; }
+    // The folder that holds the installation's files, and the staging folder: inside it, or next to a single file.
+    private string InstallDir => Layout.IsSingleFile ? Path.GetDirectoryName(Layout.Root)! : Layout.Root;
 
     private string Staging => Path.Combine(InstallDir, StagingFolder);
 
     /// <summary>Why this installation can't update itself (e.g. its folder is read-only), or null when it can.</summary>
     public string? CheckInstallable()
     {
-        if (!File.Exists(Path.Combine(InstallDir, Executable)))
+        if (!File.Exists(Layout.IsSingleFile ? Layout.Root : Path.Combine(Layout.Root, Layout.Executable)))
             return "TGK is not running from an installed release.";
         string probe = Path.Combine(InstallDir, $".tgk-write-test-{Guid.NewGuid():N}");
         try
@@ -68,8 +104,8 @@ public sealed class UpdateInstaller : IDisposable
     }
 
     /// <summary>
-    /// Downloads and unpacks <paramref name="update"/>'s package next to the installation; returns the unpacked
-    /// folder to pass to <see cref="Apply"/>. <paramref name="progress"/> gets 0..1 as the download goes.
+    /// Downloads (and for an archive unpacks) <paramref name="update"/>'s package next to the installation; returns
+    /// what to pass to <see cref="Apply"/>. <paramref name="progress"/> gets 0..1 as the download goes.
     /// </summary>
     /// <exception cref="UpdateException">No package, a failed or damaged download, or an unexpected archive.</exception>
     /// <exception cref="OperationCanceledException">Cancelled.</exception>
@@ -84,18 +120,20 @@ public sealed class UpdateInstaller : IDisposable
         try
         {
             await DownloadFileAsync(package, archive, progress, ct).ConfigureAwait(false);
+            if (Layout.IsSingleFile)
+            {
+                MakeExecutable(archive); // the checksum is all there is to check: its contents are not readable here
+                return archive;
+            }
             string unpacked = Path.Combine(Staging, "unpacked");
             await Task.Run(() => Unpack(archive, unpacked, ct), ct).ConfigureAwait(false);
             File.Delete(archive);
-            string root = Path.Combine(unpacked, "TGK");
-            if (!File.Exists(Path.Combine(root, Executable)))
+            string root = Path.Combine(unpacked, Layout.ArchiveRoot!);
+            string exe = Path.Combine(root, Layout.Executable);
+            if (!File.Exists(exe))
                 throw new UpdateException("The download does not contain TGK.");
-            CheckVersion(root, update.Version);
-            if (!OperatingSystem.IsWindows())
-            {
-                string exe = Path.Combine(root, Executable);
-                File.SetUnixFileMode(exe, File.GetUnixFileMode(exe) | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
-            }
+            CheckVersion(Path.GetDirectoryName(exe)!, update.Version);
+            MakeExecutable(exe);
             return root;
         }
         catch (Exception ex) when (ex is not UpdateException and not OperationCanceledException)
@@ -140,6 +178,12 @@ public sealed class UpdateInstaller : IDisposable
             throw new UpdateException("The download is damaged (its checksum does not match the release).");
     }
 
+    private static void MakeExecutable(string path)
+    {
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(path, File.GetUnixFileMode(path) | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
+    }
+
     // Both extractors refuse entries (and links) that would land outside `destination`.
     private static void Unpack(string archive, string destination, CancellationToken ct)
     {
@@ -167,22 +211,26 @@ public sealed class UpdateInstaller : IDisposable
     }
 
     /// <summary>
-    /// Moves the files of <paramref name="staged"/> (from <see cref="DownloadAsync"/>) into the installation. Each
-    /// file it replaces is renamed to <c>name</c> + <see cref="OldSuffix"/> first; if anything fails, the new files are
-    /// removed and the old ones renamed back, and <see cref="UpdateException"/> is thrown.
+    /// Moves <paramref name="staged"/> (from <see cref="DownloadAsync"/>) into the installation: each file it replaces
+    /// is renamed to <c>name</c> + <see cref="OldSuffix"/> first; if anything fails, the new files are removed and the
+    /// old ones renamed back, and <see cref="UpdateException"/> is thrown.
     /// </summary>
     public void Apply(string staged)
     {
         string source = Path.GetFullPath(staged);
-        if (!source.StartsWith(Staging + Path.DirectorySeparatorChar, StringComparison.Ordinal) || !Directory.Exists(source))
+        bool exists = Layout.IsSingleFile ? File.Exists(source) : Directory.Exists(source);
+        if (!source.StartsWith(Staging + Path.DirectorySeparatorChar, StringComparison.Ordinal) || !exists)
             throw new UpdateException("Nothing to install.");
         var done = new List<(string Target, string? Old)>();
         try
         {
-            foreach (string file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+            IEnumerable<(string File, string Target)> moves = Layout.IsSingleFile
+                ? [(source, Layout.Root)]
+                : Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories)
+                    .Select(file => (file, Path.Combine(Layout.Root, Path.GetRelativePath(source, file))))
+                    .ToList(); // listed up front: the loop moves files out of the folder being listed
+            foreach ((string file, string target) in moves)
             {
-                string relative = Path.GetRelativePath(source, file);
-                string target = Path.Combine(InstallDir, relative);
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                 string? old = null;
                 if (File.Exists(target))
@@ -224,11 +272,15 @@ public sealed class UpdateInstaller : IDisposable
         DeleteStaging();
         try
         {
-            foreach (string old in Directory.EnumerateFiles(InstallDir, "*" + OldSuffix, SearchOption.AllDirectories))
+            IEnumerable<string> olds = Layout.IsSingleFile
+                ? [Layout.Root + OldSuffix]
+                : Directory.EnumerateFiles(Layout.Root, "*" + OldSuffix, SearchOption.AllDirectories);
+            foreach (string old in olds)
             {
                 try
                 {
-                    File.Delete(old);
+                    if (File.Exists(old))
+                        File.Delete(old);
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {

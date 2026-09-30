@@ -58,9 +58,22 @@ entirely on one machine.
 
 ## Getting started
 
-Ready-to-run Linux and Windows builds (no .NET needed): the [latest release](https://github.com/AlexandruMindra/TGK/releases/latest),
-or the [nightly](https://github.com/AlexandruMindra/TGK/releases/tag/nightly) build of `main` (versioning rules: [docs/RELEASING.md](docs/RELEASING.md)). To build from source you need the
-[.NET 10 SDK](https://dotnet.microsoft.com/download). Tested mainly on Linux; Windows is supported but less tested.
+Ready-to-run builds (no .NET needed) from the [latest release](https://github.com/AlexandruMindra/TGK/releases/latest),
+or the [nightly](https://github.com/AlexandruMindra/TGK/releases/tag/nightly) build of `main` (versioning rules:
+[docs/RELEASING.md](docs/RELEASING.md), changes: [CHANGELOG.md](CHANGELOG.md)):
+
+| System | Download | |
+|---|---|---|
+| Windows 10/11 (x64) | `TGK-win-x64-setup.exe` | Installer for your user, no administrator rights. Portable: `TGK-win-x64.zip`. |
+| Linux (x64) | `TGK-x86_64.AppImage` | `chmod +x TGK-x86_64.AppImage` and run it. Portable folder: `TGK-linux-x64.tar.gz`. |
+| macOS, Apple Silicon (M1 and later) | `TGK-osx-arm64.dmg` | Drag TGK to Applications. |
+| macOS, Intel | `TGK-osx-x64.dmg` | Drag TGK to Applications. |
+
+Once installed, TGK updates itself ("Update now" in the status bar). The macOS builds are not notarized by Apple yet:
+the first time, right-click TGK in Applications and choose **Open** (or allow it in System Settings → Privacy &
+Security). Tested mainly on Linux; Windows is supported but less tested, macOS is new.
+
+To build from source you need the [.NET 10 SDK](https://dotnet.microsoft.com/download).
 
 ```bash
 git clone --recurse-submodules https://github.com/AlexandruMindra/TGK.git

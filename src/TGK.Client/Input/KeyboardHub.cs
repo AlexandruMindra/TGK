@@ -152,9 +152,17 @@ public static class KeyboardHub
     {
         try
         {
-            if (Shortcuts.TryHandle(stroke))
-                return;
             View? view = _app?.ActiveView;
+            if (OperatingSystem.IsMacOS() && MacKeys.Translate(stroke, view is not null && FocusedElement(view) is ISendsControlKeys) is { } mac)
+            {
+                if (Shortcuts.TryHandle(mac.ShortcutFirst) || Shortcuts.TryHandle(mac.ShortcutSecond))
+                    return;
+                stroke = mac.ForFocused;
+            }
+            else if (Shortcuts.TryHandle(stroke))
+            {
+                return;
+            }
             if (view is null)
                 return;
             if (FocusedElement(view) is { } focused && RouteKey(focused, stroke))

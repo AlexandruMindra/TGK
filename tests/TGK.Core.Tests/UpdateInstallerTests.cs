@@ -179,6 +179,64 @@ public sealed class UpdateInstallerTests : IDisposable
         Assert.NotNull(installer.CheckInstallable());
     }
 
+    [Fact]
+    public async Task A_macOS_bundle_is_updated_from_its_TGK_app_folder()
+    {
+        string bundle = Path.Combine(_dir.Path, "Apps", "TGK.app");
+        string macos = Path.Combine(bundle, "Contents", "MacOS");
+        Directory.CreateDirectory(macos);
+        File.WriteAllText(Path.Combine(macos, "TGK"), "old exe");
+        File.WriteAllText(Path.Combine(bundle, "Contents", "Info.plist"), "old plist");
+
+        string src = Path.Combine(_dir.Path, "mac-src");
+        string newMacos = Path.Combine(src, "TGK.app", "Contents", "MacOS");
+        Directory.CreateDirectory(newMacos);
+        File.WriteAllText(Path.Combine(newMacos, "TGK"), "new exe");
+        File.Copy(VersionDll, Path.Combine(newMacos, "TGK.dll"));
+        File.WriteAllText(Path.Combine(src, "TGK.app", "Contents", "Info.plist"), "new plist");
+        var output = new MemoryStream();
+        using (var gzip = new GZipStream(output, CompressionLevel.Fastest, leaveOpen: true))
+            TarFile.CreateFromDirectory(src, gzip, includeBaseDirectory: false);
+        byte[] archive = output.ToArray();
+        var update = new UpdateInfo(DllVersion, "https://github.com/AlexandruMindra/TGK/releases/tag/v9.9.9",
+            new UpdatePackage("TGK-osx-arm64.tar.gz", Url + "TGK-osx-arm64.tar.gz", archive.Length, Convert.ToHexStringLower(SHA256.HashData(archive))));
+        using var installer = new UpdateInstaller(InstallLayout.Folder(bundle, "TGK.app", "Contents/MacOS/TGK"), new Server(archive));
+        Assert.Null(installer.CheckInstallable());
+
+        installer.Apply(await installer.DownloadAsync(update, ct: Ct));
+
+        Assert.Equal("new exe", File.ReadAllText(Path.Combine(macos, "TGK")));
+        Assert.Equal("new plist", File.ReadAllText(Path.Combine(bundle, "Contents", "Info.plist")));
+        Assert.False(Directory.Exists(Path.Combine(bundle, UpdateInstaller.StagingFolder)));
+        installer.CleanUp();
+        Assert.Empty(Directory.GetFiles(bundle, "*" + UpdateInstaller.OldSuffix, SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task An_AppImage_is_replaced_as_a_whole()
+    {
+        string appImage = Path.Combine(_dir.Path, "Apps", "TGK-x86_64.AppImage");
+        Directory.CreateDirectory(Path.GetDirectoryName(appImage)!);
+        File.WriteAllText(appImage, "old image");
+        byte[] image = "new image"u8.ToArray();
+        var update = new UpdateInfo(DllVersion, "https://github.com/AlexandruMindra/TGK/releases/tag/v9.9.9",
+            new UpdatePackage("TGK-x86_64.AppImage", Url + "TGK-x86_64.AppImage", image.Length, Convert.ToHexStringLower(SHA256.HashData(image))));
+        using var installer = new UpdateInstaller(InstallLayout.SingleFile(appImage), new Server(image));
+        Assert.Null(installer.CheckInstallable());
+
+        string staged = await installer.DownloadAsync(update, ct: Ct);
+        Assert.Equal("old image", File.ReadAllText(appImage));
+        installer.Apply(staged);
+
+        Assert.Equal("new image", File.ReadAllText(appImage));
+        Assert.Equal("old image", File.ReadAllText(appImage + UpdateInstaller.OldSuffix));
+        if (!OperatingSystem.IsWindows())
+            Assert.True(File.GetUnixFileMode(appImage).HasFlag(UnixFileMode.UserExecute));
+        installer.CleanUp();
+        Assert.False(File.Exists(appImage + UpdateInstaller.OldSuffix));
+        Assert.False(Directory.Exists(Path.Combine(_dir.Path, "Apps", UpdateInstaller.StagingFolder)));
+    }
+
     private sealed class SyncProgress(Action<double> report) : IProgress<double>
     {
         public void Report(double value) => report(value);

@@ -13,7 +13,8 @@ public sealed record FileFilter(string Name, params string[] Patterns);
 
 /// <summary>
 /// Native "open file" and "save file" dialogs: GetOpenFileNameW / GetSaveFileNameW on Windows, zenity or kdialog on
-/// Linux. Run off the UI thread so the app keeps rendering while the dialog is open.
+/// Linux, the system dialogs through AppleScript (osascript) on macOS. Run off the UI thread so the app keeps
+/// rendering while the dialog is open.
 /// </summary>
 public static class FilePicker
 {
@@ -21,7 +22,7 @@ public static class FilePicker
     private const string DefaultWindowsFilter = "All files\0*.*\0Private keys (*.pem, *.key, id_*)\0*.pem;*.key;id_*\0\0";
 
     /// <summary>True when a native picker is available on this system.</summary>
-    public static bool IsAvailable => OperatingSystem.IsWindows() || FindLinuxTool() is not null;
+    public static bool IsAvailable => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() || FindLinuxTool() is not null;
 
     /// <summary>
     /// Shows the picker starting in <paramref name="initialDirectory"/>. Completes with the chosen path, or null when
@@ -31,6 +32,8 @@ public static class FilePicker
     {
         if (OperatingSystem.IsWindows())
             return RunOnStaThread(() => ShowWindows(title, initialDirectory, null, filter, save: false));
+        if (OperatingSystem.IsMacOS())
+            return Task.Run(() => ShowMac(title, StartDirectory(initialDirectory), null));
         string tool = FindLinuxTool() ?? throw new PlatformNotSupportedException("No file picker (zenity or kdialog) is installed.");
         return Task.Run(() => ShowLinux(tool, title, StartDirectory(initialDirectory), filter, save: false));
     }
@@ -44,6 +47,8 @@ public static class FilePicker
     {
         if (OperatingSystem.IsWindows())
             return RunOnStaThread(() => ShowWindows(title, initialDirectory, defaultName, filter, save: true));
+        if (OperatingSystem.IsMacOS())
+            return Task.Run(() => ShowMac(title, StartDirectory(initialDirectory), defaultName));
         string tool = FindLinuxTool() ?? throw new PlatformNotSupportedException("No file picker (zenity or kdialog) is installed.");
         return Task.Run(() => ShowLinux(tool, title, StartDirectory(initialDirectory) + defaultName, filter, save: true));
     }
@@ -103,6 +108,35 @@ public static class FilePicker
                 psi.ArgumentList.Add($"{string.Join(' ', filter.Patterns)}|{filter.Name}\n*|All files");
         }
         using Process process = Process.Start(psi) ?? throw new PlatformNotSupportedException($"Could not start {tool}.");
+        string output = process.StandardOutput.ReadToEnd();
+        process.WaitForExit();
+        string path = output.Trim();
+        return process.ExitCode == 0 && path.Length > 0 ? path : null;
+    }
+
+    // "choose file" / "choose file name" (with defaultName: a save dialog). Title, folder and name are passed as
+    // arguments (argv), never spliced into the script. Cancel exits with an error: null.
+    private static string? ShowMac(string title, string start, string? defaultName)
+    {
+        var psi = new ProcessStartInfo("osascript")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.ArgumentList.Add("-e");
+        psi.ArgumentList.Add("on run argv");
+        psi.ArgumentList.Add("-e");
+        psi.ArgumentList.Add(defaultName is null
+            ? "POSIX path of (choose file with prompt (item 1 of argv) default location (POSIX file (item 2 of argv)))"
+            : "POSIX path of (choose file name with prompt (item 1 of argv) default location (POSIX file (item 2 of argv)) default name (item 3 of argv))");
+        psi.ArgumentList.Add("-e");
+        psi.ArgumentList.Add("end run");
+        psi.ArgumentList.Add(title);
+        psi.ArgumentList.Add(start);
+        if (defaultName is not null)
+            psi.ArgumentList.Add(defaultName);
+        using Process process = Process.Start(psi) ?? throw new PlatformNotSupportedException("Could not start osascript.");
         string output = process.StandardOutput.ReadToEnd();
         process.WaitForExit();
         string path = output.Trim();

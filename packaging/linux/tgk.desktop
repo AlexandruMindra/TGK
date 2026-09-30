@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=TGK
+Comment=SSH sessions and credentials with an end-to-end encrypted vault
+Exec=TGK
+Icon=tgk
+Terminal=false
+Categories=Network;RemoteAccess;System;TerminalEmulator;
+StartupWMClass=TGK

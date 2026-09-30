@@ -1,5 +1,6 @@
-# Builds the desktop client for Linux and Windows on every push and pull request.
-# Each run uploads a ready-to-run, self-contained archive per platform (no .NET install needed).
+# Builds the desktop client for Linux, Windows and macOS (Apple Silicon and Intel) on every push and pull request.
+# Each run uploads ready-to-run, self-contained packages per platform (no .NET install needed): the archives, plus a
+# Linux AppImage, a Windows installer and macOS disk images.
 # - push to main -> the rolling "nightly" pre-release is replaced with this build (X.Y.Z-nightly.N)
 # - tag vX.Y.Z   -> an immutable release vX.Y.Z (the tag must equal <Version> in Directory.Build.props)
 # Versioning and release rules: docs/RELEASING.md
@@ -53,6 +54,11 @@ jobs:
               exit 1
             fi
             version="$base"
+            # The release notes come from CHANGELOG.md: the version needs its section.
+            if ! scripts/changelog.sh "$base" > /dev/null; then
+              echo "::error::CHANGELOG.md has no section '## [$base] - <date>' (see docs/RELEASING.md)"
+              exit 1
+            fi
           elif [[ "$GITHUB_REF" == refs/heads/main ]]; then
             version="$base-nightly.$GITHUB_RUN_NUMBER"
           else
@@ -74,7 +80,15 @@ jobs:
             rid: linux-x64
           - os: windows-latest
             rid: win-x64
+          # The macOS runner is Apple Silicon; it also builds the Intel version. Building on macOS lets the SDK sign
+          # the executables (Apple Silicon runs only signed code).
+          - os: macos-latest
+            rid: osx-arm64
+          - os: macos-latest
+            rid: osx-x64
     runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.test.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -87,22 +101,37 @@ jobs:
         shell: bash
         run: |
           dotnet publish src/TGK.Client -c Release -r ${{ matrix.rid }} --self-contained true \
-            -p:Version=${{ needs.test.outputs.version }} \
+            -p:Version="$VERSION" \
             -p:DebugType=none -p:SatelliteResourceLanguages=en -o publish/TGK
+          mkdir -p dist
 
+      # Archives: what installed clients update themselves from (names and layout: docs/RELEASING.md).
       # tar keeps the executable bit on Linux; Windows users expect a zip.
       - name: Package (Linux)
         if: matrix.rid == 'linux-x64'
-        run: tar -czf TGK-${{ matrix.rid }}.tar.gz -C publish TGK
+        run: |
+          tar -czf dist/TGK-linux-x64.tar.gz -C publish TGK
+          packaging/linux/build-appimage.sh publish/TGK "$VERSION" dist
       - name: Package (Windows)
         if: matrix.rid == 'win-x64'
         shell: pwsh
-        run: Compress-Archive -Path publish/TGK -DestinationPath TGK-${{ matrix.rid }}.zip
+        run: |
+          Compress-Archive -Path publish/TGK -DestinationPath dist/TGK-win-x64.zip
+          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+          $numeric = $env:VERSION.Split('-')[0]
+          & $iscc /Q "/DAppVersion=$env:VERSION" "/DNumericVersion=$numeric" "/DSourceDir=$PWD\publish\TGK" "/DOutputDir=$PWD\dist" packaging\windows\TGK.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package (macOS)
+        if: startsWith(matrix.rid, 'osx-')
+        run: packaging/macos/build-app.sh publish/TGK "$VERSION" ${{ matrix.rid }} dist
 
       - uses: actions/upload-artifact@v7
         with:
           name: TGK-${{ matrix.rid }}
-          path: TGK-${{ matrix.rid }}.*
+          path: dist/*
           if-no-files-found: error
 
   release:
@@ -112,17 +141,21 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
       # Fails if the release already exists: published versions are never overwritten.
+      # Notes: the version's CHANGELOG.md section, followed by GitHub's list of merged changes.
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.test.outputs.version }}
         run: |
+          scripts/changelog.sh "$VERSION" > notes.md
           gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
-            --title "TGK ${{ needs.test.outputs.version }}" --generate-notes --latest
+            --title "TGK $VERSION" --notes-file notes.md --generate-notes --latest
 
   nightly:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -131,17 +164,25 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
       # Recreated on every push so the "nightly" tag and its files always match the latest main commit.
+      # The title's version is what nightly clients compare to find updates (docs/RELEASING.md).
       - name: Replace nightly pre-release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.test.outputs.version }}
         run: |
+          {
+            echo "Automatic build of \`main\` at ${GITHUB_SHA::7} ($VERSION). Not a stable release: it is replaced on every push. Stable versions: the releases tagged vX.Y.Z."
+            echo
+            echo "## Changes since the last release"
+            echo
+            scripts/changelog.sh Unreleased || echo "_Nothing listed yet._"
+          } > notes.md
           gh release delete nightly --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
           gh release create nightly dist/* --repo "$GITHUB_REPOSITORY" --prerelease --latest=false \
-            --target "$GITHUB_SHA" --title "Nightly $VERSION" \
-            --notes "Automatic build of \`main\` at ${GITHUB_SHA::7} ($VERSION). Not a stable release: it is replaced on every push. Stable versions: the releases tagged vX.Y.Z."
+            --target "$GITHUB_SHA" --title "Nightly $VERSION" --notes-file notes.md

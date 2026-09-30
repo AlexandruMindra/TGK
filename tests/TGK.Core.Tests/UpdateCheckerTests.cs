@@ -178,6 +178,10 @@ public sealed class UpdateCheckerPackageTests
 
         Assert.Equal(new UpdatePackage("TGK-linux-x64.tar.gz", "https://github.com/AlexandruMindra/TGK/releases/download/v0.3.0/TGK-linux-x64.tar.gz",
             1234, new string('a', 64)), update.Package);
-        Assert.Null(UpdateChecker.PackageName("osx-arm64"));
+        Assert.Equal("TGK-osx-arm64.tar.gz", UpdateChecker.PackageName("osx-arm64"));
+        Assert.Equal("TGK-osx-x64.tar.gz", UpdateChecker.PackageName("osx-x64"));
+        Assert.Equal("TGK-x86_64.AppImage", UpdateChecker.PackageName("linux-x64", appImage: true));
+        Assert.Null(UpdateChecker.PackageName("win-x64", appImage: true));
+        Assert.Null(UpdateChecker.PackageName("linux-arm64"));
     }
 }

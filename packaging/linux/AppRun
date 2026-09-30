@@ -1,0 +1,4 @@
+#!/bin/sh
+# Entry point of the AppImage: the app lives in usr/lib/tgk (the self-contained publish folder).
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "$HERE/usr/lib/tgk/TGK" "$@"
