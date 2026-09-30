@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Blossom.Core.Input;
 using Silk.NET.Input;
 using SkiaSharp;
@@ -99,12 +100,16 @@ public sealed class TabStrip : Control
     /// its ends (hold to keep scrolling) and a list button with every tab. The active tab is scrolled into view when it
     /// changes, never while the user is browsing the strip. The panes of a split view are marked with a bar over their
     /// tabs. The "+" button has room of its own at the end, so it never covers a tab.
+    /// Tabs can be dragged: between two tabs moves the tab there (into a split view when both neighbours are its panes,
+    /// out of its split view otherwise); onto the middle of another tab shows it beside that one (see
+    /// <see cref="MainView.DropTab"/>).
     /// </summary>
     private sealed class TabsArea : Control
     {
         private const float TabTop = 6, MinTabW = 104, MaxTabW = 220, PlusSize = 28, PlusGap = 6, CloseSize = 18, FadeW = 28;
         private const float ArrowW = 22;
         private const int RepeatDelayMs = 350, RepeatIntervalMs = 90;
+        private const float DragThreshold = 6, OntoFrom = 0.28f, OntoTo = 0.72f, DragScrollZone = 24, DragScrollStep = 10;
 
         private enum Part
         {
@@ -129,11 +134,18 @@ public sealed class TabStrip : Control
         private float _scroll;
         private (float X, float Y) _pointer = (-1, -1);
 
+        // Dragging a tab: the tab under the button (a drag once it moved DragThreshold px), where it was grabbed, and
+        // the drop target: an insertion slot or a tab to show it beside (-1 when none).
+        private TabContent? _dragTab;
+        private bool _dragging;
+        private float _dragStartX, _grabOffset, _dragX;
+        private int _dropSlot = -1, _dropOnto = -1;
+
         public TabsArea(MainView main)
         {
             _main = main;
             IsClipping = true;
-            Events.OnMouseMove += (_, e) => UpdateHover(e.Relative.X, e.Relative.Y);
+            Events.OnMouseMove += OnMove;
             Events.OnMouseDown += OnDown;
             Events.OnMouseUp += OnUp;
             Events.OnScroll += OnWheel;
@@ -270,12 +282,75 @@ public sealed class TabStrip : Control
                 ScrollTo((MathF.Floor((scroll + ViewWidth) / w + 0.01f) + 1) * w - ViewWidth);
         }
 
+        private void OnMove(object? sender, MouseEventArgs e)
+        {
+            float x = e.Relative.X;
+            if (_dragTab is not null && !_dragging && Math.Abs(x - _dragStartX) >= DragThreshold && _items.Contains(_dragTab))
+            {
+                _dragging = true;
+                _hoverTab = -1;
+                _hover = Part.None;
+            }
+            if (!_dragging)
+            {
+                UpdateHover(x, e.Relative.Y);
+                return;
+            }
+            e.Handled = true;
+            _dragX = x;
+            UpdateDropTarget();
+        }
+
+        private void UpdateDropTarget()
+        {
+            (_dropSlot, _dropOnto) = DropTarget(_dragX);
+            InvalidatePaint();
+        }
+
+        // Middle of another tab: beside it; nearer a tab's edge: the slot there; past the last tab: the end.
+        private (int Slot, int Onto) DropTarget(float x)
+        {
+            int n = _items.Count;
+            float w = TabWidth;
+            if (n == 0 || w <= 0)
+                return (-1, -1);
+            float p = (Math.Clamp(x, ViewLeft, ViewRight - 0.01f) - ViewLeft + Scroll) / w;
+            int i = (int)MathF.Floor(p);
+            if (i >= n)
+                return (n, -1);
+            if (i < 0)
+                return (0, -1);
+            float frac = p - i;
+            if (frac > OntoFrom && frac < OntoTo)
+                return _items[i] == _dragTab ? (-1, -1) : (-1, i);
+            return (frac <= OntoFrom ? i : i + 1, -1);
+        }
+
+        private void EndDrag()
+        {
+            _dragTab = null;
+            _dragging = false;
+            _dropSlot = _dropOnto = -1;
+            InvalidatePaint();
+        }
+
         private void OnTick()
         {
             if (IsDisposed)
             {
                 UiClock.Tick -= OnTick;
                 return;
+            }
+            // A tab dragged to either end of an overflowing strip scrolls it.
+            if (_dragging && Overflow)
+            {
+                float before = Scroll;
+                if (_dragX < ViewLeft + DragScrollZone)
+                    ScrollTo(Scroll - DragScrollStep);
+                else if (_dragX > ViewRight - DragScrollZone)
+                    ScrollTo(Scroll + DragScrollStep);
+                if (Math.Abs(Scroll - before) > 0.01f)
+                    UpdateDropTarget();
             }
             if (_nextRepeat < 0 || UiClock.NowMs < _nextRepeat)
                 return;
@@ -329,6 +404,10 @@ public sealed class TabStrip : Control
                     _closePressed = tab;
                     break;
                 case Part.Tab:
+                    _dragTab = _items[tab];
+                    _dragStartX = _dragX = x;
+                    _grabOffset = x - TabRect(tab).Left;
+                    CapturePointer();
                     _main.ActivateTab(tab);
                     break;
                 case Part.Left or Part.Right:
@@ -356,6 +435,19 @@ public sealed class TabStrip : Control
                 _middlePressed = -1;
                 return;
             }
+            if (e.Button == 0 && _dragging && _dragTab is { } dragged)
+            {
+                (int slot, int onto) = (_dropSlot, _dropOnto);
+                TabContent? target = onto >= 0 && onto < _items.Count ? _items[onto] : null;
+                EndDrag();
+                _pressed = Part.None;
+                if (slot >= 0 || target is not null)
+                    _main.DropTab(dragged, slot, target);
+                UpdateHover(x, y);
+                return;
+            }
+            if (e.Button == 0)
+                _dragTab = null;
             if (_pressed == Part.Plus && part == Part.Plus)
                 _main.NewTab();
             else if (_closePressed >= 0 && _closePressed == tab && part == Part.Close)
@@ -436,6 +528,9 @@ public sealed class TabStrip : Control
                 }
             }
 
+            if (_dragging)
+                PaintDrag(c);
+
             // Fade the edges where more tabs are scrolled out of view.
             if (scroll > 0.5f)
                 EdgeFade(c, ViewLeft, ViewLeft + FadeW);
@@ -461,6 +556,39 @@ public sealed class TabStrip : Control
                 }
             }
             DrawButton(c, PlusRect, "plus", Part.Plus, enabled: true, 16);
+        }
+
+        // The drop target (an accent bar between tabs, or an outlined tab to show the dragged one beside) and the
+        // dragged tab following the pointer.
+        private void PaintDrag(SKCanvas c)
+        {
+            if (_dropOnto >= 0 && _dropOnto < _items.Count)
+            {
+                SKRect r = TabRect(_dropOnto);
+                var box = new SKRect(r.Left + 2, r.Top + 2, r.Right - 2, r.Bottom - 3);
+                Gfx.FillRound(c, box, 6, Theme.AccentSoft);
+                Gfx.StrokeRound(c, box, 6, Theme.Accent);
+                Icons.Draw(c, "layout-columns", box.Right - 14, box.MidY, 13, Theme.Accent);
+            }
+            else if (_dropSlot >= 0)
+            {
+                float x = ViewLeft + _dropSlot * TabWidth - Scroll;
+                Gfx.FillRound(c, new SKRect(x - 1.5f, TabTop + 3, x + 1.5f, H - 3), 1.5f, Theme.Accent);
+            }
+            if (_dragTab is not { } tab)
+                return;
+            float w = TabWidth;
+            float left = Math.Clamp(_dragX - _grabOffset, ViewLeft - w / 2f, ViewRight - w / 2f);
+            var ghost = new SKRect(left, TabTop + 1, left + w, H - 2);
+            Gfx.FillTopRound(c, ghost, 8, Theme.SurfaceRaised.WithAlpha(170));
+            Gfx.StrokeRound(c, ghost, 8, Theme.BorderStrong);
+            float cy = ghost.MidY, tx = ghost.Left + 14;
+            if (tab.Status != TabStatus.None)
+            {
+                Gfx.Circle(c, tx + 3.5f, cy, 3.5f, StatusColor(tab.Status));
+                tx += 15;
+            }
+            Gfx.Text(c, tab.Title, tx, cy, Theme.FontBase, Theme.WeightRegular, Theme.TextPrimary, TextAlignment.Left, ghost.Right - tx - 12);
         }
 
         private void DrawButton(SKCanvas c, SKRect r, string icon, Part part, bool enabled, float size)

@@ -57,6 +57,9 @@ public class TextField : Control, IKeyInput, IFocusable
     /// <summary>Raised when the custom <see cref="TrailingIcon"/> button is clicked.</summary>
     public event Action? TrailingClicked;
 
+    /// <summary>Sees every key before the field does; returning true consumes it (e.g. Up/Down for a list of suggestions).</summary>
+    public Func<KeyStroke, bool>? KeyPreview { get; set; }
+
     public new string Text
     {
         get => _text;
@@ -126,6 +129,8 @@ public class TextField : Control, IKeyInput, IFocusable
 
     public bool OnKey(KeyStroke k)
     {
+        if (KeyPreview?.Invoke(k) == true)
+            return true;
         bool shift = k.Shift;
         bool word = k.Ctrl || k.Alt;
         switch (k.Key)

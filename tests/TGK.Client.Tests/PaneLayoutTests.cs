@@ -245,4 +245,19 @@ public class PaneLayoutTests
         Assert.Equal("top", PaneLayout<string>.Neighbor(panes, "main", PaneDirection.Right));
         Assert.Equal("main", PaneLayout<string>.Neighbor(panes, "bottom", PaneDirection.Left));
     }
+
+    [Fact]
+    public void Swap_exchanges_places_and_keeps_sizes()
+    {
+        var layout = PaneLayout<string>.FromPreset(LayoutPreset.MainLeft, ["a", "b", "c"]);
+        SKRect big = RectOf(layout, "a"), small = RectOf(layout, "c");
+
+        layout.Swap("a", "c");
+
+        Assert.Equal(["c", "b", "a"], layout.Items);
+        Assert.Equal(big, RectOf(layout, "c"));
+        Assert.Equal(small, RectOf(layout, "a"));
+        Assert.Equal(LayoutPreset.MainLeft, layout.Preset);
+        Assert.Throws<ArgumentException>(() => layout.Swap("a", "x"));
+    }
 }

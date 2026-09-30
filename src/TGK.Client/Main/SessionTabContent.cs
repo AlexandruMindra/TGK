@@ -82,7 +82,7 @@ public sealed class SessionTabContent : TabContent, IKeyInput
 
     public override void OnAttached()
     {
-        _terminal = new TerminalView(Host.Services.Prefs.Terminal);
+        _terminal = new TerminalView(EffectiveTerminal());
         _terminal.Input += OnTerminalInput;
         _terminal.GridResized += OnGridResized;
         _terminal.TitleChanged += title => SetTitle(string.IsNullOrWhiteSpace(title) ? _host.DisplayName : title);
@@ -91,7 +91,6 @@ public sealed class SessionTabContent : TabContent, IKeyInput
         AddChild(_terminal);
         AddChild(_overlay);
         ApplyAppearance();
-        Host.Services.PrefsChanged += ApplyAppearance;
         UiClock.Tick += OnTick;
         _address = HostFormat.Address(_host, Host.Services.Vault.Current);
         SetStatus(TabStatus.Closed, $"{_address} · Not connected");
@@ -109,24 +108,22 @@ public sealed class SessionTabContent : TabContent, IKeyInput
     public override void OnClosing()
     {
         _closing = true;
-        Host.Services.PrefsChanged -= ApplyAppearance;
         UiClock.Tick -= OnTick;
         CancelAttempt();
         _session?.Dispose();
         _session = null;
     }
 
-    /// <summary>The vault changed: the host's font size or color scheme may have (the next connect re-reads everything else).</summary>
+    /// <summary>The vault changed: the host's terminal settings may have (the next connect re-reads everything else).</summary>
     public void OnVaultChanged() => ApplyAppearance();
 
-    // Font size and color scheme come from the host's effective options; the built-in font size is this device's.
+    private TerminalSettings EffectiveTerminal() => EffectiveOptions.Terminal(EffectiveOptions.Resolve(Host.Services.Vault.Current, CurrentHost));
+
+    // Font, cursor and color scheme come from the host's effective options (synced in the vault).
     private void ApplyAppearance()
     {
-        TerminalSettings local = Host.Services.Prefs.Terminal;
-        EffectiveHostOptions options = EffectiveOptions.Resolve(Host.Services.Vault.Current, CurrentHost, local.FontSize);
-        TerminalSettings settings = local.Clone();
-        settings.FontSize = options.FontSize.Value;
-        _terminal.ApplySettings(settings);
+        EffectiveHostOptions options = EffectiveOptions.Resolve(Host.Services.Vault.Current, CurrentHost);
+        _terminal.ApplySettings(EffectiveOptions.Terminal(options));
         ColorScheme scheme = ColorScheme.Find(options.ColorScheme.Value);
         _terminal.Scheme = scheme;
         Style.BackColor = scheme.Background;

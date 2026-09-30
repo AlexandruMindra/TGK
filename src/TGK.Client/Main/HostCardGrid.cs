@@ -17,6 +17,7 @@ public sealed class HostCardGrid : Control
     private readonly bool _showLastUsed;
     private IReadOnlyList<HostEntry> _hosts = [];
     private int _hover = -1;
+    private int _selected = -1;
 
     /// <param name="showLastUsed">Show "3h ago" instead of the group name (the Recent row).</param>
     public HostCardGrid(MainView main, bool showLastUsed)
@@ -44,8 +45,23 @@ public sealed class HostCardGrid : Control
         {
             _hosts = value;
             _hover = -1;
+            _selected = -1;
             InvalidatePaint();
         }
+    }
+
+    /// <summary>The card chosen with the keyboard (outlined), or -1.</summary>
+    public int Selected
+    {
+        get => _selected;
+        set => SetAndPaint(ref _selected, Math.Clamp(value, -1, _hosts.Count - 1));
+    }
+
+    /// <summary>Top and bottom of card <paramref name="index"/> in this element (to scroll it into view).</summary>
+    public (float Top, float Bottom) CardSpan(int index)
+    {
+        SKRect r = CardRect(index);
+        return (r.Top, r.Bottom);
     }
 
     public static int ColumnsFor(float width) => Math.Max(1, (int)((width + Gap) / (MinCardW + Gap)));
@@ -103,9 +119,9 @@ public sealed class HostCardGrid : Control
         {
             HostEntry host = _hosts[i];
             SKRect r = CardRect(i);
-            bool hover = i == _hover;
-            Gfx.FillRound(c, r, Theme.RadiusLg, hover ? Theme.SurfaceHover : Theme.SurfaceRaised);
-            Gfx.StrokeRound(c, r, Theme.RadiusLg, hover ? Theme.BorderStrong : Theme.Border);
+            bool hover = i == _hover, selected = i == _selected;
+            Gfx.FillRound(c, r, Theme.RadiusLg, hover || selected ? Theme.SurfaceHover : Theme.SurfaceRaised);
+            Gfx.StrokeRound(c, selected ? SKRect.Inflate(r, -0.5f, -0.5f) : r, Theme.RadiusLg, selected ? Theme.Accent : hover ? Theme.BorderStrong : Theme.Border);
 
             SKColor tag = Theme.ParseHex(host.TagColor, Theme.Idle);
             var tile = SKRect.Create(r.Left + 14, r.MidY - 18, 36, 36);

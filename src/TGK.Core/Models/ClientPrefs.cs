@@ -17,7 +17,11 @@ public sealed class ClientPrefs
     public bool KeepLocalUnlocked { get; set; } = true;
     public bool SidebarCollapsed { get; set; }
     public float SidebarWidth { get; set; } = 260;
+    /// <summary>Terminal settings saved by versions before 0.2.1; they now live in the vault (<see cref="HostOptions"/>).</summary>
     public TerminalSettings Terminal { get; set; } = new();
+
+    /// <summary><see cref="Terminal"/> has been moved into the vault (done once per device, see <see cref="HostOptions.WithLocalTerminal"/>).</summary>
+    public bool TerminalInVault { get; set; }
 
     /// <summary>Look for newer TGK releases on GitHub (in the background, about twice a day) and mention them in the status bar.</summary>
     public bool CheckForUpdates { get; set; } = true;

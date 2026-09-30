@@ -258,6 +258,14 @@ public sealed class PaneLayout<T> where T : class
         return true;
     }
 
+    /// <summary>Exchanges the panes of <paramref name="a"/> and <paramref name="b"/> (places and sizes stay).</summary>
+    public void Swap(T a, T b)
+    {
+        Leaf first = FindLeaf(a) ?? throw new ArgumentException("The item is not a pane of this layout.", nameof(a));
+        Leaf second = FindLeaf(b) ?? throw new ArgumentException("The item is not a pane of this layout.", nameof(b));
+        (first.Item, second.Item) = (second.Item, first.Item);
+    }
+
     /// <summary>Puts <paramref name="replacement"/> in the pane of <paramref name="old"/> (same place and size).</summary>
     public void Replace(T old, T replacement)
     {

@@ -34,7 +34,12 @@ public sealed record EffectiveHostOptions(
     Resolved<string> TerminalType,
     Resolved<float> FontSize,
     Resolved<string> ColorScheme,
-    Resolved<bool> LegacyAlgorithms)
+    Resolved<bool> LegacyAlgorithms,
+    Resolved<string> FontFamily,
+    Resolved<int> ScrollbackLines,
+    Resolved<string> CursorShape,
+    Resolved<bool> CursorBlink,
+    Resolved<bool> CopyOnSelect)
 {
     /// <summary>Name of the host's group (for <see cref="OptionSource.Group"/>), or null when it has none.</summary>
     public string? GroupName { get; init; }
@@ -50,10 +55,13 @@ public static class EffectiveOptions
     public const string DefaultColorScheme = "TGK Dark";
     public const bool DefaultLegacyAlgorithms = false;
 
+    /// <summary>The bundled terminal font.</summary>
+    public const string DefaultFontFamily = "DejaVu Sans Mono";
+
     /// <summary>Most jump hosts one connection may go through.</summary>
     public const int MaxJumpHosts = 4;
 
-    /// <param name="localFontSize">The device's terminal font size (<see cref="TerminalSettings.FontSize"/>), the built-in default.</param>
+    /// <param name="localFontSize">A built-in font size other than <see cref="TerminalSettings.FontSize"/>'s default.</param>
     public static EffectiveHostOptions Resolve(VaultData vault, HostEntry host, float? localFontSize = null)
     {
         ArgumentNullException.ThrowIfNull(vault);
@@ -91,8 +99,26 @@ public static class EffectiveOptions
             Reference(levels, o => o.TerminalType, DefaultTerminalType),
             Value(levels, o => o.FontSize, localFontSize ?? new TerminalSettings().FontSize),
             Reference(levels, o => o.ColorScheme, DefaultColorScheme),
-            Value(levels, o => o.LegacyAlgorithms, DefaultLegacyAlgorithms));
+            Value(levels, o => o.LegacyAlgorithms, DefaultLegacyAlgorithms),
+            Reference(levels, o => o.FontFamily, DefaultFontFamily),
+            Value(levels, o => o.ScrollbackLines, BuiltIn.ScrollbackLines),
+            Reference(levels, o => o.CursorShape, BuiltIn.CursorShape),
+            Value(levels, o => o.CursorBlink, BuiltIn.CursorBlink),
+            Value(levels, o => o.CopyOnSelect, BuiltIn.CopyOnSelect));
     }
+
+    private static readonly TerminalSettings BuiltIn = new();
+
+    /// <summary>The terminal settings a session with <paramref name="options"/> uses.</summary>
+    public static TerminalSettings Terminal(EffectiveHostOptions options) => new()
+    {
+        FontSize = options.FontSize.Value,
+        FontFamily = options.FontFamily.Value,
+        ScrollbackLines = options.ScrollbackLines.Value,
+        CursorShape = options.CursorShape.Value,
+        CursorBlink = options.CursorBlink.Value,
+        CopyOnSelect = options.CopyOnSelect.Value,
+    };
 
     /// <summary>
     /// The saved hosts a connection to <paramref name="host"/> goes through, outermost (connected first) first; empty

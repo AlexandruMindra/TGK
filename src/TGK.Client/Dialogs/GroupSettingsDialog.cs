@@ -55,7 +55,7 @@ public sealed class GroupSettingsDialog : TabbedDialog
         general.Layout = LayoutGeneral;
 
         _options = new OptionsEditor(view, _group.Options, OptionsLevel.Group,
-            () => EffectiveOptions.Resolve(null, null, _vault.Current.Defaults, View.Services.Prefs.Terminal.FontSize), Candidate,
+            () => EffectiveOptions.Resolve(null, null, _vault.Current.Defaults), Candidate,
             PageAt(ConnectionTab), PageAt(SessionTab), PageAt(AppearanceTab));
         _options.LayoutChanged += InvalidateLayout;
 

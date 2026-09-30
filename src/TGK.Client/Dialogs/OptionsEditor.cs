@@ -24,7 +24,7 @@ public sealed record OptionsError(string Message, FormPage Page, TextField? Fiel
 
 /// <summary>
 /// The inheritable <see cref="HostOptions"/> on three pages (Connection, Session, Appearance), shared by the host
-/// editor, the group settings and the connection defaults. An empty field (or "Inherit") inherits; its caption says
+/// editor, the group settings and the settings dialog (which shows the appearance part on its Terminal page). An empty field (or "Inherit") inherits; its caption says
 /// what it inherits and from where, and a "Reset to …" link clears an overridden value.
 /// </summary>
 public sealed class OptionsEditor
@@ -54,9 +54,11 @@ public sealed class OptionsEditor
     private readonly EnvEditor _env;
     private bool _startupOverridden;
 
-    private readonly OptionCaption _schemeCaption, _fontCaption, _legacyCaption;
+    private readonly OptionCaption _schemeCaption, _fontCaption, _familyCaption, _legacyCaption;
     private readonly SchemePicker _scheme;
     private readonly FontStepper _font;
+    private readonly Dropdown _family;
+    private readonly List<string?> _familyValues = [];
     private readonly SegmentedControl _legacy;
     private readonly Label _legacyHelp;
 
@@ -67,8 +69,13 @@ public sealed class OptionsEditor
     /// since a change of one level can create a loop through hosts, groups and defaults.
     /// </param>
     /// <param name="hostId">The edited host, which is not offered as its own jump host.</param>
+    /// <param name="arrangeAppearance">
+    /// Lay out the appearance page; false when the owner places those controls on a page of its own
+    /// (see <see cref="ArrangeAppearance"/>).
+    /// </param>
     public OptionsEditor(TgkView view, HostOptions options, OptionsLevel level, Func<EffectiveHostOptions> inherited,
-        Func<HostOptions, VaultData> candidate, FormPage connection, FormPage session, FormPage appearance, Guid? hostId = null)
+        Func<HostOptions, VaultData> candidate, FormPage connection, FormPage session, FormPage appearance, Guid? hostId = null,
+        bool arrangeAppearance = true)
     {
         _view = view;
         _level = level;
@@ -93,6 +100,9 @@ public sealed class OptionsEditor
         _reconnect = connection.Add(TriState(_reconnectCaption, inheritWord));
         _reconnectHelp = connection.Add(new Label("Reconnects after an unexpected disconnect, waiting longer between attempts (at most 10).",
             Theme.FontXs, Theme.TextMuted) { MaxLines = 2 });
+        _legacyCaption = connection.Add(new OptionCaption("Legacy algorithms (old network devices)"));
+        _legacy = connection.Add(TriState(_legacyCaption, inheritWord));
+        _legacyHelp = connection.Add(new Label("Weakens security: also allows SHA-1 and CBC algorithms.", Theme.FontXs, Theme.Warning) { MaxLines = 2 });
 
         // ---- Session ----
         _startupCaption = session.Add(new OptionCaption("Startup command"));
@@ -128,25 +138,37 @@ public sealed class OptionsEditor
         // ---- Appearance ----
         _schemeCaption = appearance.Add(new OptionCaption("Color scheme"));
         _scheme = appearance.Add(new SchemePicker(inheritWord));
-        _scheme.Changed += () => _schemeCaption.Overridden = _scheme.Selected is not null;
-        _schemeCaption.ResetClicked += () => { _scheme.Selected = null; _schemeCaption.Overridden = false; };
+        _scheme.Changed += () => { _schemeCaption.Overridden = _scheme.Selected is not null; AppearanceChanged?.Invoke(); };
+        _schemeCaption.ResetClicked += () => { _scheme.Selected = null; _schemeCaption.Overridden = false; AppearanceChanged?.Invoke(); };
+        _familyCaption = appearance.Add(new OptionCaption("Font"));
+        _family = appearance.Add(new Dropdown());
+        _family.SelectionChanged += _ => { _familyCaption.Overridden = SelectedFamily is not null; AppearanceChanged?.Invoke(); };
+        _familyCaption.ResetClicked += () => { _family.SelectedIndex = 0; _familyCaption.Overridden = false; AppearanceChanged?.Invoke(); };
         _fontCaption = appearance.Add(new OptionCaption("Font size (px)"));
         _font = appearance.Add(new FontStepper());
-        _font.Changed += () => _fontCaption.Overridden = _font.Field.Text.Length > 0;
-        _fontCaption.ResetClicked += () => { _font.Value = null; _fontCaption.Overridden = false; };
-        _legacyCaption = appearance.Add(new OptionCaption("Legacy algorithms (old network devices)"));
-        _legacy = appearance.Add(TriState(_legacyCaption, inheritWord));
-        _legacyHelp = appearance.Add(new Label("Weakens security: also allows SHA-1 and CBC algorithms.", Theme.FontXs, Theme.Warning) { MaxLines = 2 });
+        _font.Changed += () => { _fontCaption.Overridden = _font.Field.Text.Length > 0; AppearanceChanged?.Invoke(); };
+        _fontCaption.ResetClicked += () => { _font.Value = null; _fontCaption.Overridden = false; AppearanceChanged?.Invoke(); };
 
         connection.Layout = ArrangeConnection;
         session.Layout = ArrangeSession;
-        appearance.Layout = ArrangeAppearance;
+        if (arrangeAppearance)
+            appearance.Layout = w => ArrangeAppearance(w, 0);
         Load(options);
         RefreshInherited();
     }
 
     /// <summary>The content height of a page changed (e.g. a variable was added): the owner re-lays out the dialog.</summary>
     public event Action? LayoutChanged;
+
+    /// <summary>The color scheme, font or font size changed (e.g. to update a preview).</summary>
+    public event Action? AppearanceChanged;
+
+    /// <summary>The color scheme, font family and size as edited here, or inherited where nothing is set.</summary>
+    public (string Scheme, string Family, float Size) Appearance =>
+        (_scheme.Selected ?? _inherited.ColorScheme.Value, SelectedFamily ?? _inherited.FontFamily.Value,
+            _font.Value is { } size && size >= HostOptions.MinFontSize && size <= HostOptions.MaxFontSize ? size : _inherited.FontSize.Value);
+
+    private string? SelectedFamily => _familyValues.Count > 0 ? _familyValues[Math.Clamp(_family.SelectedIndex, 0, _familyValues.Count - 1)] : null;
 
     private VaultData Vault => _view.Services.Vault.Current;
 
@@ -186,6 +208,7 @@ public sealed class OptionsEditor
         _env.Load(o.Environment);
         _scheme.Selected = o.ColorScheme;
         _font.Value = o.FontSize;
+        BuildFamilyOptions(o.FontFamily);
         _legacy.SelectedIndex = TriIndex(o.LegacyAlgorithms);
 
         UpdateJumpCaption();
@@ -197,6 +220,7 @@ public sealed class OptionsEditor
         _envCaption.Overridden = o.Environment is not null;
         _schemeCaption.Overridden = o.ColorScheme is not null;
         _fontCaption.Overridden = o.FontSize is not null;
+        _familyCaption.Overridden = o.FontFamily is not null;
         _legacyCaption.Overridden = o.LegacyAlgorithms is not null;
     }
 
@@ -226,6 +250,7 @@ public sealed class OptionsEditor
             Environment = environment,
             TerminalType = term.Length > 0 ? term : null,
             FontSize = fontSize,
+            FontFamily = SelectedFamily,
             ColorScheme = _scheme.Selected,
             LegacyAlgorithms = TriValue(_legacy),
         };
@@ -241,6 +266,7 @@ public sealed class OptionsEditor
         target.Environment = result.Environment;
         target.TerminalType = result.TerminalType;
         target.FontSize = result.FontSize;
+        target.FontFamily = result.FontFamily;
         target.ColorScheme = result.ColorScheme;
         target.LegacyAlgorithms = result.LegacyAlgorithms;
         return null;
@@ -285,8 +311,10 @@ public sealed class OptionsEditor
         Set(_schemeCaption, i.ColorScheme.Value, i.ColorScheme.Source);
         _scheme.SetInherited(ColorScheme.Find(i.ColorScheme.Value));
         string size = MathF.Round(i.FontSize.Value).ToString(CultureInfo.InvariantCulture) + " px";
-        Set(_fontCaption, i.FontSize.Source == OptionSource.Default ? size + " (this device's terminal setting)" : size, i.FontSize.Source);
+        Set(_fontCaption, size, i.FontSize.Source);
         _font.SetInherited(i.FontSize.Value);
+        Set(_familyCaption, i.FontFamily.Value, i.FontFamily.Source);
+        BuildFamilyOptions(SelectedFamily);
         Set(_legacyCaption, OnOff(i.LegacyAlgorithms.Value), i.LegacyAlgorithms.Source);
         UpdateRoute();
     }
@@ -309,6 +337,37 @@ public sealed class OptionsEditor
             : inherited.Length > 0 ? inherited
             : "None, e.g. tmux new -A -s main";
     }
+
+    // ---- font family ----
+
+    // "Default"/"Inherit · family", the bundled font, the monospace fonts installed here and, when this level's own
+    // font is not installed on this device, that one (kept, so saving does not change what other devices use).
+    private void BuildFamilyOptions(string? selected)
+    {
+        _familyValues.Clear();
+        var names = new List<string>();
+        string inherited = _inherited.FontFamily.Value;
+        _familyValues.Add(null);
+        names.Add(_level == OptionsLevel.Global ? $"Default · {FamilyName(inherited)}" : $"Inherit · {FamilyName(inherited)}");
+        foreach (string family in TerminalFonts.Available)
+        {
+            _familyValues.Add(family);
+            names.Add(FamilyName(family));
+        }
+        if (selected is not null && !_familyValues.Exists(f => f is not null && string.Equals(f, selected, StringComparison.OrdinalIgnoreCase)))
+        {
+            _familyValues.Add(selected);
+            names.Add($"{selected} (not installed on this device)");
+        }
+        _family.Options = names;
+        _family.SelectedIndex = selected is null ? 0
+            : Math.Max(0, _familyValues.FindIndex(f => f is not null && string.Equals(f, selected, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private static string FamilyName(string family) =>
+        string.Equals(family, TerminalFonts.Bundled, StringComparison.OrdinalIgnoreCase) ? $"{TerminalFonts.Bundled} (built in)"
+        : TerminalFonts.IsAvailable(family) ? family
+        : $"{family} (not installed here)";
 
     // ---- jump host ----
 
@@ -425,8 +484,10 @@ public sealed class OptionsEditor
         y = Help(_route, 0, y, w) + RowGap;
         Place(_keepAliveCaption, _keepAlive, 0, y, col);
         y = Place(_timeoutCaption, _timeout, col + Gap, y, w - col - Gap) + RowGap;
-        y = Place(_reconnectCaption, _reconnect, 0, y, col);
-        return Help(_reconnectHelp, 0, y, w);
+        float right = w - col - Gap;
+        float left = Help(_reconnectHelp, 0, Place(_reconnectCaption, _reconnect, 0, y, col), col);
+        float legacy = Help(_legacyHelp, col + Gap, Place(_legacyCaption, _legacy, col + Gap, y, right), right);
+        return Math.Max(left, legacy);
     }
 
     private float ArrangeSession(float w)
@@ -441,12 +502,12 @@ public sealed class OptionsEditor
         return y;
     }
 
-    private float ArrangeAppearance(float w)
+    /// <summary>Places the color scheme, font and font size from <paramref name="top"/> down; returns the bottom.</summary>
+    public float ArrangeAppearance(float w, float top)
     {
         float col = MathF.Floor((w - Gap) / 2f);
-        float y = Place(_schemeCaption, _scheme, 0, 0, w, SchemePicker.MeasureHeight()) + RowGap;
-        Place(_fontCaption, _font, 0, y, col);
-        y = Place(_legacyCaption, _legacy, col + Gap, y, w - col - Gap);
-        return Help(_legacyHelp, col + Gap, y, w - col - Gap);
+        float y = Place(_schemeCaption, _scheme, 0, top, w, SchemePicker.MeasureHeight()) + RowGap;
+        Place(_familyCaption, _family, 0, y, col);
+        return Place(_fontCaption, _font, col + Gap, y, w - col - Gap);
     }
 }

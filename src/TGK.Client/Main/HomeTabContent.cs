@@ -4,15 +4,20 @@ using System.Linq;
 using Blossom.Core.Visual;
 using Blossom.Core.Visual.Enums;
 using SkiaSharp;
+using Silk.NET.Input;
 using TGK.Client.Controls;
+using TGK.Client.Input;
+using Button = TGK.Client.Controls.Button;
 using TGK.Client.Views;
 using TGK.Core.Models;
 
 namespace TGK.Client.Main;
 
 /// <summary>
-/// The new-tab page: a quick-connect field (<c>user@host[:port]</c>), then Recent and All hosts as cards.
-/// Connecting from here replaces this page with the session, like navigating in a browser tab.
+/// The new-tab page: a quick-connect field (<c>user@host[:port]</c>), then Recent and All hosts as cards. Typing in the
+/// field also searches the saved hosts by name, user and/or host (<see cref="QuickConnect.Search"/>): the cards show the
+/// matches, ↓/↑ pick one and Enter connects to it. Connecting from here replaces this page with the session, like
+/// navigating in a browser tab.
 /// </summary>
 public sealed class HomeTabContent : TabContent
 {
@@ -25,6 +30,7 @@ public sealed class HomeTabContent : TabContent
     private readonly Label _recentCaption, _allCaption, _emptyText;
     private readonly HostCardGrid _recent, _all;
     private readonly Button _newHost;
+    private string _query = "";
 
     public HomeTabContent(MainView main)
     {
@@ -44,10 +50,16 @@ public sealed class HomeTabContent : TabContent
         AddChild(_scroll);
 
         _heading = Add(new Label("Connect to a server", Theme.FontXl, Theme.TextPrimary, Theme.WeightSemibold));
-        _subheading = Add(new Label("Type an address or pick one of your saved hosts.", Theme.FontBase, Theme.TextMuted));
-        _quick = Add(new TextField("user@host[:port]") { LeadingIcon = "terminal", FontSize = Theme.FontLg, Mono = true });
+        _subheading = Add(new Label("Type an address, or search your saved hosts by name, user or host.", Theme.FontBase, Theme.TextMuted));
+        _quick = Add(new TextField("user@host[:port], or search saved hosts") { LeadingIcon = "terminal", FontSize = Theme.FontLg, Mono = true, ShowClearButton = true });
         _quick.Submitted += Connect;
-        _quick.Changed += _ => ShowHint(null);
+        _quick.Changed += text =>
+        {
+            _query = text.Trim();
+            ApplyFilter();
+            ShowHint(null);
+        };
+        _quick.KeyPreview = OnQuickKey;
         _connect = Add(new Button("Connect", ButtonVariant.Primary, "bolt") { FontSize = Theme.FontMd });
         _connect.Clicked += Connect;
         _hint = Add(new Label("", Theme.FontSm, Theme.TextMuted));
@@ -78,10 +90,45 @@ public sealed class HomeTabContent : TabContent
     /// <summary>Re-reads hosts from the vault (called by <see cref="MainView"/> on every vault change).</summary>
     public void Refresh()
     {
-        VaultData vault = Host.Services.Vault.Current;
-        _all.Hosts = vault.Hosts.OrderBy(h => h.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
         _emptyText.Text = EmptyText(Host.Services.IsLocal); // the mode can change (upload to a server account)
+        ApplyFilter();
+    }
+
+    private bool Searching => _query.Length > 0;
+
+    // All saved hosts, or those matching the text typed so far (the keyboard choice stays on the same host).
+    private void ApplyFilter()
+    {
+        VaultData vault = Host.Services.Vault.Current;
+        HostEntry? chosen = _all.Selected >= 0 && _all.Selected < _all.Hosts.Count ? _all.Hosts[_all.Selected] : null;
+        _all.Hosts = Searching ? QuickConnect.Search(_query, vault) : vault.Hosts.OrderBy(h => h.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
+        if (chosen is not null && Searching)
+            _all.Selected = _all.Hosts.ToList().FindIndex(h => h.Id == chosen.Id);
+        _allCaption.Text = Searching ? $"MATCHING SAVED HOSTS · {_all.Hosts.Count}" : "ALL HOSTS";
         InvalidateLayout();
+    }
+
+    // Down/Up move through the matching hosts (Up from the first one returns to the typed text).
+    private bool OnQuickKey(KeyStroke k)
+    {
+        if (!Searching || k.Modifiers != KeyModifiers.None || _all.Hosts.Count == 0)
+            return false;
+        int step = k.Key switch { Key.Down => 1, Key.Up => -1, _ => 0 };
+        if (step == 0)
+            return false;
+        _all.Selected = Math.Clamp(_all.Selected + step, -1, _all.Hosts.Count - 1);
+        ShowHint(null);
+        if (_all.Selected >= 0)
+        {
+            (float top, float bottom) = _all.CardSpan(_all.Selected);
+            float y = _all.Transform.Computed.Y - _page.Transform.Computed.Y;
+            float viewH = _scroll.Transform.Computed.Height;
+            if (y + top - 8 < _scroll.ScrollY)
+                _scroll.ScrollY = y + top - 8;
+            else if (y + bottom + 8 > _scroll.ScrollY + viewH)
+                _scroll.ScrollY = y + bottom + 8 - viewH;
+        }
+        return true;
     }
 
     private static string EmptyText(bool local) =>
@@ -99,22 +146,40 @@ public sealed class HomeTabContent : TabContent
         return element;
     }
 
+    // The saved host chosen with the keyboard; else what was typed: a saved host's name or an address (a saved host
+    // with that same address and user is used, with its settings).
     private void Connect()
     {
-        HostEntry? host = QuickConnect.Parse(_quick.Text, Host.Services.Vault.Current, out string? error);
+        VaultData vault = Host.Services.Vault.Current;
+        if (Searching && _all.Selected >= 0 && _all.Selected < _all.Hosts.Count)
+        {
+            Host.ConnectInTab(this, _all.Hosts[_all.Selected]);
+            return;
+        }
+        HostEntry? host = QuickConnect.Parse(_quick.Text, vault, out string? error);
         if (host is null)
         {
+            // Just part of a name or address typed, with a single saved host matching it: that one.
+            if (Searching && _all.Hosts.Count == 1)
+            {
+                Host.ConnectInTab(this, _all.Hosts[0]);
+                return;
+            }
             ShowHint(error);
             _quick.Focus();
             return;
         }
-        Host.ConnectInTab(this, host);
+        Host.ConnectInTab(this, vault.FindHost(host.Id) ?? QuickConnect.FindSaved(host, vault) ?? host);
     }
 
     private void ShowHint(string? error)
     {
         _quick.HasError = error is not null;
-        _hint.Text = error ?? "Press Enter to connect  ·  Ctrl+L to focus  ·  Ctrl+T for a new tab";
+        string idle = !Searching ? "Press Enter to connect  ·  Ctrl+L to focus  ·  Ctrl+T for a new tab"
+            : _all.Selected >= 0 ? $"Enter connects to {_all.Hosts[_all.Selected].DisplayName}  ·  ↑ ↓ to choose another  ·  Esc to clear"
+            : _all.Hosts.Count > 0 ? "↓ to choose a matching saved host  ·  Enter connects to the address typed"
+            : "No saved host matches  ·  Enter connects to the address typed";
+        _hint.Text = error ?? idle;
         _hint.Color = error is null ? Theme.TextMuted : Theme.Danger;
     }
 
@@ -140,12 +205,12 @@ public sealed class HomeTabContent : TabContent
 
         VaultData vault = Host.Services.Vault.Current;
         int columns = HostCardGrid.ColumnsFor(colW);
-        List<HostEntry> recent = vault.Hosts.Where(hh => hh.LastConnected is not null)
+        List<HostEntry> recent = Searching ? [] : vault.Hosts.Where(hh => hh.LastConnected is not null)
             .OrderByDescending(hh => hh.LastConnected).Take(columns).ToList();
         if (!recent.SequenceEqual(_recent.Hosts))
             _recent.Hosts = recent;
 
-        bool hasRecent = recent.Count > 0, hasHosts = _all.Hosts.Count > 0;
+        bool hasRecent = recent.Count > 0, hasHosts = _all.Hosts.Count > 0 || (Searching && vault.Hosts.Count > 0);
         _recentCaption.Visible = _recent.Visible = hasRecent;
         if (hasRecent)
             y = Section(_recentCaption, _recent, x, y, colW);

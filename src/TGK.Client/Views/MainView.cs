@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Blossom;
 using Blossom.Core;
+using Blossom.Core.Input;
 using Blossom.Core.Visual;
 using Silk.NET.Input;
 using SkiaSharp;
@@ -34,6 +35,8 @@ public sealed partial class MainView : TgkView
     private StatusBar _status = null!;
     private int _active = -1;
     private bool _sidebarVisible;
+    private bool _sidebarPeek; // hidden sidebar shown over the content while the pointer is at the window's left edge
+    private long _peekOpenAt = -1, _peekCloseAt = -1;
     private bool _vaultRefreshQueued;
     private bool _torndown;
     private TabContent? _tunnelMenuTab; // the tab whose tunnels the open tunnel menu lists
@@ -73,11 +76,28 @@ public sealed partial class MainView : TgkView
         Services.Vault.Changed += OnVaultChanged;
         RegisterShortcuts();
         Events.OnMouseDown += OnViewMouseDown;
+        Events.OnMouseMove += OnViewMouseMove;
         UiClock.Tick += OnUiTick;
         _sidebar.Refresh();
         NewTab();
         StartWorkspace();
         StartUpdateChecks();
+    }
+
+    // Versions before 0.2.1 kept the terminal settings on each device: the first device to start this version moves
+    // its own into the vault (synced), unless the vault already has terminal settings. A server account waits until
+    // the vault came from the server (a restored session starts from a copy on disk that may be stale), so it never
+    // overwrites what another device moved.
+    private void MoveLocalTerminalSettings()
+    {
+        if (Services.Prefs.TerminalInVault || !Services.Vault.IsLoggedIn)
+            return;
+        if (Services.Vault.Mode == VaultMode.Server
+            && !(Services.Vault.Status == SyncState.Idle && Services.Vault.LastSync is not null && Services.Vault.PendingChanges == 0))
+            return;
+        Services.UpdatePrefs(p => p.TerminalInVault = true); // once, even if saving fails (RunVault says so)
+        if (HostOptions.WithLocalTerminal(Services.Vault.Current.Defaults, Services.Prefs.Terminal) is { } defaults)
+            RunVault(() => Services.Vault.SaveDefaultsAsync(defaults));
     }
 
     protected override void OnShown()
@@ -88,23 +108,75 @@ public sealed partial class MainView : TgkView
 
     // ---- layout ----
 
+    private float SidebarWidth(float windowW) => Math.Min(Services.Prefs.SidebarWidth, Math.Max(200, windowW * 0.4f));
+
     private void Layout(float w, float h)
     {
-        float sidebarW = _sidebarVisible ? Math.Min(Services.Prefs.SidebarWidth, Math.Max(200, w * 0.4f)) : 0;
+        bool shown = _sidebarVisible || _sidebarPeek;
+        float sidebarW = shown ? SidebarWidth(w) : 0;
+        float contentLeft = _sidebarVisible ? sidebarW : 0; // a peeking sidebar floats over the content
         float bodyTop = Theme.TabStripHeight, bodyH = Math.Max(0, h - Theme.TabStripHeight - Theme.StatusBarHeight);
-        _strip.ContentLeft = sidebarW;
+        _strip.ContentLeft = contentLeft;
         _strip.Transform.SetLocalFrame(0, 0, w, Theme.TabStripHeight);
-        _sidebar.Visible = _sidebarVisible;
-        if (_sidebarVisible)
+        _sidebar.Visible = shown;
+        _sidebar.Floating = _sidebarPeek;
+        if (shown)
             _sidebar.Transform.SetLocalFrame(0, bodyTop, sidebarW, bodyH);
-        _content.Transform.SetLocalFrame(sidebarW, bodyTop, w - sidebarW, bodyH);
+        _content.Transform.SetLocalFrame(contentLeft, bodyTop, w - contentLeft, bodyH);
         _status.Transform.SetLocalFrame(0, h - Theme.StatusBarHeight, w, Theme.StatusBarHeight);
     }
 
+    /// <summary>Shows or hides the sidebar; a sidebar that is only peeking (see <see cref="OnViewMouseMove"/>) stays open.</summary>
     public void ToggleSidebar()
     {
-        _sidebarVisible = !_sidebarVisible;
+        _sidebarVisible = !_sidebarVisible || _sidebarPeek;
+        _sidebarPeek = false;
+        _peekOpenAt = _peekCloseAt = -1;
         Services.UpdatePrefs(p => p.SidebarCollapsed = !_sidebarVisible);
+        _root.InvalidateLayout();
+    }
+
+    // ---- sidebar peek ----
+
+    private const float PeekEdge = 6, PeekMargin = 16;
+    private const int PeekOpenDelayMs = 150, PeekCloseDelayMs = 400;
+
+    // While the sidebar is hidden, resting the pointer at the window's left edge (below the tab strip) shows it over
+    // the content; it hides again shortly after the pointer leaves it (not while one of its menus or dialogs is open).
+    private void OnViewMouseMove(object? sender, MouseEventArgs e)
+    {
+        if (_torndown || _sidebarVisible || !IsActive)
+            return;
+        float x = e.Global.X, y = e.Global.Y, h = _root.Transform.Computed.Height;
+        long now = UiClock.NowMs;
+        if (!_sidebarPeek)
+        {
+            bool atEdge = x <= PeekEdge && y >= Theme.TabStripHeight && y < h - Theme.StatusBarHeight
+                && !Events.IsMouseButtonDown(0) && !HasModal && !Menu.IsOpen;
+            _peekOpenAt = !atEdge ? -1 : _peekOpenAt >= 0 ? _peekOpenAt : now + PeekOpenDelayMs;
+            return;
+        }
+        bool over = x < SidebarWidth(_root.Transform.Computed.Width) + PeekMargin && y >= Theme.TabStripHeight - PeekMargin;
+        _peekCloseAt = over ? -1 : _peekCloseAt >= 0 ? _peekCloseAt : now + PeekCloseDelayMs;
+    }
+
+    private void TickSidebarPeek()
+    {
+        long now = UiClock.NowMs;
+        if (_sidebarVisible)
+            return;
+        if (!_sidebarPeek && _peekOpenAt >= 0 && now >= _peekOpenAt)
+            SetSidebarPeek(true);
+        else if (_sidebarPeek && _peekCloseAt >= 0 && now >= _peekCloseAt && !HasModal && !Menu.IsOpen)
+            SetSidebarPeek(false);
+    }
+
+    private void SetSidebarPeek(bool peek)
+    {
+        _sidebarPeek = peek;
+        _peekOpenAt = _peekCloseAt = -1;
+        if (!peek && ActiveKeyboardElement is { } focused && _sidebar.ContainsElement(focused))
+            SetActiveKeyboardElement(ActiveTab?.DefaultFocus is { EffectiveVisible: true } focus ? focus : null);
         _root.InvalidateLayout();
     }
 

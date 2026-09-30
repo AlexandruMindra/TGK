@@ -8,7 +8,7 @@ namespace TGK.Client.Terminal;
 public readonly record struct GlyphRef(int FontIndex, ushort Glyph, float OffsetX);
 
 /// <summary>
-/// The terminal's font at one size: cell metrics from the bundled DejaVu Sans Mono and a per-character glyph cache
+/// The terminal's font at one size: cell metrics from the chosen family (see <see cref="TerminalFonts"/>) and a per-character glyph cache
 /// with fallback fonts for symbols, CJK and emoji the primary font lacks. UI thread only.
 /// </summary>
 public sealed class TerminalFont : IDisposable
@@ -20,10 +20,16 @@ public sealed class TerminalFont : IDisposable
     private readonly Dictionary<(nint Face, float Size, bool Italic), int> _fontIndex = new();
     private readonly Dictionary<(int Rune, int Style), GlyphRef> _glyphs = new();
 
-    public TerminalFont(float size)
+    private readonly SKTypeface _primary;
+
+    /// <param name="family">Null or a family not installed: the bundled font.</param>
+    public TerminalFont(float size, string? family = null)
     {
         Size = size;
-        foreach (SKTypeface face in new[] { Theme.Mono, Theme.MonoBold })
+        (SKTypeface regularFace, SKTypeface boldFace) = TerminalFonts.Get(family);
+        _primary = regularFace;
+        Family = family;
+        foreach (SKTypeface face in new[] { regularFace, boldFace })
         {
             foreach (bool italic in new[] { false, true })
                 _fonts.Add(CreateFont(face, size, italic));
@@ -41,6 +47,9 @@ public sealed class TerminalFont : IDisposable
     }
 
     public float Size { get; }
+
+    /// <summary>The family asked for (null: the bundled font).</summary>
+    public string? Family { get; }
     public float CellWidth { get; }
     public float CellHeight { get; }
 
@@ -95,11 +104,14 @@ public sealed class TerminalFont : IDisposable
         return new GlyphRef(index, glyph, offset);
     }
 
-    private static SKTypeface? FindFallbackFace(int rune)
+    private SKTypeface? FindFallbackFace(int rune)
     {
-        SKTypeface face = Blossom.Utils.Fonts.ResolveForCodepoint(Theme.Mono, rune);
-        if (face != Theme.Mono && Blossom.Utils.Fonts.HasGlyph(face, rune))
+        SKTypeface face = Blossom.Utils.Fonts.ResolveForCodepoint(_primary, rune);
+        if (face != _primary && Blossom.Utils.Fonts.HasGlyph(face, rune))
             return face;
+        // A chosen font without the character: the bundled one may have it (box drawing, symbols).
+        if (_primary != Theme.Mono && Blossom.Utils.Fonts.HasGlyph(Theme.Mono, rune))
+            return Theme.Mono;
         // Blossom's list covers symbols; CJK and other scripts need the fonts below.
         foreach (SKTypeface extra in ExtraFallbacks.Value)
         {

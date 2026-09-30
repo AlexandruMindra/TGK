@@ -5,6 +5,7 @@ using System.Text.Json;
 using SkiaSharp;
 using TGK.Client.Controls;
 using TGK.Client.Main;
+using TGK.Client.Terminal;
 using TGK.Client.Views;
 using TGK.Core.Models;
 using TGK.Core.Services;
@@ -12,25 +13,25 @@ using TGK.Core.Services;
 namespace TGK.Client.Dialogs;
 
 /// <summary>
-/// Settings: terminal preferences for this device (saved in <c>ClientServices.Prefs</c>, raising <c>PrefsChanged</c>),
-/// the connection defaults every host inherits and the "reopen my tabs" preference, which live in the vault and sync to
-/// all devices.
+/// Settings: the terminal's look and behaviour and the connection and session defaults every host inherits, plus the
+/// "reopen my tabs" preference. All of it lives in the vault and syncs to all devices; only the update notices are
+/// per device (<c>ClientServices.Prefs</c>).
 /// </summary>
 public sealed class SettingsDialog : TabbedDialog
 {
-    public const int TerminalTab = 0, ConnectionTab = 1, SessionTab = 2, AppearanceTab = 3, StartupTab = 4;
-    private const string LocalSubtitle = "Terminal preferences for this device only (not synced).";
+    public const int TerminalTab = 0, ConnectionTab = 1, SessionTab = 2, StartupTab = 3;
+    private const string TerminalSubtitle = "Synced to all your devices. Groups and hosts can override the color scheme and the font.";
+    private const string LocalTerminalSubtitle = "Kept in your local vault. Groups and hosts can override the color scheme and the font.";
     private const string SyncedSubtitle = "Connection defaults for all hosts, synced to all your devices. Groups and hosts can override them.";
     private const string LocalVaultSubtitle = "Connection defaults for all hosts, kept in your local vault. Groups and hosts can override them.";
     private const string StartupSubtitle = "Reopening your tabs (synced to all your devices) and update notices (this device).";
     private const string LocalStartupSubtitle = "Reopening your tabs (kept in your local vault) and update notices.";
-    private static readonly float[] FontSizes = [10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24];
     private static readonly int[] ScrollbackSizes = [1_000, 5_000, 10_000, 50_000, 100_000];
     private static readonly string[] CursorShapes = [TerminalSettings.CursorBlock, TerminalSettings.CursorBar, TerminalSettings.CursorUnderline];
+    private static readonly TerminalSettings BuiltIn = new();
 
-    private readonly TerminalSettings _draft;
-    private readonly Label _fontCaption, _scrollbackCaption, _cursorCaption, _previewCaption;
-    private readonly Dropdown _fontSize, _scrollback;
+    private readonly Label _scrollbackCaption, _cursorCaption, _previewCaption;
+    private readonly Dropdown _scrollback;
     private readonly SegmentedControl _cursor;
     private readonly Checkbox _blink, _copyOnSelect;
     private readonly TerminalPreview _preview;
@@ -40,47 +41,40 @@ public sealed class SettingsDialog : TabbedDialog
     private readonly Checkbox _checkUpdates;
     private readonly Label _updatesHint;
 
-    public SettingsDialog(TgkView view) : base(view, "Settings", 640, "Terminal", "Connection", "Session", "Appearance", "Startup")
+    public SettingsDialog(TgkView view) : base(view, "Settings", 640, "Terminal", "Connection", "Session", "Startup")
     {
-        _draft = view.Services.Prefs.Terminal.Clone();
-        Subtitle = LocalSubtitle;
+        HostOptions saved = view.Services.Vault.Current.Defaults;
+        EffectiveHostOptions current = EffectiveOptions.Resolve(null, null, saved);
+        Subtitle = view.Services.IsLocal ? LocalTerminalSubtitle : TerminalSubtitle;
         FormPage page = PageAt(TerminalTab);
 
-        _fontCaption = page.Add(Form.Caption("Font size"));
-        _fontSize = page.Add(new Dropdown { Options = FontSizes.Select(s => $"{s.ToString(CultureInfo.InvariantCulture)} px").ToList() });
-        _fontSize.SelectedIndex = NearestIndex(FontSizes, _draft.FontSize);
-        _fontSize.SelectionChanged += i => { _draft.FontSize = FontSizes[i]; _preview!.InvalidatePaint(); };
-
-        _scrollbackCaption = page.Add(Form.Caption("Scrollback"));
-        _scrollback = page.Add(new Dropdown { Options = ScrollbackSizes.Select(n => $"{n.ToString("N0", CultureInfo.InvariantCulture)} lines").ToList() });
-        _scrollback.SelectedIndex = NearestIndex(ScrollbackSizes.Select(n => (float)n).ToArray(), _draft.ScrollbackLines);
-        _scrollback.SelectionChanged += i => _draft.ScrollbackLines = ScrollbackSizes[i];
-
-        _cursorCaption = page.Add(Form.Caption("Cursor style"));
-        _cursor = page.Add(new SegmentedControl("Block", "Bar", "Underline"));
-        _cursor.SelectedIndex = Math.Max(0, Array.IndexOf(CursorShapes, _draft.CursorShape));
-        _cursor.SelectionChanged += i => { _draft.CursorShape = CursorShapes[i]; _preview!.InvalidatePaint(); };
-
-        _blink = page.Add(new Checkbox("Blinking cursor", _draft.CursorBlink));
-        _blink.CheckedChanged += on => _draft.CursorBlink = on;
-        _copyOnSelect = page.Add(new Checkbox("Copy text on select", _draft.CopyOnSelect));
-        _copyOnSelect.CheckedChanged += on => _draft.CopyOnSelect = on;
-
-        _previewCaption = page.Add(Form.Caption("Preview"));
-        _preview = page.Add(new TerminalPreview(_draft));
-        page.Layout = LayoutTerminal;
-
-        // The built-in font size default is this device's terminal setting, including a change not saved yet.
-        _defaults = new OptionsEditor(view, view.Services.Vault.Current.Defaults, OptionsLevel.Global,
-            () => EffectiveOptions.Resolve(null, null, null, _draft.FontSize),
+        // Color scheme, font and size: the appearance part of the defaults, shown on the Terminal page.
+        _defaults = new OptionsEditor(view, saved, OptionsLevel.Global, () => EffectiveOptions.Resolve((HostOptions?)null, null, null),
             options =>
             {
                 VaultData vault = view.Services.Vault.Current.ShallowCopy();
                 vault.Defaults = options;
                 return vault;
             },
-            PageAt(ConnectionTab), PageAt(SessionTab), PageAt(AppearanceTab));
+            PageAt(ConnectionTab), PageAt(SessionTab), page, arrangeAppearance: false);
         _defaults.LayoutChanged += InvalidateLayout;
+
+        _scrollbackCaption = page.Add(Form.Caption("Scrollback"));
+        _scrollback = page.Add(new Dropdown { Options = ScrollbackSizes.Select(n => $"{n.ToString("N0", CultureInfo.InvariantCulture)} lines").ToList() });
+        _scrollback.SelectedIndex = NearestIndex(ScrollbackSizes.Select(n => (float)n).ToArray(), current.ScrollbackLines.Value);
+
+        _cursorCaption = page.Add(Form.Caption("Cursor style"));
+        _cursor = page.Add(new SegmentedControl("Block", "Bar", "Underline"));
+        _cursor.SelectedIndex = Math.Max(0, Array.IndexOf(CursorShapes, current.CursorShape.Value));
+
+        _blink = page.Add(new Checkbox("Blinking cursor", current.CursorBlink.Value));
+        _copyOnSelect = page.Add(new Checkbox("Copy text on select", current.CopyOnSelect.Value));
+
+        _previewCaption = page.Add(Form.Caption("Preview"));
+        _preview = page.Add(new TerminalPreview(this));
+        _cursor.SelectionChanged += _ => _preview.InvalidatePaint();
+        _defaults.AppearanceChanged += _preview.InvalidatePaint;
+        page.Layout = LayoutTerminal;
 
         FormPage startup = PageAt(StartupTab);
         Workspace workspace = view.Services.Vault.Current.Workspace;
@@ -99,6 +93,8 @@ public sealed class SettingsDialog : TabbedDialog
         AddButton("Save", ButtonVariant.Primary, Accept);
     }
 
+    private string CursorShape => CursorShapes[Math.Clamp(_cursor.SelectedIndex, 0, CursorShapes.Length - 1)];
+
     private static int NearestIndex(float[] values, float value)
     {
         int best = 0;
@@ -113,7 +109,7 @@ public sealed class SettingsDialog : TabbedDialog
     protected override void OnTabShown(int index)
     {
         bool local = View.Services.IsLocal;
-        Subtitle = index == TerminalTab ? LocalSubtitle
+        Subtitle = index == TerminalTab ? (local ? LocalTerminalSubtitle : TerminalSubtitle)
             : index == StartupTab ? (local ? LocalStartupSubtitle : StartupSubtitle)
             : local ? LocalVaultSubtitle : SyncedSubtitle;
         _defaults.RefreshInherited();
@@ -152,11 +148,10 @@ public sealed class SettingsDialog : TabbedDialog
 
     private float LayoutTerminal(float width)
     {
-        float col = (width - 16) / 2f;
-        float y = 0;
-        Form.Place(_fontCaption, _fontSize, 0, y, col);
-        y = Form.Place(_scrollbackCaption, _scrollback, col + 16, y, col) + Form.RowGap;
-        y = Form.Place(_cursorCaption, _cursor, 0, y, width) + Form.RowGap;
+        float col = MathF.Floor((width - 16) / 2f);
+        float y = _defaults.ArrangeAppearance(width, 0) + Form.RowGap;
+        Form.Place(_scrollbackCaption, _scrollback, 0, y, col);
+        y = Form.Place(_cursorCaption, _cursor, col + 16, y, width - col - 16) + Form.RowGap;
         _blink.Transform.SetLocalFrame(0, y, _blink.PreferredWidth, 22);
         _copyOnSelect.Transform.SetLocalFrame(col + 16, y, _copyOnSelect.PreferredWidth, 22);
         y += 22 + Form.RowGap + 4;
@@ -172,6 +167,12 @@ public sealed class SettingsDialog : TabbedDialog
             ShowError(problem.Message, problem.Page, problem.Field);
             return;
         }
+        // Built-in values are stored as "not set", so the defaults stay empty until something differs.
+        int scrollback = ScrollbackSizes[Math.Clamp(_scrollback.SelectedIndex, 0, ScrollbackSizes.Length - 1)];
+        defaults.ScrollbackLines = scrollback == BuiltIn.ScrollbackLines ? null : scrollback;
+        defaults.CursorShape = CursorShape == BuiltIn.CursorShape ? null : CursorShape;
+        defaults.CursorBlink = _blink.Checked == BuiltIn.CursorBlink ? null : _blink.Checked;
+        defaults.CopyOnSelect = _copyOnSelect.Checked == BuiltIn.CopyOnSelect ? null : _copyOnSelect.Checked;
         if (JsonSerializer.Serialize(defaults) != JsonSerializer.Serialize(vault.Current.Defaults) && !View.RunVault(() => vault.SaveDefaultsAsync(defaults)))
             return;
         if (View is MainView main)
@@ -180,41 +181,41 @@ public sealed class SettingsDialog : TabbedDialog
                 main.SetRestoreTabs(_restoreTabs.Checked);
             main.SetCheckForUpdates(_checkUpdates.Checked);
         }
-        TerminalSettings settings = _draft.Clone();
-        View.Services.UpdatePrefs(p => p.Terminal = settings);
         Close();
     }
 
-    /// <summary>A few prompt lines in the terminal font showing the chosen size and cursor shape.</summary>
-    private sealed class TerminalPreview(TerminalSettings settings) : Control
+    /// <summary>A few prompt lines in the chosen color scheme, font, size and cursor shape.</summary>
+    private sealed class TerminalPreview(SettingsDialog dialog) : Control
     {
         protected override void Paint(SKCanvas c)
         {
+            (string schemeName, string family, float size) = dialog._defaults.Appearance;
+            ColorScheme scheme = ColorScheme.Find(schemeName);
             var r = new SKRect(0, 0, W, H);
-            Gfx.FillRound(c, r, Theme.Radius, Theme.TerminalBg);
+            Gfx.FillRound(c, r, Theme.Radius, scheme.Background);
             Gfx.StrokeRound(c, r, Theme.Radius, Theme.Border);
             int save = c.Save();
             c.ClipRect(SKRect.Inflate(r, -1, -1));
-            SKPaint font = Gfx.Font(settings.FontSize, Theme.Mono);
-            float lineH = MathF.Ceiling(settings.FontSize * 1.35f);
+            SKPaint font = Gfx.Font(size, TerminalFonts.Get(family).Regular);
+            float lineH = MathF.Ceiling(size * 1.35f);
             float y = 14 + lineH / 2f;
             float x = 14;
             const string prompt = "demo@web-01:~$ ";
-            Gfx.Text(c, "Last login: Mon Sep 28 09:14 from 10.0.0.2", x, y, font, Theme.TextMuted);
+            Gfx.Text(c, "Last login: Mon Sep 28 09:14 from 10.0.0.2", x, y, font, scheme.Foreground.WithAlpha(170));
             y += lineH;
-            Gfx.Text(c, prompt, x, y, font, Theme.Success);
+            Gfx.Text(c, prompt, x, y, font, scheme.Ansi[10]);
             float cx = x + Gfx.Measure(prompt, font);
-            Gfx.Text(c, "ls -la", cx, y, font, Theme.TextPrimary);
+            Gfx.Text(c, "ls -la", cx, y, font, scheme.Foreground);
             cx += Gfx.Measure("ls -la", font);
             float cw = Gfx.Measure("M", font);
             float top = y - lineH / 2f + 1, bottom = y + lineH / 2f - 1;
-            SKRect cursor = settings.CursorShape switch
+            SKRect cursor = dialog.CursorShape switch
             {
                 TerminalSettings.CursorBar => new SKRect(cx + 1, top, cx + 3, bottom),
                 TerminalSettings.CursorUnderline => new SKRect(cx, bottom - 2, cx + cw, bottom),
                 _ => new SKRect(cx, top, cx + cw, bottom),
             };
-            Gfx.FillRect(c, cursor, Theme.TextPrimary.WithAlpha(220));
+            Gfx.FillRect(c, cursor, scheme.Cursor.WithAlpha(220));
             c.RestoreToCount(save);
         }
     }

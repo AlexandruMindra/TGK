@@ -1,15 +1,85 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using TGK.Core.Models;
 
 namespace TGK.Client.Main;
 
 /// <summary>
 /// Parses the new-tab page's quick-connect text: <c>user@host</c>, <c>user@host:port</c>, <c>user@[v6]:port</c>, a
-/// saved host's name, or a pasted command such as <c>ssh -p 2222 -l root host</c>.
+/// saved host's name, or a pasted command such as <c>ssh -p 2222 -l root host</c>; and searches the saved hosts
+/// for what is typed so far.
 /// </summary>
 public static class QuickConnect
 {
+    /// <summary>
+    /// Saved hosts matching <paramref name="query"/> by name, user and/or host: every word must match. A word with
+    /// "@" matches the user before it and the name or host after it (either part may be left out, e.g. <c>root@</c>
+    /// or <c>@10.0</c>); other words may appear anywhere in the name, <c>user@host:port</c> or group. A leading
+    /// <c>ssh</c> and <c>-p</c>/<c>-l</c> options are ignored. Names starting with the query come first, then
+    /// addresses starting with it, then the rest by name. Empty for an empty query.
+    /// </summary>
+    public static List<HostEntry> Search(string query, VaultData vault)
+    {
+        List<string> words = SearchWords(query);
+        if (words.Count == 0)
+            return [];
+        string first = words[0].TrimStart('@');
+        return vault.Hosts
+            .Where(host => words.All(word => Matches(host, word, vault)))
+            .OrderBy(host => host.DisplayName.StartsWith(first, StringComparison.OrdinalIgnoreCase) ? 0
+                : HostFormat.Address(host, vault).StartsWith(words[0], StringComparison.OrdinalIgnoreCase)
+                    || host.Host.StartsWith(first, StringComparison.OrdinalIgnoreCase) ? 1 : 2)
+            .ThenBy(host => host.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>The saved host with the same address, port and login name as <paramref name="entry"/> (e.g. typed as user@host), or null.</summary>
+    public static HostEntry? FindSaved(HostEntry entry, VaultData vault) => vault.Hosts.Find(host =>
+        string.Equals(host.Host.Trim(), entry.Host.Trim(), StringComparison.OrdinalIgnoreCase)
+        && host.Port == entry.Port
+        && string.Equals(HostFormat.UserOf(host, vault), entry.Username?.Trim(), StringComparison.Ordinal));
+
+    private static List<string> SearchWords(string query)
+    {
+        string[] parts = query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var words = new List<string>();
+        for (int i = 0; i < parts.Length; i++)
+        {
+            string word = parts[i];
+            if (i == 0 && string.Equals(word, "ssh", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (word.Length >= 2 && word[0] == '-' && word[1] is 'p' or 'l')
+            {
+                if (word.Length == 2)
+                    i++; // the option's value
+                continue;
+            }
+            if (word.StartsWith('-'))
+                continue;
+            words.Add(word);
+        }
+        return words;
+    }
+
+    private static bool Matches(HostEntry host, string word, VaultData vault)
+    {
+        int at = word.IndexOf('@');
+        if (at >= 0)
+        {
+            string user = word[..at], place = word[(at + 1)..];
+            string? login = HostFormat.UserOf(host, vault);
+            bool userOk = user.Length == 0 || (login?.Contains(user, StringComparison.OrdinalIgnoreCase) ?? false);
+            bool placeOk = place.Length == 0 || host.DisplayName.Contains(place, StringComparison.OrdinalIgnoreCase)
+                || (host.Port == 22 ? host.Host : $"{host.Host}:{host.Port}").Contains(place, StringComparison.OrdinalIgnoreCase);
+            return userOk && placeOk;
+        }
+        return host.DisplayName.Contains(word, StringComparison.OrdinalIgnoreCase)
+            || HostFormat.Address(host, vault).Contains(word, StringComparison.OrdinalIgnoreCase)
+            || (vault.FindGroup(host.GroupId)?.Name.Contains(word, StringComparison.OrdinalIgnoreCase) ?? false);
+    }
+
     /// <summary>Returns a saved host (exact name match) or an unsaved ad-hoc entry; null with <paramref name="error"/> when invalid.</summary>
     public static HostEntry? Parse(string input, VaultData vault, out string? error)
     {

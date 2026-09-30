@@ -10,6 +10,29 @@ shows the current Unreleased section.
 
 ## [Unreleased]
 
+### Added
+
+- **Drag tabs** in the tab strip: drop a tab between two others to move it there; drop it onto the middle of another
+  tab to show the two side by side (a split view). Dropped between two panes of a split view it joins that split view;
+  dragged out of its split view's tabs it becomes a tab of its own again. Two panes of the same split view dropped
+  onto each other swap places.
+- **Search saved hosts from the new-tab page**: what you type in the connect bar also searches your saved hosts by
+  name, user and/or host (`root@`, `@10.0`, `deploy@web`, a group name…). `↓`/`↑` choose a match and Enter connects
+  to it; an address typed in full that belongs to a saved host connects with that host's settings.
+- **Terminal font**: choose the bundled DejaVu Sans Mono or any monospace font installed on the device, in Settings →
+  Terminal and per group or host (Appearance). A device without the chosen font uses the bundled one.
+- **Hidden sidebar opens on hover**: with the sidebar hidden, rest the pointer at the window's left edge to show it
+  over the content; it hides again when the pointer leaves it.
+
+### Changed
+
+- **Terminal settings sync**: font, font size, color scheme, scrollback, cursor style, blinking and copy-on-select are
+  now stored in your vault and follow you to every device (or stay in your local vault). The first device that starts
+  this version moves its own terminal settings into the vault, unless the vault already has some.
+- Settings: the color scheme and font size moved from the Appearance tab to the Terminal tab, next to the new font
+  choice; the Appearance tab is gone. "Legacy algorithms" moved to the Connection tab (in Settings, group settings
+  and the host editor).
+
 ## [0.2.0] - 2026-09-30
 
 Coming from 0.1.0? It can't update itself: download this version once, and from here on TGK updates in place.

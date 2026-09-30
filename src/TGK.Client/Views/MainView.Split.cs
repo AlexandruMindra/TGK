@@ -310,6 +310,78 @@ public sealed partial class MainView
         SyncChrome();
     }
 
+    /// <summary>
+    /// Drag and drop in the tab strip. Dropped onto another tab (<paramref name="onto"/>), <paramref name="tab"/> is
+    /// shown beside it in its split view (started if needed); two panes of one split view swap places. Dropped between
+    /// tabs (<paramref name="slot"/>, an index of the tab list before the move): between two panes of a split view it
+    /// joins that split view, anywhere else it becomes a tab of its own there, leaving its split view.
+    /// </summary>
+    public void DropTab(TabContent tab, int slot, TabContent? onto)
+    {
+        int from = _tabs.IndexOf(tab);
+        if (from < 0)
+            return;
+        if (onto is not null)
+        {
+            if (onto == tab || !_tabs.Contains(onto))
+                return;
+            if (tab.Split is { } own && own == onto.Split)
+            {
+                own.Swap(tab, onto);
+                GatherPanes(own);
+            }
+            else
+            {
+                JoinSplit(tab, onto);
+            }
+        }
+        else
+        {
+            slot = Math.Clamp(slot, 0, _tabs.Count);
+            List<TabContent> others = _tabs.Where(t => t != tab).ToList();
+            int at = slot > from ? slot - 1 : slot;
+            TabContent? left = at > 0 ? others[at - 1] : null, right = at < others.Count ? others[at] : null;
+            bool nextToItself = slot == from || slot == from + 1;
+            if (left?.Split is { } layout && layout == right?.Split)
+            {
+                if (tab.Split == layout)
+                {
+                    if (nextToItself)
+                        return;
+                    layout.Remove(tab); // moved to another place in the same split view
+                    tab.Split = null;
+                }
+                JoinSplit(tab, left);
+            }
+            else
+            {
+                if (tab.Split is null && nextToItself)
+                    return;
+                LeaveSplit(tab);
+                MoveTab(tab, slot);
+            }
+        }
+        ActivateTab(tab);
+        UpdatePanes(); // ActivateTab returns early when `tab` was already active
+        SyncChrome();
+    }
+
+    // Shows `tab` right of `beside`, in beside's split view (started if needed), leaving its own split view first.
+    private void JoinSplit(TabContent tab, TabContent beside)
+    {
+        if (tab.Split is { } old && old != beside.Split)
+        {
+            // Out of its old split view's block first, so that block stays together in the strip.
+            MoveTab(tab, Block(_tabs.IndexOf(tab)).Last + 1);
+            LeaveSplit(tab);
+        }
+        PaneLayout<TabContent> layout = beside.Split ?? new PaneLayout<TabContent>(beside);
+        beside.Split = layout;
+        layout.SplitAt(beside, tab, SplitOrientation.Horizontal);
+        tab.Split = layout;
+        GatherPanes(layout);
+    }
+
     /// <summary>Takes <paramref name="tab"/> out of its split view into a tab of its own, placed after the split view.</summary>
     public void MoveToOwnTab(TabContent tab)
     {
@@ -352,6 +424,9 @@ public sealed partial class MainView
             FollowFocus();
         TickWorkspace();
         TickUpdates();
+        TickSidebarPeek();
+        if (!_torndown)
+            MoveLocalTerminalSettings();
     }
 
     // A click anywhere in a pane of the split view on screen makes it the active tab. Runs after the click itself has

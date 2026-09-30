@@ -95,7 +95,7 @@ public sealed class HostEditorDialog : TabbedDialog
     {
         VaultData vault = _vault.Current;
         HostGroup? group = FindGroup(_group.Text.Trim());
-        return EffectiveOptions.Resolve(null, group?.Options, vault.Defaults, View.Services.Prefs.Terminal.FontSize, _entry.Id)
+        return EffectiveOptions.Resolve(null, group?.Options, vault.Defaults, hostId: _entry.Id)
             with { GroupName = group?.Name };
     }
 

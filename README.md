@@ -9,11 +9,13 @@ entirely on one machine.
 ## Features
 
 **Sessions**
-- Tabs like a browser: every tab is an SSH terminal; a new tab offers quick connect (`user@host:port`) and your saved hosts.
-  Any number of tabs: the tab strip scrolls (mouse wheel, touchpad, the ‹ › arrows) and lists them all.
+- Tabs like a browser: every tab is an SSH terminal; a new tab offers quick connect (`user@host:port`) that also
+  searches your saved hosts by name, user or host. Drag tabs to reorder them, or onto another tab to show both side by
+  side. Any number of tabs: the tab strip scrolls (mouse wheel, touchpad, the ‹ › arrows) and lists them all.
 - Split view: show several sessions at once — 2 or 3 side by side, stacked, 1 large + 2, grids of 4 or 6 (the layout
   button in the tab strip), or split any pane right / down (`Ctrl+Shift+E` / `Ctrl+Shift+O`). Drag the dividers to
-  resize, `Alt+arrows` to move between panes, `Ctrl+Shift+X` to maximize one; each pane stays a tab of its own.
+  resize, `Alt+arrows` to move between panes, `Ctrl+Shift+X` to maximize one; each pane stays a tab of its own and can
+  be dragged in or out of the split view.
 - Reopen my tabs (Settings → Startup, off by default): your tabs and split views are saved in the vault when you close
   TGK, sign out or lock it (and as you work), and reopened on whichever device you sign in next. Only which hosts were
   open is saved, never passwords; a session connects when you open its tab.
@@ -33,7 +35,8 @@ entirely on one machine.
   - Jump hosts (chains up to 4 hops), keep-alive, connect timeout, automatic reconnect.
   - Local, remote and dynamic (SOCKS) port forwarding, started with the session.
   - Startup command, environment variables, terminal type.
-  - Font size, color scheme (TGK Dark, Solarized, Dracula, Nord, Gruvbox, One Dark), opt-in legacy algorithms for old devices.
+  - Font (bundled or any installed monospace font), font size, color scheme (TGK Dark, Solarized, Dracula, Nord,
+    Gruvbox, One Dark), opt-in legacy algorithms for old devices.
 
 **Vault**
 - **Server mode:** sign up from the app, Google Authenticator (TOTP) required, stay signed in per device, see and

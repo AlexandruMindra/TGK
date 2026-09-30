@@ -19,6 +19,8 @@ public sealed class HostOptions
     public const int MaxConnectTimeoutSeconds = 600;
     public const float MinFontSize = 6;
     public const float MaxFontSize = 72;
+    public const int MaxScrollbackLines = 1_000_000;
+    public const int MaxFontFamilyLength = 128;
 
     // ---- Connection ----
 
@@ -50,15 +52,33 @@ public sealed class HostOptions
     /// <summary>The TERM value requested for the PTY, e.g. <c>xterm-256color</c>.</summary>
     public string? TerminalType { get; set; }
 
-    // ---- Appearance & compatibility ----
+    /// <summary>Also offer the weak algorithms listed in <see cref="TGK.Core.Ssh.SshAlgorithms"/>, for old servers and devices.</summary>
+    public bool? LegacyAlgorithms { get; set; }
+
+    // ---- Appearance ----
 
     public float? FontSize { get; set; }
+
+    /// <summary>
+    /// Terminal font family: the bundled DejaVu Sans Mono or a monospace font installed on the device. A device
+    /// without it uses the bundled font.
+    /// </summary>
+    public string? FontFamily { get; set; }
 
     /// <summary>Name of a built-in terminal color scheme.</summary>
     public string? ColorScheme { get; set; }
 
-    /// <summary>Also offer the weak algorithms listed in <see cref="TGK.Core.Ssh.SshAlgorithms"/>, for old servers and devices.</summary>
-    public bool? LegacyAlgorithms { get; set; }
+    // ---- Terminal behaviour (edited in Settings → Terminal, so normally only set in the vault defaults) ----
+
+    /// <summary>Lines kept above the screen; applies to sessions started afterwards.</summary>
+    public int? ScrollbackLines { get; set; }
+
+    /// <summary>One of <see cref="TerminalSettings.CursorBlock"/>, <see cref="TerminalSettings.CursorBar"/>, <see cref="TerminalSettings.CursorUnderline"/>.</summary>
+    public string? CursorShape { get; set; }
+
+    public bool? CursorBlink { get; set; }
+
+    public bool? CopyOnSelect { get; set; }
 
     /// <summary>Members this version does not know (e.g. from a newer client), kept so that saving does not drop them.</summary>
     [JsonExtensionData]
@@ -69,7 +89,35 @@ public sealed class HostOptions
     public bool IsEmpty =>
         JumpHostId is null && KeepAliveSeconds is null && ConnectTimeoutSeconds is null && AutoReconnect is null
         && StartupCommand is null && Environment is null && TerminalType is null
-        && FontSize is null && ColorScheme is null && LegacyAlgorithms is null;
+        && FontSize is null && FontFamily is null && ColorScheme is null && LegacyAlgorithms is null
+        && ScrollbackLines is null && CursorShape is null && CursorBlink is null && CopyOnSelect is null;
+
+    /// <summary>
+    /// <paramref name="defaults"/> with the terminal settings an older version kept on this device only
+    /// (<paramref name="local"/>), or null when there is nothing to move: the defaults already set terminal values
+    /// (another device moved its own first) or the local ones are the built-in values.
+    /// </summary>
+    public static HostOptions? WithLocalTerminal(HostOptions defaults, TerminalSettings local)
+    {
+        ArgumentNullException.ThrowIfNull(defaults);
+        ArgumentNullException.ThrowIfNull(local);
+        if (defaults.FontSize is not null || defaults.FontFamily is not null || defaults.ScrollbackLines is not null
+            || defaults.CursorShape is not null || defaults.CursorBlink is not null || defaults.CopyOnSelect is not null)
+            return null;
+        var builtIn = new TerminalSettings();
+        HostOptions result = defaults.Clone();
+        if (Math.Abs(local.FontSize - builtIn.FontSize) > 0.01f && local.FontSize is >= MinFontSize and <= MaxFontSize)
+            result.FontSize = local.FontSize;
+        if (local.ScrollbackLines != builtIn.ScrollbackLines && local.ScrollbackLines is >= 0 and <= MaxScrollbackLines)
+            result.ScrollbackLines = local.ScrollbackLines;
+        if (local.CursorShape != builtIn.CursorShape && local.CursorShape is TerminalSettings.CursorBar or TerminalSettings.CursorUnderline)
+            result.CursorShape = local.CursorShape;
+        if (local.CursorBlink != builtIn.CursorBlink)
+            result.CursorBlink = local.CursorBlink;
+        if (local.CopyOnSelect != builtIn.CopyOnSelect)
+            result.CopyOnSelect = local.CopyOnSelect;
+        return JsonSerializer.Serialize(result) == JsonSerializer.Serialize(defaults) ? null : result;
+    }
 
     public HostOptions Clone()
     {
@@ -100,6 +148,12 @@ public sealed class HostOptions
             return $"The font size must be between {MinFontSize} and {MaxFontSize}.";
         if (ColorScheme is not null && string.IsNullOrWhiteSpace(ColorScheme))
             return "Choose a color scheme.";
+        if (FontFamily is not null && (string.IsNullOrWhiteSpace(FontFamily) || FontFamily.Length > MaxFontFamilyLength || FontFamily.Any(char.IsControl)))
+            return "Choose a font.";
+        if (ScrollbackLines is < 0 or > MaxScrollbackLines)
+            return $"The scrollback must be between 0 and {MaxScrollbackLines:N0} lines.";
+        if (CursorShape is not null and not (TerminalSettings.CursorBlock or TerminalSettings.CursorBar or TerminalSettings.CursorUnderline))
+            return "Choose a cursor style.";
         return null;
     }
 }

@@ -61,7 +61,7 @@ public sealed partial class TerminalView : VisualElement, IKeyInput, ISendsContr
     {
         _palette = new TerminalPalette(scheme ?? ColorScheme.TgkDark);
         _settings = settings.Clone();
-        _font = new TerminalFont(_settings.FontSize);
+        _font = new TerminalFont(_settings.FontSize, _settings.FontFamily);
         Emulator = new TerminalEmulator(80, 24, Math.Max(0, _settings.ScrollbackLines));
         Emulator.Output += reply => Input?.Invoke(reply);
         Emulator.TitleChanged += title => TitleChanged?.Invoke(title);
@@ -153,15 +153,16 @@ public sealed partial class TerminalView : VisualElement, IKeyInput, ISendsContr
         InvalidatePaint();
     }
 
-    /// <summary>Applies changed terminal preferences (font size, cursor, copy-on-select). Scrollback size applies to new sessions.</summary>
+    /// <summary>Applies changed terminal settings (font, cursor, copy-on-select). Scrollback size applies to new sessions.</summary>
     public void ApplySettings(TerminalSettings settings)
     {
-        bool fontChanged = Math.Abs(settings.FontSize - _settings.FontSize) > 0.01f;
+        bool fontChanged = Math.Abs(settings.FontSize - _settings.FontSize) > 0.01f
+            || !string.Equals(settings.FontFamily, _settings.FontFamily, StringComparison.OrdinalIgnoreCase);
         _settings = settings.Clone();
         if (fontChanged)
         {
             _font.Dispose();
-            _font = new TerminalFont(_settings.FontSize);
+            _font = new TerminalFont(_settings.FontSize, _settings.FontFamily);
             FitToSize();
             InvalidateAllRows();
         }

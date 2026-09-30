@@ -15,7 +15,8 @@ public class HostOptionsTests
     {
         JumpHostId = jump, KeepAliveSeconds = 5, ConnectTimeoutSeconds = 7, AutoReconnect = true,
         StartupCommand = "tmux attach", Environment = [new EnvVar { Name = "LANG", Value = "C.UTF-8" }], TerminalType = "vt220",
-        FontSize = 16, ColorScheme = "Solarized", LegacyAlgorithms = true,
+        FontSize = 16, ColorScheme = "Solarized", LegacyAlgorithms = true, FontFamily = "Hack",
+        ScrollbackLines = 500, CursorShape = TerminalSettings.CursorBar, CursorBlink = false, CopyOnSelect = true,
     };
 
     [Fact]
@@ -83,6 +84,11 @@ public class HostOptionsTests
         new HostOptions { TerminalType = "xterm 256" },
         new HostOptions { FontSize = 2 },
         new HostOptions { ColorScheme = " " },
+        new HostOptions { FontFamily = "" },
+        new HostOptions { FontFamily = "Bad\nName" },
+        new HostOptions { ScrollbackLines = -1 },
+        new HostOptions { ScrollbackLines = HostOptions.MaxScrollbackLines + 1 },
+        new HostOptions { CursorShape = "circle" },
     ];
 
     [Theory]
@@ -93,6 +99,31 @@ public class HostOptionsTests
         Assert.Throws<ArgumentException>(() => VaultEdits.SaveDefaults(options));
         Assert.Throws<ArgumentException>(() => VaultEdits.SaveGroup(new HostGroup { Name = "g", Options = options }));
         Assert.Throws<ArgumentException>(() => VaultEdits.SaveHost(new HostEntry { Host = "h", Options = options }));
+    }
+
+    [Fact]
+    public void LocalTerminalSettings_MoveIntoEmptyDefaultsOnce()
+    {
+        var local = new TerminalSettings { FontSize = 16, ScrollbackLines = 50_000, CursorShape = TerminalSettings.CursorBar, CursorBlink = false, CopyOnSelect = true };
+        var defaults = new HostOptions { KeepAliveSeconds = 10 };
+
+        HostOptions moved = HostOptions.WithLocalTerminal(defaults, local)!;
+
+        Assert.Equal(16, moved.FontSize);
+        Assert.Equal(50_000, moved.ScrollbackLines);
+        Assert.Equal(TerminalSettings.CursorBar, moved.CursorShape);
+        Assert.False(moved.CursorBlink);
+        Assert.True(moved.CopyOnSelect);
+        Assert.Equal(10, moved.KeepAliveSeconds);
+        Assert.Null(defaults.FontSize); // not modified
+        // Built-in values: nothing to move. Terminal values already in the vault (another device's): left alone.
+        Assert.Null(HostOptions.WithLocalTerminal(defaults, new TerminalSettings()));
+        Assert.Null(HostOptions.WithLocalTerminal(new HostOptions { CursorBlink = true }, local));
+        // Only what differs from the built-in values is set.
+        HostOptions sizeOnly = HostOptions.WithLocalTerminal(new HostOptions(), new TerminalSettings { FontSize = 12 })!;
+        Assert.Equal(12, sizeOnly.FontSize);
+        Assert.Null(sizeOnly.ScrollbackLines);
+        Assert.Null(sizeOnly.CursorShape);
     }
 
     [Fact]
@@ -188,6 +219,11 @@ public class EffectiveOptionsTests
         Assert.Equal(new Resolved<float>(13, OptionSource.Default), options.FontSize);
         Assert.Equal(new Resolved<string>("TGK Dark", OptionSource.Default), options.ColorScheme);
         Assert.Equal(new Resolved<bool>(false, OptionSource.Default), options.LegacyAlgorithms);
+        Assert.Equal(new Resolved<string>("DejaVu Sans Mono", OptionSource.Default), options.FontFamily);
+        Assert.Equal(new Resolved<int>(10_000, OptionSource.Default), options.ScrollbackLines);
+        Assert.Equal(new Resolved<string>(TerminalSettings.CursorBlock, OptionSource.Default), options.CursorShape);
+        Assert.Equal(new Resolved<bool>(true, OptionSource.Default), options.CursorBlink);
+        Assert.Equal(new Resolved<bool>(false, OptionSource.Default), options.CopyOnSelect);
         Assert.Null(options.GroupName);
         Assert.Equal(14, EffectiveOptions.Resolve(new VaultData(), new HostEntry()).FontSize.Value); // no local setting given
     }
@@ -198,7 +234,8 @@ public class EffectiveOptionsTests
         JumpHostId = n switch { 1 => JumpA, 2 => JumpB, _ => JumpC },
         KeepAliveSeconds = n, ConnectTimeoutSeconds = 10 + n, AutoReconnect = n % 2 == 1,
         StartupCommand = $"cmd{n}", Environment = [new EnvVar { Name = $"V{n}", Value = "x" }], TerminalType = $"term{n}",
-        FontSize = 10 + n, ColorScheme = $"scheme{n}", LegacyAlgorithms = n % 2 == 1,
+        FontSize = 10 + n, ColorScheme = $"scheme{n}", LegacyAlgorithms = n % 2 == 1, FontFamily = $"font{n}",
+        ScrollbackLines = 100 * n, CursorShape = n switch { 1 => "bar", 2 => "underline", _ => "block" }, CursorBlink = n % 2 == 1, CopyOnSelect = n % 2 == 0,
     };
 
     public static TheoryData<int, OptionSource> Levels() => new()
@@ -228,6 +265,13 @@ public class EffectiveOptionsTests
         Assert.Equal(new Resolved<float>(10 + level, expected), options.FontSize);
         Assert.Equal(new Resolved<string>($"scheme{level}", expected), options.ColorScheme);
         Assert.Equal(new Resolved<bool>(level % 2 == 1, expected), options.LegacyAlgorithms);
+        Assert.Equal(new Resolved<string>($"font{level}", expected), options.FontFamily);
+        Assert.Equal(new Resolved<int>(100 * level, expected), options.ScrollbackLines);
+        Assert.Equal(new Resolved<string>(level switch { 1 => "bar", 2 => "underline", _ => "block" }, expected), options.CursorShape);
+        Assert.Equal(new Resolved<bool>(level % 2 == 1, expected), options.CursorBlink);
+        Assert.Equal(new Resolved<bool>(level % 2 == 0, expected), options.CopyOnSelect);
+        TerminalSettings terminal = EffectiveOptions.Terminal(options);
+        Assert.Equal(($"font{level}", 100 * level, 10f + level), (terminal.FontFamily, terminal.ScrollbackLines, terminal.FontSize));
         Assert.Equal("Production", options.GroupName);
     }
 

@@ -55,6 +55,15 @@ public sealed class Sidebar : Control, IKeyInput
 
     public TextField Search => _search;
 
+    /// <summary>Shown over the content (the hidden sidebar peeking): drawn with a stronger edge.</summary>
+    public bool Floating
+    {
+        get => _floating;
+        set => SetAndPaint(ref _floating, value);
+    }
+
+    private bool _floating;
+
     public HostList List => _list;
 
     /// <summary>Rebuilds the rows from the current vault snapshot.</summary>
@@ -106,7 +115,7 @@ public sealed class Sidebar : Control, IKeyInput
     protected override void Paint(SKCanvas c)
     {
         Gfx.FillRect(c, new SKRect(0, 0, W, H), Theme.Sidebar);
-        Gfx.Line(c, W - 0.5f, 0, W - 0.5f, H, Theme.Border);
+        Gfx.Line(c, W - 0.5f, 0, W - 0.5f, H, _floating ? Theme.BorderStrong : Theme.Border);
         Gfx.Line(c, 0, H - FooterH + 0.5f, W - 1, H - FooterH + 0.5f, Theme.Border);
     }
 }
