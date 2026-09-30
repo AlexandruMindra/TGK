@@ -345,6 +345,7 @@ public sealed partial class MainView
         if (!_overlayWasOpen && IsActive && !_torndown)
             FollowFocus();
         TickWorkspace();
+        TickUpdates();
     }
 
     // A click anywhere in a pane of the split view on screen makes it the active tab. Runs after the click itself has

@@ -17,6 +17,10 @@ entirely on one machine.
 - Reopen my tabs (Settings → Startup, off by default): your tabs and split views are saved in the vault when you close
   TGK, sign out or lock it (and as you work), and reopened on whichever device you sign in next. Only which hosts were
   open is saved, never passwords; a session connects when you open its tab.
+- Update notices: a while after start (never during it) and about twice a day, TGK asks GitHub for a newer release
+  (nightly builds also look at the latest nightly). A newer one only adds a small note to the status bar, with
+  "Download from GitHub", "Skip this version" and "Remind me later". Turn it off in Settings → Startup; "Check for
+  updates" in the account menu asks right away.
 - Built-in xterm-compatible terminal: 256 colors and truecolor, alternate screen (vim, htop, mc, tmux), scrollback,
   mouse reporting, bracketed paste, wide characters, selection with copy/paste.
 - Auth with private keys (OpenSSH/PEM, with passphrase), password or keyboard-interactive; host key verification

@@ -62,6 +62,7 @@ public sealed partial class MainView : TgkView
         _content = new ContentHost(this);
         _status = new StatusBar();
         _status.TunnelsClicked += ShowTunnelMenu;
+        _status.UpdateClicked += ShowUpdateMenu;
         _root.AddChild(_content);
         _root.AddChild(_sidebar);
         _root.AddChild(_strip);
@@ -76,6 +77,7 @@ public sealed partial class MainView : TgkView
         _sidebar.Refresh();
         NewTab();
         StartWorkspace();
+        StartUpdateChecks();
     }
 
     protected override void OnShown()
@@ -490,6 +492,8 @@ public sealed partial class MainView : TgkView
         items.Add(new MenuItem { Text = "Export backup…", Icon = "download", Action = () => new BackupExportDialog(this).Open() });
         items.Add(new MenuItem { Text = "Import backup…", Icon = "folder", Action = () => new BackupImportDialog(this).Open() });
         items.Add(MenuItem.Separator);
+        items.Add(new MenuItem { Text = "Check for updates", Icon = "refresh", Hint = AppInfo.VersionText, Action = () => CheckForUpdates(manual: true) });
+        items.Add(MenuItem.Separator);
         items.Add(local
             ? new MenuItem { Text = "Lock", Icon = "lock", Action = () => SignOut() }
             : new MenuItem { Text = "Sign out", Icon = "logout", Action = () => SignOut() });
@@ -681,6 +685,12 @@ public sealed partial class MainView : TgkView
                         OpenTab(App.SessionTabFactory(host), activate: false);
                 }
                 ApplyLayout(LayoutPreset.MainLeft);
+                break;
+            case "update":
+                // The status bar chip for a (made-up) newer version, with its menu.
+                _updateDismissed = false;
+                ShowUpdate(new UpdateInfo(new AppVersion(AppInfo.Version.Major, AppInfo.Version.Minor + 1, 0),
+                    $"{UpdateChecker.ReleasesUrl}/tag/v{AppInfo.Version.Major}.{AppInfo.Version.Minor + 1}.0"), offerSkipped: true);
                 break;
             case "tabs-overflow":
                 // More tabs than fit in the strip.

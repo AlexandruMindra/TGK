@@ -50,7 +50,7 @@ public sealed class DevOptions
     public static readonly string[] Scenes =
     [
         "login", "login-totp", "register", "register-totp",
-        "main", "split", "tabs-overflow", "host-editor", "host-editor-connection", "host-editor-tunnels", "host-editor-appearance", "group-settings", "connection-defaults",
+        "main", "split", "tabs-overflow", "update", "host-editor", "host-editor-connection", "host-editor-tunnels", "host-editor-appearance", "group-settings", "connection-defaults",
         "identities", "settings", "hostkey", "hostkey-changed", "password-prompt", "menu", "devices", "change-password",
         "local-create", "local-unlock", "local-main", "upload-to-server", "offline-copy", "backup-export", "backup-import",
     ];

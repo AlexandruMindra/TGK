@@ -1,3 +1,4 @@
+using System;
 using TGK.Core.Services;
 
 namespace TGK.Core.Models;
@@ -17,6 +18,17 @@ public sealed class ClientPrefs
     public bool SidebarCollapsed { get; set; }
     public float SidebarWidth { get; set; } = 260;
     public TerminalSettings Terminal { get; set; } = new();
+
+    /// <summary>Look for newer TGK releases on GitHub (in the background, about twice a day) and mention them in the status bar.</summary>
+    public bool CheckForUpdates { get; set; } = true;
+
+    /// <summary>When GitHub was last asked, and the newer version it reported then (null: none), with its release page.</summary>
+    public DateTimeOffset? LastUpdateCheck { get; set; }
+    public string? AvailableUpdate { get; set; }
+    public string? AvailableUpdateUrl { get; set; }
+
+    /// <summary>A version the user chose to skip: it is not mentioned again (a later one is).</summary>
+    public string? SkippedUpdate { get; set; }
 
     public ClientPrefs Clone()
     {

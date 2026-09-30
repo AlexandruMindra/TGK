@@ -22,8 +22,8 @@ public sealed class SettingsDialog : TabbedDialog
     private const string LocalSubtitle = "Terminal preferences for this device only (not synced).";
     private const string SyncedSubtitle = "Connection defaults for all hosts, synced to all your devices. Groups and hosts can override them.";
     private const string LocalVaultSubtitle = "Connection defaults for all hosts, kept in your local vault. Groups and hosts can override them.";
-    private const string StartupSubtitle = "What TGK opens with, synced to all your devices.";
-    private const string LocalStartupSubtitle = "What TGK opens with, kept in your local vault.";
+    private const string StartupSubtitle = "Reopening your tabs (synced to all your devices) and update notices (this device).";
+    private const string LocalStartupSubtitle = "Reopening your tabs (kept in your local vault) and update notices.";
     private static readonly float[] FontSizes = [10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24];
     private static readonly int[] ScrollbackSizes = [1_000, 5_000, 10_000, 50_000, 100_000];
     private static readonly string[] CursorShapes = [TerminalSettings.CursorBlock, TerminalSettings.CursorBar, TerminalSettings.CursorUnderline];
@@ -37,6 +37,8 @@ public sealed class SettingsDialog : TabbedDialog
     private readonly OptionsEditor _defaults;
     private readonly Checkbox _restoreTabs;
     private readonly Label _restoreHint, _restoreSaved;
+    private readonly Checkbox _checkUpdates;
+    private readonly Label _updatesHint;
 
     public SettingsDialog(TgkView view) : base(view, "Settings", 640, "Terminal", "Connection", "Session", "Appearance", "Startup")
     {
@@ -88,6 +90,9 @@ public sealed class SettingsDialog : TabbedDialog
             : "Your open tabs and split views are saved in your vault when you close TGK or sign out (and as you work), and reopened on whichever device you sign in next, so you can pick up where you left off. Passwords are never saved: sessions ask again when needed and connect when you open their tab.",
             Theme.FontSm, Theme.TextMuted) { MaxLines = 5 });
         _restoreSaved = startup.Add(new Label(SavedText(workspace), Theme.FontSm, Theme.TextSecondary));
+        _checkUpdates = startup.Add(new Checkbox("Tell me when a new version of TGK is available", view.Services.Prefs.CheckForUpdates));
+        _updatesHint = startup.Add(new Label($"Checks GitHub's release list in the background, about twice a day, and shows a note in the status bar. This device only. You have {AppInfo.VersionText}.",
+            Theme.FontSm, Theme.TextMuted) { MaxLines = 3 });
         startup.Layout = LayoutStartup;
 
         AddButton("Cancel", ButtonVariant.Secondary, Cancel);
@@ -124,7 +129,12 @@ public sealed class SettingsDialog : TabbedDialog
         y += hintH + 8;
         _restoreSaved.Visible = _restoreSaved.Text.Length > 0;
         _restoreSaved.Transform.SetLocalFrame(28, y, width - 28, 18);
-        return y + 18;
+        y += (_restoreSaved.Visible ? 18 : 0) + Form.RowGap + 4;
+        _checkUpdates.Transform.SetLocalFrame(0, y, Math.Min(width, _checkUpdates.PreferredWidth), 22);
+        y += 22 + 8;
+        float updatesH = _updatesHint.MeasureHeight(width - 28);
+        _updatesHint.Transform.SetLocalFrame(28, y, width - 28, updatesH);
+        return y + updatesH;
     }
 
     // "Saved tabs: 5, on laptop, 2h ago" while the preference is on and tabs are stored.
@@ -164,8 +174,12 @@ public sealed class SettingsDialog : TabbedDialog
         }
         if (JsonSerializer.Serialize(defaults) != JsonSerializer.Serialize(vault.Current.Defaults) && !View.RunVault(() => vault.SaveDefaultsAsync(defaults)))
             return;
-        if (_restoreTabs.Checked != vault.Current.Workspace.RestoreTabs && View is MainView main)
-            main.SetRestoreTabs(_restoreTabs.Checked);
+        if (View is MainView main)
+        {
+            if (_restoreTabs.Checked != vault.Current.Workspace.RestoreTabs)
+                main.SetRestoreTabs(_restoreTabs.Checked);
+            main.SetCheckForUpdates(_checkUpdates.Checked);
+        }
         TerminalSettings settings = _draft.Clone();
         View.Services.UpdatePrefs(p => p.Terminal = settings);
         Close();

@@ -7,7 +7,10 @@ using TGK.Core.Ssh;
 
 namespace TGK.Client.Main;
 
-/// <summary>Bottom bar: active session on the left; its tunnels, terminal size and sync status on the right.</summary>
+/// <summary>
+/// Bottom bar: active session on the left; its tunnels, terminal size and sync status on the right, and a quiet chip
+/// when a newer TGK version is available.
+/// </summary>
 public sealed class StatusBar : Control
 {
     private string _left = "";
@@ -15,24 +18,44 @@ public sealed class StatusBar : Control
     private string? _size;
     private string _sync = "";
     private IReadOnlyList<TunnelStatus> _tunnels = [];
-    private SKRect _chip = SKRect.Empty;
-    private bool _chipHover;
+    private string? _update;
+    private SKRect _chip = SKRect.Empty, _updateChip = SKRect.Empty;
+    private bool _chipHover, _updateHover;
 
     public StatusBar()
     {
-        Events.OnMouseMove += (_, e) => SetAndPaint(ref _chipHover, _chip.Contains(e.Relative.X, e.Relative.Y));
+        Events.OnMouseMove += (_, e) =>
+        {
+            SetAndPaint(ref _chipHover, _chip.Contains(e.Relative.X, e.Relative.Y));
+            SetAndPaint(ref _updateHover, _updateChip.Contains(e.Relative.X, e.Relative.Y));
+        };
         Events.OnClick += (_, e) =>
         {
-            if (!_chip.Contains(e.Relative.X, e.Relative.Y))
+            SKRect chip = _chip.Contains(e.Relative.X, e.Relative.Y) ? _chip : _updateChip.Contains(e.Relative.X, e.Relative.Y) ? _updateChip : SKRect.Empty;
+            if (chip.IsEmpty)
                 return;
             e.Handled = true;
             var at = Transform.Computed;
-            TunnelsClicked?.Invoke(new SKRect(at.X + _chip.Left, at.Y + _chip.Top, at.X + _chip.Right, at.Y + _chip.Bottom));
+            var window = new SKRect(at.X + chip.Left, at.Y + chip.Top, at.X + chip.Right, at.Y + chip.Bottom);
+            if (chip == _chip)
+                TunnelsClicked?.Invoke(window);
+            else
+                UpdateClicked?.Invoke(window);
         };
     }
 
     /// <summary>The tunnel chip was clicked; the argument is its window rect (to anchor a popup).</summary>
     public event Action<SKRect>? TunnelsClicked;
+
+    /// <summary>The update chip was clicked; the argument is its window rect.</summary>
+    public event Action<SKRect>? UpdateClicked;
+
+    /// <summary>Shows the update chip with <paramref name="text"/> (e.g. "TGK 0.3.0 available"), or hides it (null).</summary>
+    public void SetUpdate(string? text)
+    {
+        if (SetAndPaint(ref _update, text) && text is null)
+            _updateHover = false;
+    }
 
     public void Set(string left, TabStatus status, string? size, string sync, IReadOnlyList<TunnelStatus> tunnels)
     {
@@ -49,7 +72,7 @@ public sealed class StatusBar : Control
     protected override void OnHoverChanged()
     {
         if (!IsHovered)
-            _chipHover = false;
+            _chipHover = _updateHover = false;
     }
 
     protected override void Paint(SKCanvas c)
@@ -58,7 +81,7 @@ public sealed class StatusBar : Control
         Gfx.Line(c, 0, 0.5f, W, 0.5f, Theme.Border);
         float cy = H / 2f;
 
-        float right = W - 12;
+        float right = PaintUpdateChip(c, W - 12, cy);
         float syncW = Gfx.Measure(_sync, Theme.FontXs);
         Gfx.Text(c, _sync, right, cy, Theme.FontXs, Theme.WeightRegular, Theme.TextMuted, TextAlignment.Right);
         right -= syncW + 18;
@@ -76,6 +99,22 @@ public sealed class StatusBar : Control
             x += 12;
         }
         Gfx.Text(c, _left, x, cy, Theme.FontXs, Theme.WeightRegular, Theme.TextSecondary, TextAlignment.Left, right - x - 12);
+    }
+
+    // "↓ TGK 0.3.0 available" at the right end, in the accent color but without a fill until hovered.
+    private float PaintUpdateChip(SKCanvas c, float right, float cy)
+    {
+        _updateChip = SKRect.Empty;
+        if (_update is null)
+            return right;
+        float w = Gfx.Measure(_update, Theme.FontXs) + 30;
+        _updateChip = new SKRect(right - w + 6, 3, right + 6, H - 3);
+        if (_updateHover)
+            Gfx.FillRound(c, _updateChip, Theme.RadiusSm, Theme.AccentSoft);
+        SKColor color = _updateHover ? Theme.AccentHover : Theme.Accent;
+        Icons.Draw(c, "download", _updateChip.Left + 12, cy, 12, color);
+        Gfx.Text(c, _update, _updateChip.Left + 22, cy, Theme.FontXs, Theme.WeightRegular, color);
+        return _updateChip.Left - 12;
     }
 
     // "⇄ 3 tunnels" (amber with the failed count when any failed); returns the new right edge for the text beside it.
