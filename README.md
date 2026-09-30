@@ -69,9 +69,9 @@ or the [nightly](https://github.com/AlexandruMindra/TGK/releases/tag/nightly) bu
 | macOS, Apple Silicon (M1 and later) | `TGK-osx-arm64.dmg` | Drag TGK to Applications. |
 | macOS, Intel | `TGK-osx-x64.dmg` | Drag TGK to Applications. |
 
-Once installed, TGK updates itself ("Update now" in the status bar). The macOS builds are not notarized by Apple yet:
-the first time, right-click TGK in Applications and choose **Open** (or allow it in System Settings → Privacy &
-Security). Tested mainly on Linux; Windows is supported but less tested, macOS is new.
+Once installed, TGK updates itself ("Update now" in the status bar). The macOS builds are not signed with an Apple
+Developer ID or notarized yet: the first time, right-click TGK in Applications and choose **Open**, or allow it in
+System Settings → Privacy & Security. If macOS says the app "is damaged", run `xattr -cr /Applications/TGK.app` once. Tested mainly on Linux; Windows is supported but less tested, macOS is new.
 
 To build from source you need the [.NET 10 SDK](https://dotnet.microsoft.com/download).
 

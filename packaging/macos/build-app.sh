@@ -11,24 +11,28 @@ trap 'rm -rf "$work"' EXIT
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"
 
+# Apple Silicon runs only signed native code. The SDK signs the executable and the NuGet libraries come signed; sign
+# (ad hoc, no Apple ID involved) any Mach-O file that is not. This happens before the files go into the bundle:
+# inside it, codesign would treat the executable as the bundle's and demand signatures for the .dll files next to it.
+# The bundle as a whole stays unsigned, so without a Developer ID and notarization a downloaded copy has to be
+# allowed once (context menu → Open, or System Settings → Privacy & Security).
+payload="$work/payload"
+cp -R "$publish" "$payload"
+if command -v codesign > /dev/null; then
+  while IFS= read -r -d '' f; do
+    if file -b "$f" | grep -q "Mach-O" && ! codesign --verify "$f" 2> /dev/null; then
+      codesign --force --sign - "$f"
+    fi
+  done < <(find "$payload" -type f -print0)
+fi
+
 app="$work/TGK.app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp -R "$publish"/. "$app/Contents/MacOS/"
+mkdir -p "$app/Contents/Resources"
+mv "$payload" "$app/Contents/MacOS"
 cp "$root/assets/icon.icns" "$app/Contents/Resources/icon.icns"
 short=${version%%-*} # CFBundleShortVersionString must be X.Y.Z
 sed -e "s/@SHORT_VERSION@/$short/g" -e "s/@VERSION@/$version/g" "$root/packaging/macos/Info.plist" > "$app/Contents/Info.plist"
 chmod +x "$app/Contents/MacOS/TGK"
-
-# Apple Silicon runs only signed native code: sign every Mach-O file ad hoc (no Apple ID involved), then the bundle.
-# Without a Developer ID and notarization, a downloaded copy needs "Open" from the context menu the first time.
-if command -v codesign > /dev/null; then
-  while IFS= read -r -d '' f; do
-    if file -b "$f" | grep -q "Mach-O"; then
-      codesign --force --sign - "$f"
-    fi
-  done < <(find "$app/Contents/MacOS" -type f -print0)
-  codesign --force --sign - "$app" || echo "::warning::Could not sign the TGK.app bundle as a whole (its binaries are signed)."
-fi
 
 # No AppleDouble (._*) files or extended attributes in the archive.
 (cd "$work" && COPYFILE_DISABLE=1 tar --no-xattrs -czf "$out/TGK-$rid.tar.gz" TGK.app 2>/dev/null \
