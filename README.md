@@ -15,7 +15,8 @@ entirely on one machine.
 - Split view: show several sessions at once — 2 or 3 side by side, stacked, 1 large + 2, grids of 4 or 6 (the layout
   button in the tab strip), or split any pane right / down (`Ctrl+Shift+E` / `Ctrl+Shift+O`). Drag the dividers to
   resize, `Alt+arrows` to move between panes, `Ctrl+Shift+X` to maximize one; each pane stays a tab of its own and can
-  be dragged in or out of the split view.
+  be dragged in or out of the split view. Drag a pane's title bar to rearrange: next to another pane on any side, onto
+  a pane to swap them, onto the tab strip to make it a tab again.
 - Reopen my tabs (Settings → Startup, off by default): your tabs and split views are saved in the vault when you close
   TGK, sign out or lock it (and as you work), and reopened on whichever device you sign in next. Only which hosts were
   open is saved, never passwords; a session connects when you open its tab.

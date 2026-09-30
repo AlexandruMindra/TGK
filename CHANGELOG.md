@@ -10,6 +10,18 @@ shows the current Unreleased section.
 
 ## [Unreleased]
 
+### Added
+
+- **Move panes by drag and drop**: drag a pane's title bar (or a tab from the tab strip) over the split view. Near an
+  edge of a pane it goes beside that pane on that side (left, right, above or below); over the middle of a pane of the
+  same split view the two swap places; onto the tab strip it becomes a tab of its own. Without a split view on screen,
+  dropping a tab at an edge of the current tab starts one. The drop zone is highlighted while dragging.
+
+### Changed
+
+- A tab in the tab strip is activated when the mouse button is released (unless it was dragged), so dragging a tab
+  that has not connected yet is no longer interrupted by its password prompt.
+
 ## [0.2.1] - 2026-10-01
 
 ### Added

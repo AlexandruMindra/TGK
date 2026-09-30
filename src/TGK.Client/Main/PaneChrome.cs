@@ -11,12 +11,12 @@ namespace TGK.Client.Main;
 /// <summary>
 /// The title bar of a pane in a split view: status dot, title, maximize/restore and close. The pane with the keyboard
 /// is highlighted. A click focuses the pane, a double-click maximizes or restores it, a right-click opens the pane menu
-/// and a middle-click closes it.
+/// and a middle-click closes it. Dragging the title bar moves the pane (see <see cref="MainView.PaneDropAt"/>).
 /// </summary>
 public sealed class PaneHeader : Control
 {
     public const float Height = 26;
-    private const float ButtonSize = 20, ButtonGap = 2, PadRight = 4, DoubleClickMs = 400;
+    private const float ButtonSize = 20, ButtonGap = 2, PadRight = 4, DoubleClickMs = 400, DragThreshold = 6;
 
     private enum Part
     {
@@ -31,11 +31,14 @@ public sealed class PaneHeader : Control
     private Part _hover, _pressed;
     private bool _middlePressed;
     private long _lastClickMs = long.MinValue / 2;
+    private TabContent? _dragTab; // pressed on the title (a drag once moved DragThreshold px)
+    private bool _dragging;
+    private float _dragStartX, _dragStartY;
 
     public PaneHeader(MainView main)
     {
         _main = main;
-        Events.OnMouseMove += (_, e) => SetAndPaint(ref _hover, PartAt(e.Relative.X, e.Relative.Y));
+        Events.OnMouseMove += OnMove;
         Events.OnMouseDown += OnDown;
         Events.OnMouseUp += OnUp;
     }
@@ -66,6 +69,26 @@ public sealed class PaneHeader : Control
 
     private Part PartAt(float x, float y) => CloseRect.Contains(x, y) ? Part.Close : ZoomRect.Contains(x, y) ? Part.Zoom : Part.None;
 
+    private void OnMove(object? sender, MouseEventArgs e)
+    {
+        if (_dragTab is { } tab)
+        {
+            if (!_dragging && Math.Abs(e.Global.X - _dragStartX) + Math.Abs(e.Global.Y - _dragStartY) >= DragThreshold)
+            {
+                _dragging = true;
+                _lastClickMs = long.MinValue / 2; // not the first click of a double-click any more
+                Cursor = StandardCursor.Hand;
+            }
+            if (_dragging)
+            {
+                e.Handled = true;
+                _main.UpdatePaneDrag(tab, e.Global.X, e.Global.Y);
+                return;
+            }
+        }
+        SetAndPaint(ref _hover, PartAt(e.Relative.X, e.Relative.Y));
+    }
+
     protected override void OnHoverChanged()
     {
         if (!IsHovered)
@@ -84,6 +107,10 @@ public sealed class PaneHeader : Control
                 _pressed = part;
                 if (part != Part.None)
                     break;
+                _dragTab = tab;
+                _dragStartX = e.Global.X;
+                _dragStartY = e.Global.Y;
+                CapturePointer();
                 _main.ActivateTab(tab);
                 long now = UiClock.NowMs;
                 if (now - _lastClickMs <= DoubleClickMs)
@@ -109,6 +136,19 @@ public sealed class PaneHeader : Control
     private void OnUp(object? sender, MouseEventArgs e)
     {
         e.Handled = true;
+        if (e.Button == 0 && _dragTab is { } dragged)
+        {
+            bool wasDragging = _dragging;
+            _dragTab = null;
+            _dragging = false;
+            Cursor = null;
+            if (wasDragging)
+            {
+                _pressed = Part.None;
+                _main.EndPaneDrag(dragged);
+                return;
+            }
+        }
         Part part = PartAt(e.Relative.X, e.Relative.Y);
         Part pressed = _pressed;
         bool middle = _middlePressed;

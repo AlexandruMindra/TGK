@@ -367,17 +367,29 @@ public sealed partial class MainView
     }
 
     // Shows `tab` right of `beside`, in beside's split view (started if needed), leaving its own split view first.
-    private void JoinSplit(TabContent tab, TabContent beside)
+    private void JoinSplit(TabContent tab, TabContent beside) => PlaceBeside(tab, beside, SplitOrientation.Horizontal, after: true);
+
+    // Puts `tab` in a pane next to `target` (right of or below it, or left of or above it without `after`), in
+    // target's split view (started if needed). A pane of another split view leaves that one first; a pane of the same
+    // split view moves.
+    private void PlaceBeside(TabContent tab, TabContent target, SplitOrientation orientation, bool after)
     {
-        if (tab.Split is { } old && old != beside.Split)
+        if (tab == target)
+            return;
+        if (tab.Split is { } old && old != target.Split)
         {
             // Out of its old split view's block first, so that block stays together in the strip.
             MoveTab(tab, Block(_tabs.IndexOf(tab)).Last + 1);
             LeaveSplit(tab);
         }
-        PaneLayout<TabContent> layout = beside.Split ?? new PaneLayout<TabContent>(beside);
-        beside.Split = layout;
-        layout.SplitAt(beside, tab, SplitOrientation.Horizontal);
+        else if (tab.Split is { } same)
+        {
+            same.Remove(tab); // target keeps the layout, even when it is its last pane for a moment
+            tab.Split = null;
+        }
+        PaneLayout<TabContent> layout = target.Split ?? new PaneLayout<TabContent>(target);
+        target.Split = layout;
+        layout.SplitAt(target, tab, orientation, after);
         tab.Split = layout;
         GatherPanes(layout);
     }

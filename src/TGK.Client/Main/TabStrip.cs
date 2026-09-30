@@ -102,14 +102,15 @@ public sealed class TabStrip : Control
     /// tabs. The "+" button has room of its own at the end, so it never covers a tab.
     /// Tabs can be dragged: between two tabs moves the tab there (into a split view when both neighbours are its panes,
     /// out of its split view otherwise); onto the middle of another tab shows it beside that one (see
-    /// <see cref="MainView.DropTab"/>).
+    /// <see cref="MainView.DropTab"/>); down into the content area, next to a pane on screen (see
+    /// <see cref="MainView.PaneDropAt"/>).
     /// </summary>
     private sealed class TabsArea : Control
     {
         private const float TabTop = 6, MinTabW = 104, MaxTabW = 220, PlusSize = 28, PlusGap = 6, CloseSize = 18, FadeW = 28;
         private const float ArrowW = 22;
         private const int RepeatDelayMs = 350, RepeatIntervalMs = 90;
-        private const float DragThreshold = 6, OntoFrom = 0.28f, OntoTo = 0.72f, DragScrollZone = 24, DragScrollStep = 10;
+        private const float BelowStrip = 10, DragThreshold = 6, OntoFrom = 0.28f, OntoTo = 0.72f, DragScrollZone = 24, DragScrollStep = 10;
 
         private enum Part
         {
@@ -140,6 +141,7 @@ public sealed class TabStrip : Control
         private bool _dragging;
         private float _dragStartX, _grabOffset, _dragX;
         private int _dropSlot = -1, _dropOnto = -1;
+        private bool _overContent; // the dragged tab is below the strip, over the panes
 
         public TabsArea(MainView main)
         {
@@ -298,6 +300,16 @@ public sealed class TabStrip : Control
             }
             e.Handled = true;
             _dragX = x;
+            bool overContent = e.Relative.Y > H + BelowStrip;
+            if (overContent || _overContent)
+                _main.UpdatePaneDrag(_dragTab!, overContent ? e.Global.X : null, e.Global.Y);
+            _overContent = overContent;
+            if (overContent)
+            {
+                (_dropSlot, _dropOnto) = (-1, -1);
+                InvalidatePaint();
+                return;
+            }
             UpdateDropTarget();
         }
 
@@ -328,6 +340,9 @@ public sealed class TabStrip : Control
 
         private void EndDrag()
         {
+            if (_overContent && _dragTab is { } tab)
+                _main.EndPaneDrag(tab, drop: false);
+            _overContent = false;
             _dragTab = null;
             _dragging = false;
             _dropSlot = _dropOnto = -1;
@@ -342,7 +357,7 @@ public sealed class TabStrip : Control
                 return;
             }
             // A tab dragged to either end of an overflowing strip scrolls it.
-            if (_dragging && Overflow)
+            if (_dragging && !_overContent && Overflow)
             {
                 float before = Scroll;
                 if (_dragX < ViewLeft + DragScrollZone)
@@ -408,7 +423,8 @@ public sealed class TabStrip : Control
                     _dragStartX = _dragX = x;
                     _grabOffset = x - TabRect(tab).Left;
                     CapturePointer();
-                    _main.ActivateTab(tab);
+                    // Activated on release unless dragged: activating starts a session, whose password prompt would
+                    // end the drag.
                     break;
                 case Part.Left or Part.Right:
                     Step(part == Part.Left ? -1 : 1);
@@ -435,6 +451,16 @@ public sealed class TabStrip : Control
                 _middlePressed = -1;
                 return;
             }
+            if (e.Button == 0 && _dragging && _overContent && _dragTab is { } toPane)
+            {
+                _overContent = false;
+                EndDrag();
+                _pressed = Part.None;
+                if (!_main.EndPaneDrag(toPane))
+                    _main.ActivateTab(toPane);
+                UpdateHover(x, y);
+                return;
+            }
             if (e.Button == 0 && _dragging && _dragTab is { } dragged)
             {
                 (int slot, int onto) = (_dropSlot, _dropOnto);
@@ -443,11 +469,16 @@ public sealed class TabStrip : Control
                 _pressed = Part.None;
                 if (slot >= 0 || target is not null)
                     _main.DropTab(dragged, slot, target);
+                _main.ActivateTab(dragged); // also when dropped where it was
                 UpdateHover(x, y);
                 return;
             }
-            if (e.Button == 0)
+            if (e.Button == 0 && _dragTab is { } clicked)
+            {
                 _dragTab = null;
+                if (_pressed == Part.Tab && _items.Contains(clicked))
+                    _main.ActivateTab(clicked);
+            }
             if (_pressed == Part.Plus && part == Part.Plus)
                 _main.NewTab();
             else if (_closePressed >= 0 && _closePressed == tab && part == Part.Close)
@@ -528,7 +559,7 @@ public sealed class TabStrip : Control
                 }
             }
 
-            if (_dragging)
+            if (_dragging && !_overContent)
                 PaintDrag(c);
 
             // Fade the edges where more tabs are scrolled out of view.
