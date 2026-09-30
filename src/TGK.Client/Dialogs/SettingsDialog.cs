@@ -40,6 +40,8 @@ public sealed class SettingsDialog : TabbedDialog
     private readonly Label _restoreHint, _restoreSaved;
     private readonly Checkbox _checkUpdates;
     private readonly Label _updatesHint;
+    private readonly Label _channelCaption, _channelHint;
+    private readonly SegmentedControl _channel;
 
     public SettingsDialog(TgkView view) : base(view, "Settings", 640, "Terminal", "Connection", "Session", "Startup")
     {
@@ -87,10 +89,30 @@ public sealed class SettingsDialog : TabbedDialog
         _checkUpdates = startup.Add(new Checkbox("Tell me when a new version of TGK is available", view.Services.Prefs.CheckForUpdates));
         _updatesHint = startup.Add(new Label($"Checks GitHub's release list in the background, about twice a day, and shows a note in the status bar. This device only. You have {AppInfo.VersionText}.",
             Theme.FontSm, Theme.TextMuted) { MaxLines = 3 });
+        _channelCaption = startup.Add(Form.Caption("Update channel"));
+        _channel = startup.Add(new SegmentedControl("Stable", "Nightly"));
+        UpdateChannel channel = view is MainView m ? m.CurrentChannel : view.Services.Prefs.UpdateChannel ?? UpdateChecker.DefaultChannel(AppInfo.Version);
+        _channel.SelectedIndex = channel == UpdateChannel.Nightly ? 1 : 0;
+        _channelHint = startup.Add(new Label("", Theme.FontSm, Theme.TextMuted) { MaxLines = 4 });
+        _channel.SelectionChanged += _ => UpdateChannelHint();
+        UpdateChannelHint();
         startup.Layout = LayoutStartup;
 
         AddButton("Cancel", ButtonVariant.Secondary, Cancel);
         AddButton("Save", ButtonVariant.Primary, Accept);
+    }
+
+    private UpdateChannel SelectedChannel => _channel.SelectedIndex == 1 ? UpdateChannel.Nightly : UpdateChannel.Stable;
+
+    private void UpdateChannelHint()
+    {
+        bool onNightlyBuild = AppInfo.Version.IsNightly;
+        _channelHint.Text = SelectedChannel == UpdateChannel.Nightly
+            ? "Nightly: the latest build of TGK's main branch, rebuilt with every change — new features first, less tested. Releases are offered too when they are newer. This device only."
+            : onNightlyBuild
+                ? "Stable: releases only. You have a nightly build, which stays until a release newer than it comes out (no downgrade). This device only."
+                : "Stable: tested releases only. This device only.";
+        InvalidateLayout();
     }
 
     private string CursorShape => CursorShapes[Math.Clamp(_cursor.SelectedIndex, 0, CursorShapes.Length - 1)];
@@ -130,7 +152,11 @@ public sealed class SettingsDialog : TabbedDialog
         y += 22 + 8;
         float updatesH = _updatesHint.MeasureHeight(width - 28);
         _updatesHint.Transform.SetLocalFrame(28, y, width - 28, updatesH);
-        return y + updatesH;
+        y += updatesH + Form.RowGap;
+        y = Form.Place(_channelCaption, _channel, 28, y, Math.Min(260, width - 28)) + 8;
+        float channelH = _channelHint.MeasureHeight(width - 28);
+        _channelHint.Transform.SetLocalFrame(28, y, width - 28, channelH);
+        return y + channelH;
     }
 
     // "Saved tabs: 5, on laptop, 2h ago" while the preference is on and tabs are stored.
@@ -180,6 +206,7 @@ public sealed class SettingsDialog : TabbedDialog
             if (_restoreTabs.Checked != vault.Current.Workspace.RestoreTabs)
                 main.SetRestoreTabs(_restoreTabs.Checked);
             main.SetCheckForUpdates(_checkUpdates.Checked);
+            main.SetUpdateChannel(SelectedChannel);
         }
         Close();
     }

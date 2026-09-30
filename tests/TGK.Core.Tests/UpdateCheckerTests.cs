@@ -115,6 +115,27 @@ public sealed class UpdateCheckerTests
     }
 
     [Fact]
+    public async Task The_chosen_channel_overrides_the_build_kind_without_downgrades()
+    {
+        var github = GitHub("v0.2.1", "Nightly 0.3.0-nightly.80");
+        using var checker = new UpdateChecker(github);
+
+        // A release build switched to nightly hears about the nightly.
+        UpdateInfo? nightly = await checker.CheckAsync(V("0.2.1"), ct: Ct, channel: UpdateChannel.Nightly);
+        Assert.Equal(V("0.3.0-nightly.80"), nightly!.Version);
+        Assert.Equal("https://github.com/AlexandruMindra/TGK/releases/tag/nightly", nightly.Url);
+        // A nightly build switched to stable: the older release is not offered, and the nightly is not asked for.
+        github.Requests.Clear();
+        Assert.Null(await checker.CheckAsync(V("0.3.0-nightly.79"), ct: Ct, channel: UpdateChannel.Stable));
+        Assert.DoesNotContain(Nightly, github.Requests);
+        // ...until the release it was building up to comes out.
+        using var released = new UpdateChecker(GitHub("v0.3.0", "Nightly 0.4.0-nightly.3"));
+        Assert.Equal(V("0.3.0"), (await released.CheckAsync(V("0.3.0-nightly.79"), ct: Ct, channel: UpdateChannel.Stable))!.Version);
+        Assert.Equal(UpdateChannel.Nightly, UpdateChecker.DefaultChannel(V("0.3.0-nightly.1")));
+        Assert.Equal(UpdateChannel.Stable, UpdateChecker.DefaultChannel(V("0.2.1")));
+    }
+
+    [Fact]
     public async Task No_releases_yet_is_not_an_error()
     {
         using var checker = new UpdateChecker(GitHub(null, null));

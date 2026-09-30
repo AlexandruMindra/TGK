@@ -16,6 +16,9 @@ shows the current Unreleased section.
   edge of a pane it goes beside that pane on that side (left, right, above or below); over the middle of a pane of the
   same split view the two swap places; onto the tab strip it becomes a tab of its own. Without a split view on screen,
   dropping a tab at an edge of the current tab starts one. The drop zone is highlighted while dragging.
+- **Update channel** (Settings → Startup, per device): *Stable* (releases only) or *Nightly* (the latest build of
+  `main`, plus releases when they are newer). Switching back to Stable never downgrades: a nightly build stays until a
+  release newer than it comes out. By default the channel follows the installed build.
 
 ### Changed
 

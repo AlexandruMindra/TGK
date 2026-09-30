@@ -21,7 +21,7 @@ entirely on one machine.
   TGK, sign out or lock it (and as you work), and reopened on whichever device you sign in next. Only which hosts were
   open is saved, never passwords; a session connects when you open its tab.
 - Updates: a while after start (never during it) and about twice a day, TGK asks GitHub for a newer release
-  (nightly builds also look at the latest nightly). A newer one only adds a small note to the status bar: "Update now"
+  (on the Nightly channel, chosen in Settings → Startup, also the latest nightly build). A newer one only adds a small note to the status bar: "Update now"
   downloads it in the background, checks it against GitHub's checksum and installs it when you restart (or close) TGK;
   "Download from GitHub", "Skip this version" and "Remind me later" are there too. Turn it off in Settings → Startup;
   "Check for updates" in the account menu asks right away. Builds run from source only offer the download page.

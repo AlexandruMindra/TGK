@@ -83,6 +83,29 @@ public sealed partial class MainView
         CheckForUpdates(manual: false);
     }
 
+    /// <summary>The update channel of this device: the one chosen, else the installed build's kind.</summary>
+    public UpdateChannel CurrentChannel => Services.Prefs.UpdateChannel ?? UpdateChecker.DefaultChannel(AppInfo.Version);
+
+    /// <summary>Switches between stable releases and nightly builds (per device); GitHub is asked again shortly.</summary>
+    public void SetUpdateChannel(UpdateChannel channel)
+    {
+        if (channel == CurrentChannel)
+            return;
+        Services.UpdatePrefs(p =>
+        {
+            p.UpdateChannel = channel;
+            p.LastUpdateCheck = null; // the cached answer was for the other channel
+            p.AvailableUpdate = null;
+            p.AvailableUpdateUrl = null;
+        });
+        if (_updateStage < UpdateStage.Downloading)
+        {
+            ShowUpdate(null);
+            if (Services.Prefs.CheckForUpdates)
+                _nextUpdateCheck = UiClock.NowMs + 2_000;
+        }
+    }
+
     private static UpdateInfo? CachedUpdate(ClientPrefs prefs) =>
         prefs.AvailableUpdate is { } text && AppVersion.TryParse(text, out AppVersion version)
         && prefs.AvailableUpdateUrl is { } url && url.StartsWith(UpdateChecker.ReleasesUrl + "/", StringComparison.Ordinal)
@@ -90,12 +113,12 @@ public sealed partial class MainView
             : null;
 
     // Asks GitHub; null when that failed (logged).
-    private static async Task<(bool Ok, UpdateInfo? Update)> AskGitHubAsync()
+    private static async Task<(bool Ok, UpdateInfo? Update)> AskGitHubAsync(UpdateChannel channel)
     {
         try
         {
             using var checker = new UpdateChecker(userAgent: AppInfo.VersionText);
-            return (true, await Task.Run(() => checker.CheckAsync(AppInfo.Version, SelfUpdate.PackageName)));
+            return (true, await Task.Run(() => checker.CheckAsync(AppInfo.Version, SelfUpdate.PackageName, channel: channel)));
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or OperationCanceledException)
         {
@@ -119,7 +142,7 @@ public sealed partial class MainView
             return;
         }
         _updateChecking = true;
-        (bool ok, UpdateInfo? update) = await AskGitHubAsync();
+        (bool ok, UpdateInfo? update) = await AskGitHubAsync(CurrentChannel);
         _updateChecking = false;
         if (_torndown)
             return;
@@ -252,7 +275,7 @@ public sealed partial class MainView
             // A chip from the cached answer has no download details yet: ask GitHub for them.
             if (update.Package is null)
             {
-                (bool ok, UpdateInfo? fresh) = await AskGitHubAsync();
+                (bool ok, UpdateInfo? fresh) = await AskGitHubAsync(CurrentChannel);
                 if (!ok || fresh?.Package is null)
                     throw new UpdateException(ok ? "This release has no download for this platform." : "GitHub can't be reached right now.");
                 update = fresh;

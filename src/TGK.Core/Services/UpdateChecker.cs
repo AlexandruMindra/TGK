@@ -68,6 +68,16 @@ public readonly partial record struct AppVersion(int Major, int Minor, int Patch
     private static partial Regex VersionPattern();
 }
 
+/// <summary>Which builds a client updates to (per device; see <see cref="Models.ClientPrefs.UpdateChannel"/>).</summary>
+public enum UpdateChannel
+{
+    /// <summary>Releases only (tags <c>vX.Y.Z</c>).</summary>
+    Stable,
+
+    /// <summary>The rolling <c>nightly</c> build of <c>main</c> too, and releases when they are newer.</summary>
+    Nightly,
+}
+
 /// <summary>
 /// A newer version, its release page and, when the release has one for this platform, the archive to install it from.
 /// </summary>
@@ -77,8 +87,8 @@ public sealed record UpdateInfo(AppVersion Version, string Url, UpdatePackage? P
 public sealed record UpdatePackage(string Name, string Url, long Size, string? Sha256);
 
 /// <summary>
-/// Asks GitHub for the newest TGK release: the latest stable release (tag <c>vX.Y.Z</c>) and, for nightly builds, the
-/// rolling <c>nightly</c> pre-release too, so each build hears about updates of its own kind. Only public release
+/// Asks GitHub for the newest TGK release: the latest stable release (tag <c>vX.Y.Z</c>) and, on the nightly channel
+/// (by default: for nightly builds), the rolling <c>nightly</c> pre-release too. Only public release
 /// metadata is read; nothing about the user is sent (just a User-Agent with the version, as GitHub requires).
 /// </summary>
 public sealed class UpdateChecker : IDisposable
@@ -119,9 +129,11 @@ public sealed class UpdateChecker : IDisposable
     /// The newest release after <paramref name="current"/>, or null when it is the newest; with
     /// <paramref name="package"/> (see <see cref="PackageName"/>) it includes that archive when the release has it. Throws
     /// <see cref="HttpRequestException"/> (also for unexpected responses), <see cref="JsonException"/> or
-    /// <see cref="OperationCanceledException"/> (timeout) when GitHub can't be asked.
+    /// <see cref="OperationCanceledException"/> (timeout) when GitHub can't be asked. <paramref name="channel"/>: null
+    /// follows the build (a nightly build is on the nightly channel). Never a downgrade: a nightly build on the stable
+    /// channel stays until a release newer than it comes out.
     /// </summary>
-    public async Task<UpdateInfo?> CheckAsync(AppVersion current, string? package = null, CancellationToken ct = default)
+    public async Task<UpdateInfo?> CheckAsync(AppVersion current, string? package = null, CancellationToken ct = default, UpdateChannel? channel = null)
     {
         UpdateInfo? best = null;
         // Links are built here from the tag rather than taken from the response, so only this repository's pages and
@@ -129,13 +141,16 @@ public sealed class UpdateChecker : IDisposable
         if (await GetReleaseAsync($"{Api}/latest", package, ct).ConfigureAwait(false) is { } stable
             && stable.Tag is { } tag && StableTag.IsMatch(tag) && AppVersion.TryParse(tag, out AppVersion version) && version > current)
             best = new UpdateInfo(version, $"{ReleasesUrl}/tag/{tag}", Package(tag, package, stable.Asset));
-        if (current.IsNightly
+        if ((channel ?? DefaultChannel(current)) == UpdateChannel.Nightly
             && await GetReleaseAsync($"{Api}/tags/nightly", package, ct).ConfigureAwait(false) is { } nightly
             && AppVersion.TryParse(nightly.Name, out AppVersion nightlyVersion) && nightlyVersion.IsNightly
             && nightlyVersion > current && (best is null || nightlyVersion > best.Version))
             best = new UpdateInfo(nightlyVersion, $"{ReleasesUrl}/tag/nightly", Package("nightly", package, nightly.Asset));
         return best;
     }
+
+    /// <summary>The channel of a build that has no channel chosen: the kind of build it is.</summary>
+    public static UpdateChannel DefaultChannel(AppVersion current) => current.IsNightly ? UpdateChannel.Nightly : UpdateChannel.Stable;
 
     private static UpdatePackage? Package(string tag, string? name, (long Size, string? Sha256)? asset) =>
         name is null || asset is not { } a ? null : new UpdatePackage(name, $"{ReleasesUrl}/download/{tag}/{name}", a.Size, a.Sha256);

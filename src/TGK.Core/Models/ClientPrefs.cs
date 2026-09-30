@@ -26,6 +26,9 @@ public sealed class ClientPrefs
     /// <summary>Look for newer TGK releases on GitHub (in the background, about twice a day) and mention them in the status bar.</summary>
     public bool CheckForUpdates { get; set; } = true;
 
+    /// <summary>Stable releases or nightly builds too; null follows the installed build (see <see cref="UpdateChecker.DefaultChannel"/>).</summary>
+    public UpdateChannel? UpdateChannel { get; set; }
+
     /// <summary>When GitHub was last asked, and the newer version it reported then (null: none), with its release page.</summary>
     public DateTimeOffset? LastUpdateCheck { get; set; }
     public string? AvailableUpdate { get; set; }
