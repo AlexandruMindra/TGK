@@ -1,10 +1,13 @@
 using System;
+using System.Threading;
+using System.Threading.Tasks;
 using Blossom;
 using Blossom.Core;
 using TGK.Client.Main;
 using TGK.Client.Platform;
 using TGK.Client.Views;
 using TGK.Core.Models;
+using TGK.Core.Services;
 
 namespace TGK.Client;
 
@@ -103,6 +106,33 @@ public sealed class TgkApplication : Application
     {
         _main?.Teardown();
         ShowLogin(reason);
+    }
+
+    /// <summary>
+    /// The window closed (the UI loop has ended): saves the open tabs when "reopen my tabs" is on and pushes changes the
+    /// server has not received yet, for at most <paramref name="timeout"/>, so another device sees them right away.
+    /// Whatever is not pushed by then stays queued on this device and goes out with the next start.
+    /// </summary>
+    internal void OnExit(TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        TimeSpan Left() => deadline - DateTime.UtcNow is { Ticks: > 0 } left ? left : TimeSpan.Zero;
+        try
+        {
+            // The save completes once it is stored on this device (or its push attempt finished). Waited for with a
+            // timeout only: the UI loop is gone, so nothing may depend on it from here on.
+            _main?.OnExit()?.Wait(Left());
+            var vault = Services.Vault;
+            if (vault.Mode != VaultMode.Server || !vault.IsLoggedIn || vault.PendingChanges == 0)
+                return;
+            using var cts = new CancellationTokenSource(Left());
+            if (!Task.Run(() => vault.SyncAsync(cts.Token)).Wait(Left() + TimeSpan.FromSeconds(1)))
+                Log.Warning("Changes not pushed at exit (the server is slow); they are sent at the next start.");
+        }
+        catch (AggregateException ex)
+        {
+            Log.Warning($"Changes not pushed at exit: {ex.GetBaseException().Message}");
+        }
     }
 
     internal void OnMainViewShown(MainView view)

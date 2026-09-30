@@ -13,4 +13,7 @@ public static class ItemKinds
     /// they don't know, so an older client ignores it and keeps working with the rest of the vault.
     /// </summary>
     public const string Settings = "settings";
+
+    /// <summary>The vault's one workspace item ("reopen my tabs" and the saved tabs). Older clients skip it, as above.</summary>
+    public const string Workspace = "workspace";
 }

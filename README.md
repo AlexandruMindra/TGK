@@ -14,6 +14,9 @@ entirely on one machine.
 - Split view: show several sessions at once — 2 or 3 side by side, stacked, 1 large + 2, grids of 4 or 6 (the layout
   button in the tab strip), or split any pane right / down (`Ctrl+Shift+E` / `Ctrl+Shift+O`). Drag the dividers to
   resize, `Alt+arrows` to move between panes, `Ctrl+Shift+X` to maximize one; each pane stays a tab of its own.
+- Reopen my tabs (Settings → Startup, off by default): your tabs and split views are saved in the vault when you close
+  TGK, sign out or lock it (and as you work), and reopened on whichever device you sign in next. Only which hosts were
+  open is saved, never passwords; a session connects when you open its tab.
 - Built-in xterm-compatible terminal: 256 colors and truecolor, alternate screen (vim, htop, mc, tmux), scrollback,
   mouse reporting, bracketed paste, wide characters, selection with copy/paste.
 - Auth with private keys (OpenSSH/PEM, with passphrase), password or keyboard-interactive; host key verification

@@ -160,6 +160,7 @@ public sealed partial class MainView
     {
         _content.InvalidateLayout();
         _content.ForceLayoutSubtree();
+        WorkspaceChanged(); // the pane sizes are saved too
     }
 
     // First and last index in _tabs of the block of tabs around `index` that share its split view (just `index` for a
@@ -343,6 +344,7 @@ public sealed partial class MainView
         _overlayWasOpen = HasModal || Menu.IsOpen;
         if (!_overlayWasOpen && IsActive && !_torndown)
             FollowFocus();
+        TickWorkspace();
     }
 
     // A click anywhere in a pane of the split view on screen makes it the active tab. Runs after the click itself has

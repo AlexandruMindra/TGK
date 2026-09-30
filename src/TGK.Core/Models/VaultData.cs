@@ -20,6 +20,14 @@ public sealed class VaultData
 
     private HostOptions _defaults = new();
 
+    /// <summary>
+    /// The "reopen my tabs" preference and the saved tabs and split views. Synced as the vault's single "workspace"
+    /// item; a vault without one has the preference off.
+    /// </summary>
+    public Workspace Workspace { get => _workspace; set => _workspace = value ?? new(); }
+
+    private Workspace _workspace = new();
+
     /// <summary>Incremented on every change; lets the client and server detect stale copies.</summary>
     public long Revision { get; set; }
 
@@ -39,6 +47,7 @@ public sealed class VaultData
         Identities = [.. Identities],
         KnownHosts = [.. KnownHosts],
         Defaults = Defaults,
+        Workspace = Workspace,
         Revision = Revision,
         UpdatedAt = UpdatedAt,
     };
@@ -51,6 +60,7 @@ public sealed class VaultData
         Identities = Identities.Select(i => i.Clone()).ToList(),
         KnownHosts = KnownHosts.Select(k => k.Clone()).ToList(),
         Defaults = Defaults.Clone(),
+        Workspace = Workspace.Clone(),
         Revision = Revision,
         UpdatedAt = UpdatedAt,
     };

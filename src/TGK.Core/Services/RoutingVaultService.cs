@@ -117,6 +117,8 @@ public sealed class RoutingVaultService : IVaultService, IVaultEditor
     public Task SaveIdentityAsync(Identity identity) => _active.SaveIdentityAsync(identity);
     public Task DeleteIdentityAsync(Guid identityId) => _active.DeleteIdentityAsync(identityId);
     public Task SaveDefaultsAsync(HostOptions defaults) => _active.SaveDefaultsAsync(defaults);
+
+    public Task SaveWorkspaceAsync(Workspace workspace) => _active.SaveWorkspaceAsync(workspace);
     public Task AddKnownHostAsync(KnownHost knownHost) => _active.AddKnownHostAsync(knownHost);
     public Task TouchHostAsync(Guid hostId) => _active.TouchHostAsync(hostId);
 

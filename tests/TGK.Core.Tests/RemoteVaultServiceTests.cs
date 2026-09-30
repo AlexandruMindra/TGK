@@ -127,6 +127,28 @@ public sealed class RemoteVaultServiceTests : IDisposable
         Assert.Single(deviceB.Current.Hosts);
     }
 
+    [Fact]
+    public async Task Workspace_SyncsToAnotherDevice()
+    {
+        RemoteVaultService deviceA = await LoggedInAsync();
+        Assert.False(deviceA.Current.Workspace.RestoreTabs); // off until the user turns it on
+
+        Workspace workspace = WorkspaceTests.Sample();
+        await deviceA.SaveWorkspaceAsync(workspace);
+        Assert.Equal(0, deviceA.PendingChanges);
+        VaultItem? stored = _server.GetItem(User, Codec.WorkspaceId);
+        Assert.NotNull(stored);
+        Assert.Equal(ItemKinds.Workspace, VaultCrypto.DecryptItem(_vaultKey, Codec.WorkspaceId, stored.Data!).Kind);
+
+        RemoteVaultService deviceB = await LoggedInAsync();
+        Assert.Equivalent(workspace, deviceB.Current.Workspace);
+
+        // Turned off on B: A sees it on its next pull.
+        await deviceB.SaveWorkspaceAsync(new Workspace());
+        await deviceA.SyncAsync(Ct);
+        Assert.True(deviceA.Current.Workspace.IsEmpty);
+    }
+
     [Theory]
     [InlineData("wrong-password", VaultError.InvalidCredentials)]
     [InlineData("unknown-user", VaultError.InvalidCredentials)]

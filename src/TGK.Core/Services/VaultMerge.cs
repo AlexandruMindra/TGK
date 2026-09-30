@@ -19,7 +19,7 @@ public sealed record MergeCounts(int Added, int Conflicts, int Skipped)
 /// replacing what the current one has: groups, hosts and identities are matched by id and only new ones are added
 /// (an existing one in another version counts as a conflict and is kept). The target's defaults win (the incoming
 /// ones are used only when the target has none), and so do its known host keys (an incoming key is added only for a
-/// host and port the target has no key for).
+/// host and port the target has no key for). The workspace (saved tabs) is never merged: the target keeps its own.
 /// </summary>
 internal static class VaultMerge
 {

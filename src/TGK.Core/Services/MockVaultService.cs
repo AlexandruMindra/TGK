@@ -283,6 +283,8 @@ public sealed class MockVaultService : IVaultService, IVaultEditor
 
     public Task SaveDefaultsAsync(HostOptions defaults) => MutateAsync(VaultEdits.SaveDefaults(defaults));
 
+    public Task SaveWorkspaceAsync(Workspace workspace) => MutateAsync(VaultEdits.SaveWorkspace(workspace));
+
     public Task AddKnownHostAsync(KnownHost knownHost) => MutateAsync(VaultEdits.AddKnownHost(knownHost));
 
     public Task TouchHostAsync(Guid hostId) => MutateAsync(VaultEdits.TouchHost(hostId, DateTimeOffset.UtcNow));

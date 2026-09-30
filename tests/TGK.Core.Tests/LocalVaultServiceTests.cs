@@ -50,6 +50,7 @@ public sealed class LocalVaultServiceTests : IDisposable
         await vault.SaveHostAsync(host);
         await vault.AddKnownHostAsync(new KnownHost { Host = HostName, Port = 2222, KeyType = "ssh-ed25519", FingerprintSha256 = "SHA256:local" });
         await vault.SaveDefaultsAsync(new HostOptions { KeepAliveSeconds = 42 });
+        await vault.SaveWorkspaceAsync(new Workspace { RestoreTabs = true, Tabs = [new WorkspaceTab { HostId = host.Id }], ActiveTab = 0 });
         return (group, identity, host);
     }
 
@@ -134,6 +135,8 @@ public sealed class LocalVaultServiceTests : IDisposable
         Assert.Equal(touched, data.FindHost(host.Id)!.LastConnected);
         Assert.Equal(42, data.Defaults.KeepAliveSeconds);
         Assert.Single(data.KnownHosts);
+        Assert.True(data.Workspace.RestoreTabs);
+        Assert.Equal(host.Id, Assert.Single(data.Workspace.Tabs).HostId);
     }
 
     [Fact]

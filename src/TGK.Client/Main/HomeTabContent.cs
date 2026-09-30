@@ -70,6 +70,11 @@ public sealed class HomeTabContent : TabContent
 
     public override void OnAttached() => Refresh();
 
+    /// <summary>Nothing typed into the quick-connect field yet.</summary>
+    public bool IsBlank => _quick.Text.Length == 0;
+
+    public override WorkspaceTab SaveState() => new();
+
     /// <summary>Re-reads hosts from the vault (called by <see cref="MainView"/> on every vault change).</summary>
     public void Refresh()
     {

@@ -90,6 +90,16 @@ internal static class VaultEdits
         return vault => vault.Defaults = copy;
     }
 
+    /// <summary>Replaces the workspace ("reopen my tabs" and the saved tabs); an invalid one is rejected.</summary>
+    public static Action<VaultData> SaveWorkspace(Workspace workspace)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        if (workspace.Validate() is { } problem)
+            throw new ArgumentException(problem, nameof(workspace));
+        Workspace copy = workspace.Clone();
+        return vault => vault.Workspace = copy;
+    }
+
     public static Action<VaultData> TouchHost(Guid hostId, DateTimeOffset at) => vault => SetLastConnected(vault, hostId, at);
 
     private static void CheckOptions(HostOptions options, string paramName)

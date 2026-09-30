@@ -504,6 +504,8 @@ public sealed class RemoteVaultService : IVaultService, IVaultEditor, IDisposabl
 
     public Task SaveDefaultsAsync(HostOptions defaults) => MutateAsync(VaultEdits.SaveDefaults(defaults));
 
+    public Task SaveWorkspaceAsync(Workspace workspace) => MutateAsync(VaultEdits.SaveWorkspace(workspace));
+
     public Task AddKnownHostAsync(KnownHost knownHost) => MutateAsync(VaultEdits.AddKnownHost(knownHost));
 
     Task IVaultEditor.EditAsync(Action<VaultData> edit) => MutateAsync(edit);

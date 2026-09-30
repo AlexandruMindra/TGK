@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using Blossom;
 using Blossom.Core;
 using Blossom.Core.Visual;
@@ -74,6 +75,7 @@ public sealed partial class MainView : TgkView
         UiClock.Tick += OnUiTick;
         _sidebar.Refresh();
         NewTab();
+        StartWorkspace();
     }
 
     protected override void OnShown()
@@ -291,6 +293,7 @@ public sealed partial class MainView : TgkView
     {
         _strip.SetTabs(_tabs, _active);
         _strip.RefreshSync();
+        WorkspaceChanged();
         foreach (PaneHeader header in _paneHeaders)
         {
             if (header.Visible)
@@ -549,6 +552,7 @@ public sealed partial class MainView : TgkView
         if (!confirmed && sessions > 0 && !await ConfirmDialog.ShowAsync(this, local ? "Lock the vault?" : "Sign out?",
                 $"{sessions} open session{(sessions == 1 ? "" : "s")} will be closed.", action))
             return;
+        SaveWorkspace(); // before the flush below, so the tabs reach the server too
         if (Services.Vault.PendingChanges > 0)
         {
             try
@@ -573,6 +577,23 @@ public sealed partial class MainView : TgkView
         Teardown();
         await Services.Vault.LogoutAsync();
         App.ShowLogin();
+    }
+
+    /// <summary>
+    /// The window closed: saves the tabs for "reopen my tabs". Returns the save (stored or pushed in the background),
+    /// which the caller waits for before the process ends; null when there was nothing to save.
+    /// </summary>
+    internal Task? OnExit()
+    {
+        try
+        {
+            return SaveWorkspace();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Could not save the open tabs at exit: {ex}");
+            return null;
+        }
     }
 
     /// <summary>Closes all tabs and detaches from services and shortcuts; the view is discarded afterwards.</summary>

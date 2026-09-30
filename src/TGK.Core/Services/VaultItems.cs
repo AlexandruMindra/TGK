@@ -14,7 +14,8 @@ internal readonly record struct ItemChange(string Id, object? Entity);
 /// <summary>
 /// Maps the vault's entities to server items for one vault key: each group, host, identity and known host is one
 /// item, keyed by its Id (lowercase "D" Guid; known hosts use a Guid keyed from host and port) and sealed with the key.
-/// The vault defaults (<see cref="VaultData.Defaults"/>) are the one "settings" item, whose id is derived from the key.
+/// The vault defaults (<see cref="VaultData.Defaults"/>) are the one "settings" item and the saved tabs
+/// (<see cref="VaultData.Workspace"/>) the one "workspace" item; their ids are derived from the key.
 /// </summary>
 /// <remarks>
 /// Hosts are synced without <see cref="HostEntry.LastConnected"/>: when a host was last used is kept per device, so
@@ -24,6 +25,7 @@ internal sealed class VaultItems(byte[] vaultKey)
 {
     private static readonly byte[] KnownHostIdInfo = "tgk/knownhost-id/v1"u8.ToArray();
     private static readonly byte[] SettingsIdInfo = "tgk/settings-id/v1"u8.ToArray();
+    private static readonly byte[] WorkspaceIdInfo = "tgk/workspace-id/v1"u8.ToArray();
 
     // Known-host ids are an HMAC under a key only the client has: an unkeyed hash of "host:port" would let the
     // server recover every SSH destination by hashing guesses.
@@ -31,6 +33,9 @@ internal sealed class VaultItems(byte[] vaultKey)
 
     /// <summary>Id of the settings item: fixed per vault, and like the known-host ids it tells the server nothing.</summary>
     public string SettingsId { get; } = new Guid(HKDF.DeriveKey(HashAlgorithmName.SHA256, vaultKey, 16, info: SettingsIdInfo)).ToString("D");
+
+    /// <summary>Id of the workspace item, derived like <see cref="SettingsId"/>.</summary>
+    public string WorkspaceId { get; } = new Guid(HKDF.DeriveKey(HashAlgorithmName.SHA256, vaultKey, 16, info: WorkspaceIdInfo)).ToString("D");
 
     public static string IdOf(Guid id) => id.ToString("D");
 
@@ -48,6 +53,7 @@ internal sealed class VaultItems(byte[] vaultKey)
         Identity i => IdOf(i.Id),
         KnownHost k => KnownHostId(k.Host, k.Port),
         HostOptions => SettingsId,
+        Workspace => WorkspaceId,
         _ => throw new ArgumentException($"Not a vault entity: {entity.GetType().Name}", nameof(entity)),
     };
 
@@ -58,6 +64,7 @@ internal sealed class VaultItems(byte[] vaultKey)
         Identity i => VaultCrypto.EncryptItem(vaultKey, id, ItemKinds.Identity, i, TgkJson.Options),
         KnownHost k => VaultCrypto.EncryptItem(vaultKey, id, ItemKinds.KnownHost, k, TgkJson.Options),
         HostOptions defaults => VaultCrypto.EncryptItem(vaultKey, id, ItemKinds.Settings, new SettingsItem { Defaults = defaults }, TgkJson.Options),
+        Workspace workspace => VaultCrypto.EncryptItem(vaultKey, id, ItemKinds.Workspace, workspace, TgkJson.Options),
         _ => throw new ArgumentException($"Not a vault entity: {entity.GetType().Name}", nameof(entity)),
     };
 
@@ -107,6 +114,14 @@ internal sealed class VaultItems(byte[] vaultKey)
                     throw new JsonException("Settings item does not match its id.");
                 vault.Defaults = Read<SettingsItem>(payload).Defaults ?? new HostOptions();
                 return vault.Defaults;
+            case ItemKinds.Workspace:
+                if (id != WorkspaceId)
+                    throw new JsonException("Workspace item does not match its id.");
+                Workspace workspace = Read<Workspace>(payload);
+                if (workspace.Validate() is { } problem)
+                    throw new JsonException($"Invalid workspace: {problem}");
+                vault.Workspace = workspace;
+                return workspace;
             default:
                 throw new JsonException($"Unknown item kind '{payload.Kind}'.");
         }
@@ -122,6 +137,8 @@ internal sealed class VaultItems(byte[] vaultKey)
         DiffList(before.KnownHosts, after.KnownHosts, changes);
         if (!ReferenceEquals(before.Defaults, after.Defaults))
             changes.Add(new ItemChange(SettingsId, after.Defaults));
+        if (!ReferenceEquals(before.Workspace, after.Workspace))
+            changes.Add(new ItemChange(WorkspaceId, after.Workspace));
         return changes;
     }
 
@@ -157,6 +174,8 @@ internal sealed class VaultItems(byte[] vaultKey)
         vault.KnownHosts.RemoveAll(k => KnownHostId(k.Host, k.Port) == id);
         if (id == SettingsId)
             vault.Defaults = new HostOptions();
+        if (id == WorkspaceId)
+            vault.Workspace = new Workspace();
     }
 
     private static HostEntry WithoutLastConnected(HostEntry host)

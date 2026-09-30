@@ -387,6 +387,8 @@ public sealed class LocalVaultService : IVaultService, IVaultEditor, IDisposable
 
     public Task SaveDefaultsAsync(HostOptions defaults) => MutateAsync(VaultEdits.SaveDefaults(defaults));
 
+    public Task SaveWorkspaceAsync(Workspace workspace) => MutateAsync(VaultEdits.SaveWorkspace(workspace));
+
     public Task AddKnownHostAsync(KnownHost knownHost) => MutateAsync(VaultEdits.AddKnownHost(knownHost));
 
     Task IVaultEditor.EditAsync(Action<VaultData> edit) => MutateAsync(edit);
@@ -539,7 +541,7 @@ public sealed class LocalVaultService : IVaultService, IVaultEditor, IDisposable
         return data;
     }
 
-    /// <summary>Every entity of <paramref name="data"/> that is stored as an item (the defaults only when set).</summary>
+    /// <summary>Every entity of <paramref name="data"/> that is stored as an item (the defaults and the workspace only when set).</summary>
     internal static IEnumerable<object> Entities(VaultData data)
     {
         foreach (HostGroup group in data.Groups)
@@ -552,6 +554,8 @@ public sealed class LocalVaultService : IVaultService, IVaultEditor, IDisposable
             yield return known;
         if (!VaultMerge.IsUnset(data.Defaults))
             yield return data.Defaults;
+        if (!data.Workspace.IsEmpty)
+            yield return data.Workspace;
     }
 
     /// <summary>The vault key, or null for a wrong password (or a damaged wrapped key).</summary>

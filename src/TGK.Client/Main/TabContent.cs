@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Blossom.Core.Visual;
 using TGK.Client.Views;
+using TGK.Core.Models;
 using TGK.Core.Ssh;
 
 namespace TGK.Client.Main;
@@ -74,6 +75,12 @@ public abstract class TabContent : VisualElement
     /// Ctrl+Shift variants act as app shortcuts.
     /// </summary>
     public virtual bool WantsControlKeys => false;
+
+    /// <summary>
+    /// What "reopen my tabs" saves of this tab (<see cref="Workspace"/>); null when it can't be reopened and is left
+    /// out. Never includes secrets.
+    /// </summary>
+    public virtual WorkspaceTab? SaveState() => null;
 
     /// <summary>Called once after the tab was added to <see cref="Host"/> (services and dialogs are reachable from here on).</summary>
     public virtual void OnAttached() { }

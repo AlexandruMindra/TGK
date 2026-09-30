@@ -36,7 +36,9 @@ internal static class Program
         UiThread.Install();
         // Runs on the UI thread once the window exists (the post queue is drained by the main loop).
         Browser.Post(() => ConfigureWindow(dev.WindowSize));
-        Browser.Initialize(new TgkApplication(services)); // blocks until the window closes
+        var app = new TgkApplication(services);
+        Browser.Initialize(app); // blocks until the window closes
+        app.OnExit(TimeSpan.FromSeconds(3)); // saves the open tabs ("reopen my tabs") and pushes pending changes
         remote.Dispose(); // writes edits that were not saved or pushed yet
         local.Dispose();
     }

@@ -142,6 +142,52 @@ public sealed class PaneLayout<T> where T : class
         return new PaneLayout<T>(root) { Preset = preset };
     }
 
+    /// <summary>
+    /// A layout from a tree the caller built (<see cref="Leaf"/>s in <see cref="Split"/>s with their weights; parents
+    /// are set here). Splits with a single child are replaced by it; null when the tree has no panes.
+    /// </summary>
+    /// <exception cref="ArgumentException">An item appears twice, or a split's weights don't match its children.</exception>
+    public static PaneLayout<T>? FromTree(Node? root)
+    {
+        Node? normalized = Normalize(root);
+        if (normalized is null)
+            return null;
+        normalized.Parent = null;
+        var layout = new PaneLayout<T>(normalized);
+        IReadOnlyList<T> items = layout.Items;
+        if (items.Distinct().Count() != items.Count)
+            throw new ArgumentException("Every pane needs a different item.", nameof(root));
+        return layout;
+    }
+
+    private static Node? Normalize(Node? node)
+    {
+        if (node is null or Leaf)
+            return node;
+        var split = (Split)node;
+        if (split.Weights.Count != split.Children.Count || split.Weights.Any(w => !(w > 0) || float.IsInfinity(w)))
+            throw new ArgumentException("A split needs one positive weight per child.", nameof(node));
+        var children = new List<(Node Child, float Weight)>();
+        for (int i = 0; i < split.Children.Count; i++)
+        {
+            if (Normalize(split.Children[i]) is { } child)
+                children.Add((child, split.Weights[i]));
+        }
+        if (children.Count == 0)
+            return null;
+        if (children.Count == 1)
+            return children[0].Child;
+        split.Children.Clear();
+        split.Weights.Clear();
+        foreach ((Node child, float weight) in children)
+        {
+            child.Parent = split;
+            split.Children.Add(child);
+            split.Weights.Add(weight);
+        }
+        return split;
+    }
+
     private static Split Make(SplitOrientation orientation, params Node[] children)
     {
         var split = new Split(orientation);

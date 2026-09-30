@@ -69,6 +69,11 @@ public sealed class SessionTabContent : TabContent, IKeyInput
 
     public override VisualElement? DefaultFocus => _terminal;
 
+    // A saved host by id (it is re-read on reconnect anyway), an unsaved one by address. Passwords are never saved.
+    public override WorkspaceTab SaveState() => IsSaved
+        ? new WorkspaceTab { HostId = _host.Id }
+        : new WorkspaceTab { Host = _host.Host, Port = _host.Port, Username = string.IsNullOrWhiteSpace(_host.Username) ? null : _host.Username };
+
     public override bool WantsControlKeys => true;
 
     private bool IsSaved => Host.Services.Vault.Current.FindHost(_host.Id) is not null;

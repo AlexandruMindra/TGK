@@ -184,6 +184,12 @@ public interface IVaultService
     /// </summary>
     Task SaveDefaultsAsync(HostOptions defaults);
 
+    /// <summary>
+    /// Replaces the workspace: the "reopen my tabs" preference and the saved tabs and split views
+    /// (<see cref="VaultData.Workspace"/>). The vault stores a copy.
+    /// </summary>
+    Task SaveWorkspaceAsync(Workspace workspace);
+
     /// <summary>Trusts a host key, replacing any previous key for the same host and port.</summary>
     Task AddKnownHostAsync(KnownHost knownHost);
 

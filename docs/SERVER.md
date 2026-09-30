@@ -124,7 +124,8 @@ Update the client on every device before using per-host settings (jump hosts, tu
 defaults in Settings, and so on). Clients from before those settings ignore the connection defaults, and whenever
 they save a host or a group (even when a group is collapsed in the sidebar) they drop its settings and tunnels.
 Clients that have per-host settings keep the fields they don't know when they save, so settings added in later
-versions survive them.
+versions survive them. "Reopen my tabs" (Settings → Startup) is stored as an item of its own that older clients skip:
+they neither reopen nor change the saved tabs.
 
 ## Security notes
 
