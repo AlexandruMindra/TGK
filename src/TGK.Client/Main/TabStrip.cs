@@ -9,14 +9,15 @@ using TGK.Client.Views;
 namespace TGK.Client.Main;
 
 /// <summary>
-/// The top bar: sidebar toggle (+ brand while the sidebar is open), the tabs with a "+" button, the sync status chip
-/// and the account button. Tabs start where the content column starts so the active tab merges into it.
+/// The top bar: sidebar toggle (+ brand while the sidebar is open), the tabs with a "+" button, the split-view button,
+/// the sync status chip and the account button. Tabs start where the content column starts so the active tab merges into it.
 /// </summary>
 public sealed class TabStrip : Control
 {
     private const float ToggleSize = 28;
     private readonly IconButton _toggle;
     private readonly TabsArea _tabs;
+    private readonly IconButton _layout;
     private readonly SyncChip _sync;
     private readonly AvatarButton _avatar;
     private float _contentLeft;
@@ -26,10 +27,17 @@ public sealed class TabStrip : Control
         _toggle = new IconButton("sidebar", 18);
         _toggle.Clicked += main.ToggleSidebar;
         _tabs = new TabsArea(main);
+        _layout = new IconButton("layout-columns", 18);
+        _layout.Clicked += () =>
+        {
+            var r = _layout.Transform.Computed;
+            main.ShowLayoutMenu(r.X + r.Width - 260, r.Y, r.Height);
+        };
         _sync = new SyncChip(main);
         _avatar = new AvatarButton(main);
         AddChild(_toggle);
         AddChild(_tabs);
+        AddChild(_layout);
         AddChild(_sync);
         AddChild(_avatar);
     }
@@ -49,7 +57,11 @@ public sealed class TabStrip : Control
 
     public AvatarButton Avatar => _avatar;
 
-    public void SetTabs(IReadOnlyList<TabContent> tabs, int active) => _tabs.SetTabs(tabs, active);
+    public void SetTabs(IReadOnlyList<TabContent> tabs, int active)
+    {
+        _tabs.SetTabs(tabs, active);
+        _layout.Active = active >= 0 && active < tabs.Count && tabs[active].Split is not null;
+    }
 
     public void RefreshSync() => _sync.Refresh();
 
@@ -61,9 +73,11 @@ public sealed class TabStrip : Control
         float chipW = _sync.PreferredWidth;
         float chipX = W - 8 - 30 - 8 - chipW;
         _sync.Transform.SetLocalFrame(chipX, (H - 26) / 2f, chipW, 26);
+        float layoutX = chipX - 8 - ToggleSize;
+        _layout.Transform.SetLocalFrame(layoutX, y, ToggleSize, ToggleSize);
         float tabsX = Math.Max(_contentLeft, 8 + ToggleSize + 8);
-        _tabs.Transform.SetLocalFrame(tabsX, 0, Math.Max(0, chipX - 12 - tabsX), H);
-        _tabs.RevealActive(); // the strip may have become narrower
+        _tabs.Transform.SetLocalFrame(tabsX, 0, Math.Max(0, layoutX - 12 - tabsX), H);
+        _tabs.OnResized(); // the strip may have become narrower
     }
 
     protected override void Paint(SKCanvas c)
@@ -80,20 +94,38 @@ public sealed class TabStrip : Control
     }
 
     /// <summary>
-    /// The tabs themselves plus the "+" button, custom-drawn in one element. Tabs shrink down to a minimum width;
-    /// more tabs than fit scroll sideways (mouse wheel), always keeping the active tab in view. The "+" button has
-    /// room of its own at the end, so it never covers a tab.
+    /// The tabs themselves plus the "+" button, custom-drawn in one element. Tabs shrink down to a minimum width; when
+    /// more tabs are open than fit, the strip scrolls sideways: mouse wheel (vertical or horizontal), the ‹ › arrows at
+    /// its ends (hold to keep scrolling) and a list button with every tab. The active tab is scrolled into view when it
+    /// changes, never while the user is browsing the strip. The panes of a split view are marked with a bar over their
+    /// tabs. The "+" button has room of its own at the end, so it never covers a tab.
     /// </summary>
     private sealed class TabsArea : Control
     {
-        private const float TabTop = 6, MinTabW = 92, MaxTabW = 220, PlusSize = 28, PlusGap = 6, CloseSize = 18, FadeW = 28;
+        private const float TabTop = 6, MinTabW = 104, MaxTabW = 220, PlusSize = 28, PlusGap = 6, CloseSize = 18, FadeW = 28;
+        private const float ArrowW = 22;
+        private const int RepeatDelayMs = 350, RepeatIntervalMs = 90;
+
+        private enum Part
+        {
+            None,
+            Tab,
+            Close,
+            Plus,
+            Left,
+            Right,
+            List,
+        }
+
         private readonly MainView _main;
         private IReadOnlyList<TabContent> _items = [];
         private int _active;
+        private TabContent? _revealed; // the active tab last scrolled into view
+        private float _revealedWidth;
         private int _hoverTab = -1;
-        private bool _hoverClose, _hoverPlus;
+        private Part _hover, _pressed;
         private int _closePressed = -1, _middlePressed = -1;
-        private bool _plusPressed;
+        private long _nextRepeat = -1;
         private float _scroll;
         private (float X, float Y) _pointer = (-1, -1);
 
@@ -105,43 +137,75 @@ public sealed class TabStrip : Control
             Events.OnMouseDown += OnDown;
             Events.OnMouseUp += OnUp;
             Events.OnScroll += OnWheel;
+            UiClock.Tick += OnTick;
         }
 
         public void SetTabs(IReadOnlyList<TabContent> tabs, int active)
         {
+            int count = _items.Count;
             _items = tabs;
             _active = active;
             _hoverTab = Math.Min(_hoverTab, tabs.Count - 1);
-            RevealActive();
+            // Title and status changes also come through here: only a newly active tab (or a new or closed tab)
+            // scrolls, so the strip stays where the user scrolled it.
+            TabContent? current = active >= 0 && active < tabs.Count ? tabs[active] : null;
+            if (current != _revealed || tabs.Count != count)
+                RevealActive();
+            else
+                ClampScroll();
             InvalidatePaint();
         }
 
+        /// <summary>The strip was laid out: when its width changed, the active tab is brought back into view.</summary>
+        public void OnResized()
+        {
+            if (Math.Abs(W - _revealedWidth) >= 0.5f)
+                RevealActive();
+        }
+
         /// <summary>Scrolls the strip so the active tab is fully visible.</summary>
-        public void RevealActive()
+        private void RevealActive()
         {
             float scroll = Scroll;
-            if (_active >= 0 && _active < _items.Count)
+            _revealed = _active >= 0 && _active < _items.Count ? _items[_active] : null;
+            _revealedWidth = W;
+            if (_revealed is not null)
             {
                 float left = _active * TabWidth, right = left + TabWidth;
                 if (left < scroll)
                     scroll = left;
-                else if (right > scroll + TabsWidth)
-                    scroll = right - TabsWidth;
+                else if (right > scroll + ViewWidth)
+                    scroll = right - ViewWidth;
             }
-            if (SetAndPaint(ref _scroll, scroll))
+            ScrollTo(scroll);
+        }
+
+        private void ClampScroll() => ScrollTo(_scroll);
+
+        private void ScrollTo(float scroll)
+        {
+            if (SetAndPaint(ref _scroll, Math.Clamp(scroll, 0, MaxScroll)))
                 UpdateHover(_pointer.X, _pointer.Y);
         }
 
-        // Width available to the tabs: everything but the "+" button and its margins.
-        private float TabsWidth => Math.Max(0, W - PlusSize - 2 * PlusGap);
+        // Room left for the tabs by the "+" button (and, while scrolling, the arrows and the list button).
+        private float Room => Math.Max(0, W - PlusSize - 2 * PlusGap);
 
-        private float TabWidth => _items.Count == 0 ? 0 : Math.Clamp(TabsWidth / _items.Count, MinTabW, MaxTabW);
+        private bool Overflow => _items.Count * MinTabW > Room + 0.5f;
 
-        private float MaxScroll => Math.Max(0, _items.Count * TabWidth - TabsWidth);
+        private float ViewLeft => Overflow ? ArrowW : 0;
+
+        private float ViewRight => Math.Max(ViewLeft, Overflow ? Room - 2 * ArrowW : Room);
+
+        private float ViewWidth => ViewRight - ViewLeft;
+
+        private float TabWidth => _items.Count == 0 ? 0 : Math.Clamp(ViewWidth / _items.Count, MinTabW, MaxTabW);
+
+        private float MaxScroll => Math.Max(0, _items.Count * TabWidth - ViewWidth);
 
         private float Scroll => Math.Clamp(_scroll, 0, MaxScroll);
 
-        private SKRect TabRect(int i) => new(i * TabWidth - Scroll, TabTop, (i + 1) * TabWidth - Scroll, H);
+        private SKRect TabRect(int i) => new(ViewLeft + i * TabWidth - Scroll, TabTop, ViewLeft + (i + 1) * TabWidth - Scroll, H);
 
         private SKRect CloseRect(int i)
         {
@@ -150,42 +214,84 @@ public sealed class TabStrip : Control
             return new SKRect(r.Right - 10 - CloseSize, cy - CloseSize / 2f, r.Right - 10, cy + CloseSize / 2f);
         }
 
-        private SKRect PlusRect
+        private SKRect ButtonRect(float x, float w)
         {
-            get
-            {
-                float x = Math.Min(_items.Count * TabWidth - Scroll, TabsWidth) + PlusGap;
-                float cy = (TabTop + H) / 2f;
-                return new SKRect(x, cy - PlusSize / 2f, x + PlusSize, cy + PlusSize / 2f);
-            }
+            float cy = (TabTop + H) / 2f;
+            return new SKRect(x, cy - PlusSize / 2f, x + w, cy + PlusSize / 2f);
         }
+
+        private SKRect LeftRect => ButtonRect(0, ArrowW);
+
+        private SKRect RightRect => ButtonRect(ViewRight, ArrowW);
+
+        private SKRect ListRect => ButtonRect(ViewRight + ArrowW, ArrowW);
+
+        private SKRect PlusRect => ButtonRect(Overflow ? ViewRight + 2 * ArrowW + PlusGap
+            : ViewLeft + Math.Min(_items.Count * TabWidth - Scroll, ViewWidth) + PlusGap, PlusSize);
 
         private int TabAt(float x, float y)
         {
-            if (y < TabTop || TabWidth <= 0 || x < 0 || x >= TabsWidth)
+            if (y < TabTop || TabWidth <= 0 || x < ViewLeft || x >= ViewRight)
                 return -1;
-            int i = (int)((x + Scroll) / TabWidth);
+            int i = (int)((x - ViewLeft + Scroll) / TabWidth);
             return i < _items.Count ? i : -1;
+        }
+
+        private Part PartAt(float x, float y, out int tab)
+        {
+            tab = TabAt(x, y);
+            if (tab >= 0)
+                return CloseRect(tab).Contains(x, y) ? Part.Close : Part.Tab; // a hovered tab always shows its close button
+            if (PlusRect.Contains(x, y))
+                return Part.Plus;
+            if (!Overflow)
+                return Part.None;
+            return LeftRect.Contains(x, y) ? Part.Left : RightRect.Contains(x, y) ? Part.Right : ListRect.Contains(x, y) ? Part.List : Part.None;
         }
 
         private void OnWheel(object? sender, MouseScrollEventArgs e)
         {
             e.Handled = true;
-            if (SetAndPaint(ref _scroll, Math.Clamp(Scroll - e.Offset.Y * TabWidth / 2f, 0, MaxScroll)))
-                UpdateHover(_pointer.X, _pointer.Y);
+            // A wheel scrolls vertically; touchpads and tilt wheels also scroll horizontally (positive X = towards the left).
+            float delta = e.Offset.Y + e.Offset.X;
+            ScrollTo(Scroll - delta * TabWidth / 2f);
+        }
+
+        // One arrow step: the next tab that is cut off (or hidden) on that side comes fully into view.
+        private void Step(int direction)
+        {
+            float w = TabWidth;
+            if (w <= 0)
+                return;
+            float scroll = Scroll;
+            if (direction < 0)
+                ScrollTo((MathF.Ceiling(scroll / w - 0.01f) - 1) * w);
+            else
+                ScrollTo((MathF.Floor((scroll + ViewWidth) / w + 0.01f) + 1) * w - ViewWidth);
+        }
+
+        private void OnTick()
+        {
+            if (IsDisposed)
+            {
+                UiClock.Tick -= OnTick;
+                return;
+            }
+            if (_nextRepeat < 0 || UiClock.NowMs < _nextRepeat)
+                return;
+            if (_pressed is Part.Left or Part.Right && _hover == _pressed)
+                Step(_pressed == Part.Left ? -1 : 1);
+            _nextRepeat = _pressed is Part.Left or Part.Right ? UiClock.NowMs + RepeatIntervalMs : -1;
         }
 
         private void UpdateHover(float x, float y)
         {
             _pointer = (x, y);
-            int tab = TabAt(x, y);
-            bool close = tab >= 0 && CloseRect(tab).Contains(x, y); // a hovered tab always shows its close button
-            bool plus = PlusRect.Contains(x, y);
-            if (tab == _hoverTab && close == _hoverClose && plus == _hoverPlus)
+            Part part = PartAt(x, y, out int tab);
+            if (tab == _hoverTab && part == _hover)
                 return;
             _hoverTab = tab;
-            _hoverClose = close;
-            _hoverPlus = plus;
+            _hover = part;
             InvalidatePaint();
         }
 
@@ -194,7 +300,7 @@ public sealed class TabStrip : Control
             if (IsHovered)
                 return;
             _hoverTab = -1;
-            _hoverClose = _hoverPlus = false;
+            _hover = Part.None;
             _pointer = (-1, -1);
         }
 
@@ -203,27 +309,46 @@ public sealed class TabStrip : Control
             e.Handled = true;
             float x = e.Relative.X, y = e.Relative.Y;
             UpdateHover(x, y);
-            int tab = TabAt(x, y);
-            if (e.Button == 2)
+            Part part = PartAt(x, y, out int tab);
+            switch (e.Button)
             {
-                _middlePressed = tab;
-                return;
+                case 2:
+                    _middlePressed = tab;
+                    return;
+                case 1:
+                    if (tab >= 0)
+                        _main.ShowTabMenu(_items[tab], e.Global.X, e.Global.Y);
+                    return;
+                case not 0:
+                    return;
             }
-            if (e.Button != 0)
-                return;
-            if (_hoverPlus)
-                _plusPressed = true;
-            else if (tab >= 0 && _hoverClose)
-                _closePressed = tab;
-            else if (tab >= 0)
-                _main.ActivateTab(tab);
+            _pressed = part;
+            switch (part)
+            {
+                case Part.Close:
+                    _closePressed = tab;
+                    break;
+                case Part.Tab:
+                    _main.ActivateTab(tab);
+                    break;
+                case Part.Left or Part.Right:
+                    Step(part == Part.Left ? -1 : 1);
+                    _nextRepeat = UiClock.NowMs + RepeatDelayMs;
+                    break;
+                case Part.List:
+                    var r = Transform.Computed;
+                    SKRect list = ListRect;
+                    _main.ShowTabList(r.X + list.Right - 300, r.Y + list.Top, list.Height);
+                    break;
+            }
+            InvalidatePaint();
         }
 
         private void OnUp(object? sender, MouseEventArgs e)
         {
             e.Handled = true;
             float x = e.Relative.X, y = e.Relative.Y;
-            int tab = TabAt(x, y);
+            Part part = PartAt(x, y, out int tab);
             if (e.Button == 2)
             {
                 if (tab >= 0 && tab == _middlePressed)
@@ -231,25 +356,29 @@ public sealed class TabStrip : Control
                 _middlePressed = -1;
                 return;
             }
-            if (_plusPressed && PlusRect.Contains(x, y))
+            if (_pressed == Part.Plus && part == Part.Plus)
                 _main.NewTab();
-            else if (_closePressed >= 0 && _closePressed == tab && CloseRect(tab).Contains(x, y))
+            else if (_closePressed >= 0 && _closePressed == tab && part == Part.Close)
                 _main.CloseTab(tab);
-            _plusPressed = false;
+            _pressed = Part.None;
             _closePressed = -1;
+            _nextRepeat = -1;
+            InvalidatePaint();
         }
 
         protected override void Paint(SKCanvas c)
         {
             float scroll = Scroll;
+            PaneLayout<TabContent>? shownSplit = _active >= 0 && _active < _items.Count ? _items[_active].Split : null;
             c.Save();
-            c.ClipRect(new SKRect(0, 0, TabsWidth, H));
-            int first = (int)(scroll / Math.Max(1, TabWidth));
+            c.ClipRect(new SKRect(ViewLeft, 0, ViewRight, H));
+            int first = Math.Max(0, (int)(scroll / Math.Max(1, TabWidth)));
             for (int i = first; i < _items.Count; i++)
             {
                 SKRect r = TabRect(i);
-                if (r.Left >= TabsWidth)
+                if (r.Left >= ViewRight)
                     break;
+                TabContent tab = _items[i];
                 bool active = i == _active, hover = i == _hoverTab;
                 if (active)
                 {
@@ -268,12 +397,24 @@ public sealed class TabStrip : Control
                 {
                     Gfx.FillTopRound(c, new SKRect(r.Left + 2, r.Top + 2, r.Right - 2, r.Bottom - 4), 6, Theme.SurfaceRaised);
                 }
-                else if (i + 1 < _items.Count && i + 1 != _active && i + 1 != _hoverTab)
+                else if (tab.IsShown)
+                {
+                    // Another pane of the split view on screen.
+                    Gfx.FillTopRound(c, new SKRect(r.Left + 2, r.Top + 2, r.Right - 2, r.Bottom - 4), 6, Theme.SurfaceRaised.WithAlpha(150));
+                }
+                else if (i + 1 < _items.Count && i + 1 != _active && i + 1 != _hoverTab && !_items[i + 1].IsShown)
                 {
                     Gfx.Line(c, r.Right - 0.5f, r.Top + 9, r.Right - 0.5f, r.Bottom - 9, Theme.Border);
                 }
 
-                TabContent tab = _items[i];
+                // The panes of a split view share a bar over their tabs (accent while that split view is on screen).
+                if (tab.Split is { } split)
+                {
+                    bool firstPane = i == 0 || _items[i - 1].Split != split, lastPane = i + 1 >= _items.Count || _items[i + 1].Split != split;
+                    var bar = new SKRect(r.Left + (firstPane ? 8 : 0), 1.5f, r.Right - (lastPane ? 8 : 0), 4);
+                    Gfx.FillRound(c, bar, 1.25f, split == shownSplit ? Theme.Accent : Theme.TextDisabled);
+                }
+
                 float cy = (r.Top + r.Bottom) / 2f;
                 float x = r.Left + 14;
                 if (tab.Status != TabStatus.None)
@@ -283,28 +424,51 @@ public sealed class TabStrip : Control
                 }
                 bool showClose = active || hover;
                 float textMax = r.Right - x - (showClose ? CloseSize + 16 : 12);
-                SKColor titleColor = active ? Theme.TextPrimary : tab.NeedsAttention ? Theme.Warning : hover ? Theme.TextSecondary : Theme.TextMuted;
+                SKColor titleColor = active ? Theme.TextPrimary : tab.NeedsAttention ? Theme.Warning : hover || tab.IsShown ? Theme.TextSecondary : Theme.TextMuted;
                 Gfx.Text(c, tab.Title, x, cy, Theme.FontBase, Theme.WeightRegular, titleColor, TextAlignment.Left, textMax);
                 if (showClose)
                 {
                     SKRect cr = CloseRect(i);
-                    if (hover && _hoverClose)
+                    bool closeHover = hover && _hover == Part.Close;
+                    if (closeHover)
                         Gfx.FillRound(c, cr, Theme.RadiusSm, Theme.SurfacePressed);
-                    Icons.Draw(c, "x", cr.MidX, cr.MidY, 13, hover && _hoverClose ? Theme.TextPrimary : Theme.TextMuted);
+                    Icons.Draw(c, "x", cr.MidX, cr.MidY, 13, closeHover ? Theme.TextPrimary : Theme.TextMuted);
                 }
             }
 
             // Fade the edges where more tabs are scrolled out of view.
             if (scroll > 0.5f)
-                EdgeFade(c, 0, FadeW);
+                EdgeFade(c, ViewLeft, ViewLeft + FadeW);
             if (scroll < MaxScroll - 0.5f)
-                EdgeFade(c, TabsWidth, TabsWidth - FadeW);
+                EdgeFade(c, ViewRight, ViewRight - FadeW);
             c.Restore();
 
-            SKRect plus = PlusRect;
-            if (_hoverPlus)
-                Gfx.FillRound(c, plus, Theme.Radius, Theme.SurfaceHover);
-            Icons.Draw(c, "plus", plus.MidX, plus.MidY, 16, _hoverPlus ? Theme.TextPrimary : Theme.TextSecondary);
+            if (Overflow)
+            {
+                DrawButton(c, LeftRect, "chevron-left", Part.Left, enabled: scroll > 0.5f, 15);
+                DrawButton(c, RightRect, "chevron-right", Part.Right, enabled: scroll < MaxScroll - 0.5f, 15);
+                DrawButton(c, ListRect, "chevron-down", Part.List, enabled: true, 15);
+                // A background tab that wants attention while scrolled out of view tints the arrow on its side.
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    if (!_items[i].NeedsAttention)
+                        continue;
+                    SKRect r = TabRect(i);
+                    if (r.Right <= ViewLeft + 1)
+                        Gfx.Circle(c, LeftRect.Right - 4, LeftRect.Top + 6, 2.5f, Theme.Warning);
+                    else if (r.Left >= ViewRight - 1)
+                        Gfx.Circle(c, RightRect.Right - 4, RightRect.Top + 6, 2.5f, Theme.Warning);
+                }
+            }
+            DrawButton(c, PlusRect, "plus", Part.Plus, enabled: true, 16);
+        }
+
+        private void DrawButton(SKCanvas c, SKRect r, string icon, Part part, bool enabled, float size)
+        {
+            bool hover = enabled && _hover == part;
+            if (hover)
+                Gfx.FillRound(c, r, Theme.Radius, _pressed == part ? Theme.SurfacePressed : Theme.SurfaceHover);
+            Icons.Draw(c, icon, r.MidX, r.MidY, size, !enabled ? Theme.TextDisabled : hover ? Theme.TextPrimary : Theme.TextSecondary);
         }
 
         // A band from the strip's background color at x = edge to transparent at x = inner.

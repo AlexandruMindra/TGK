@@ -19,7 +19,8 @@ public enum TabStatus
 
 /// <summary>
 /// What a tab shows: the new-tab page (<see cref="HomeTabContent"/>) or a session. <see cref="MainView"/> sizes it to
-/// the content area and toggles <c>Visible</c> as tabs switch. All members are UI-thread only; raise
+/// the content area (or to its pane, when the tab is part of a split view) and toggles <c>Visible</c> as tabs switch.
+/// All members are UI-thread only; raise
 /// <see cref="Changed"/> (via the <c>Set*</c> helpers) after a background event has been marshalled with
 /// <c>UiThread.Post</c>.
 /// </summary>
@@ -41,6 +42,12 @@ public abstract class TabContent : VisualElement
     /// <summary>The main view hosting this tab; set before <see cref="OnAttached"/> runs.</summary>
     public MainView Host { get; internal set; } = null!;
 
+    /// <summary>The split view this tab is a pane of (shared by all its panes), or null for a tab of its own.</summary>
+    public PaneLayout<TabContent>? Split { get; internal set; }
+
+    /// <summary>On screen: the active tab, or another pane of the active tab's split view.</summary>
+    public bool IsShown => Visible;
+
     public string Title => _title;
     public TabStatus Status => _status;
 
@@ -53,7 +60,7 @@ public abstract class TabContent : VisualElement
     /// <summary>The live session's tunnels and how they are doing (the status bar's tunnel chip); empty when there are none.</summary>
     public IReadOnlyList<TunnelStatus> Tunnels => _tunnels;
 
-    /// <summary>Something happened in this background tab (e.g. a terminal bell); cleared when it is activated.</summary>
+    /// <summary>Something happened in this background tab (e.g. a terminal bell); cleared when it is shown.</summary>
     public bool NeedsAttention => _needsAttention;
 
     /// <summary>Raised on the UI thread when the title, status, attention flag, tunnels or status-bar texts change.</summary>
@@ -71,10 +78,13 @@ public abstract class TabContent : VisualElement
     /// <summary>Called once after the tab was added to <see cref="Host"/> (services and dialogs are reachable from here on).</summary>
     public virtual void OnAttached() { }
 
-    /// <summary>The tab became the active one (it is already visible and laid out).</summary>
+    /// <summary>The tab came on screen, as the active tab or as a pane of a split view (it is already laid out).</summary>
+    public virtual void OnShown() { }
+
+    /// <summary>The tab became the active one: it has the keyboard and drives the status bar (it is already shown).</summary>
     public virtual void OnActivated() { }
 
-    /// <summary>Another tab became active; this one is now hidden.</summary>
+    /// <summary>Another tab became active; this one may still be shown as a pane of the same split view.</summary>
     public virtual void OnDeactivated() { }
 
     /// <summary>The tab is being closed or replaced: release sessions and timers. The element is disposed afterwards.</summary>
@@ -97,10 +107,10 @@ public abstract class TabContent : VisualElement
         Changed?.Invoke(this);
     }
 
-    /// <summary>Flags the tab in the tab strip unless it is the active one.</summary>
+    /// <summary>Flags the tab in the tab strip unless it is on screen.</summary>
     protected void RequestAttention()
     {
-        if (_needsAttention || Host.ActiveTab == this)
+        if (_needsAttention || IsShown)
             return;
         _needsAttention = true;
         Changed?.Invoke(this);

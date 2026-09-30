@@ -118,9 +118,11 @@ public sealed class HomeTabContent : TabContent
         float w = Transform.Computed.Width, h = Transform.Computed.Height;
         _scroll.Transform.SetLocalFrame(0, 0, w, h);
 
-        float colW = Math.Min(MaxColumnW, w - 2 * SidePad);
+        // Narrow when it is a pane of a split view: smaller margins so the field keeps a usable width.
+        float sidePad = w < 560 ? 16 : SidePad;
+        float colW = Math.Max(0, Math.Min(MaxColumnW, w - 2 * sidePad));
         float x = MathF.Round((w - colW) / 2f);
-        float y = Math.Clamp(h * 0.08f, 28, 72);
+        float y = Math.Clamp(h * 0.08f, 20, 72);
         _heading.Transform.SetLocalFrame(x, y, colW, 30);
         y += 32;
         _subheading.Transform.SetLocalFrame(x, y, colW, 20);

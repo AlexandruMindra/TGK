@@ -92,7 +92,7 @@ public sealed class SessionTabContent : TabContent, IKeyInput
         SetStatus(TabStatus.Closed, $"{_address} · Not connected");
     }
 
-    public override void OnActivated()
+    public override void OnShown()
     {
         if (_started)
             return;
@@ -591,12 +591,16 @@ public sealed class SessionTabContent : TabContent, IKeyInput
             Host.ShowToast($"{failed.Count} tunnels failed to start. Click the tunnel chip in the status bar for details.", ToastKind.Error);
     }
 
-    // Tab actions in the terminal's context menu; they also show the terminal-safe shortcuts.
+    // Tab and split-view actions in the terminal's context menu; they also show the terminal-safe shortcuts.
     private IEnumerable<MenuItem> TabMenuItems()
     {
         if (_terminal.InputEnabled)
             yield return new MenuItem { Text = "Disconnect", Icon = "logout", Action = () => _session?.Disconnect() };
         yield return new MenuItem { Text = "New tab", Icon = "plus", Hint = "Ctrl+Shift+T", Action = Host.NewTab };
+        yield return MenuItem.Separator;
+        foreach (MenuItem item in Host.PaneMenuItems(this))
+            yield return item;
+        yield return MenuItem.Separator;
         yield return new MenuItem { Text = "Close tab", Icon = "x", Hint = "Ctrl+Shift+W", Action = () => Host.CloseTab(this) };
     }
 

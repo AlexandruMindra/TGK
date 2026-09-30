@@ -8,4 +8,5 @@
   <Project Path="tests/TGK.Core.Tests/TGK.Core.Tests.csproj" />
   <Project Path="tests/TGK.Protocol.Tests/TGK.Protocol.Tests.csproj" />
   <Project Path="tests/TGK.Server.Tests/TGK.Server.Tests.csproj" />
+  <Project Path="tests/TGK.Client.Tests/TGK.Client.Tests.csproj" />
 </Solution>

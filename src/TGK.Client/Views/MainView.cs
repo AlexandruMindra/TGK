@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using Blossom;
+using Blossom.Core;
 using Blossom.Core.Visual;
 using Silk.NET.Input;
 using SkiaSharp;
@@ -18,10 +19,10 @@ using TGK.Core.Ssh;
 namespace TGK.Client.Views;
 
 /// <summary>
-/// The signed-in window: tab strip, host sidebar, the active tab's content and a status bar.
-/// Owns the tab list; session tabs come from <see cref="TgkApplication.SessionTabFactory"/>.
+/// The signed-in window: tab strip, host sidebar, the active tab's content (or its split view, see MainView.Split.cs)
+/// and a status bar. Owns the tab list; session tabs come from <see cref="TgkApplication.SessionTabFactory"/>.
 /// </summary>
-public sealed class MainView : TgkView
+public sealed partial class MainView : TgkView
 {
     private readonly List<TabContent> _tabs = [];
     private readonly List<IDisposable> _shortcuts = [];
@@ -57,7 +58,7 @@ public sealed class MainView : TgkView
         _root = new MainRoot(this);
         _strip = new TabStrip(this);
         _sidebar = new Sidebar(this);
-        _content = new ContentHost();
+        _content = new ContentHost(this);
         _status = new StatusBar();
         _status.TunnelsClicked += ShowTunnelMenu;
         _root.AddChild(_content);
@@ -69,6 +70,8 @@ public sealed class MainView : TgkView
         _sidebarVisible = !Services.Prefs.SidebarCollapsed;
         Services.Vault.Changed += OnVaultChanged;
         RegisterShortcuts();
+        Events.OnMouseDown += OnViewMouseDown;
+        UiClock.Tick += OnUiTick;
         _sidebar.Refresh();
         NewTab();
     }
@@ -111,10 +114,10 @@ public sealed class MainView : TgkView
         home.FocusQuickConnect();
     }
 
-    /// <summary>Adds <paramref name="tab"/> after the active tab (or at the end) and, by default, activates it.</summary>
+    /// <summary>Adds <paramref name="tab"/> after the active tab or its split view (or at the end) and, by default, activates it.</summary>
     public void OpenTab(TabContent tab, bool activate = true)
     {
-        int index = _active < 0 ? _tabs.Count : _active + 1;
+        int index = _active < 0 ? _tabs.Count : Block(_active).Last + 1;
         Attach(tab, index);
         if (activate)
             ActivateTab(index);
@@ -135,17 +138,18 @@ public sealed class MainView : TgkView
             return;
         }
         TabContent? previous = ActiveTab;
-        if (previous is not null)
-        {
-            previous.Visible = false;
-            previous.OnDeactivated();
-        }
-        _active = index;
         TabContent tab = _tabs[index];
+        // Moving to another pane of a split view with a maximized pane shows the whole split view again.
+        if (tab.Split is { Zoomed: { } zoomed } layout && zoomed != tab)
+            layout.Zoomed = null;
+        _active = index;
+        previous?.OnDeactivated();
+        UpdatePanes();
         tab.ClearAttention();
-        tab.Visible = true;
-        _content.ForceLayoutSubtree();
-        SetActiveKeyboardElement(tab.DefaultFocus is { } focus && focus.EffectiveVisible ? focus : null);
+        // A click in a pane has already focused what it hit there (or opened a menu, which has the keyboard until it
+        // closes); otherwise the tab's default focus takes the keyboard.
+        if (!Menu.IsOpen && (ActiveKeyboardElement is not { } focused || !tab.ContainsElement(focused)))
+            SetActiveKeyboardElement(tab.DefaultFocus is { } focus && focus.EffectiveVisible ? focus : null);
         tab.OnActivated();
         SyncChrome();
     }
@@ -158,22 +162,27 @@ public sealed class MainView : TgkView
             return;
         TabContent tab = _tabs[index];
         bool wasActive = index == _active;
+        List<TabContent> otherPanes = tab.Split?.Items.Where(t => t != tab).ToList() ?? [];
         Detach(tab);
         if (_tabs.Count == 0)
         {
-            _active = -1;
             NewTab(); // like a browser window that stays open: always keep one tab
             return;
         }
         if (wasActive)
         {
-            _active = -1;
-            ActivateTab(Math.Min(index, _tabs.Count - 1));
+            // A closed pane hands over to the pane after it in the strip (else the one before), so the split view stays.
+            int next = Math.Min(index, _tabs.Count - 1);
+            if (otherPanes.Count > 0)
+            {
+                List<int> panes = otherPanes.Select(t => _tabs.IndexOf(t)).Where(i => i >= 0).ToList();
+                next = panes.Where(i => i >= index).DefaultIfEmpty(panes.Max()).Min();
+            }
+            ActivateTab(next);
         }
         else
         {
-            if (index < _active)
-                _active--;
+            UpdatePanes(); // it may have been a pane on screen
             SyncChrome();
         }
     }
@@ -190,17 +199,22 @@ public sealed class MainView : TgkView
             return;
         }
         bool wasActive = index == _active;
+        PaneLayout<TabContent>? layout = old.Split;
+        if (layout is not null)
+        {
+            layout.Replace(old, replacement); // the replacement takes over the pane
+            old.Split = null;
+        }
         Detach(old);
         Attach(replacement, index);
+        replacement.Split = layout;
         if (wasActive || _active < 0)
         {
-            _active = -1;
             ActivateTab(index);
         }
         else
         {
-            if (index <= _active)
-                _active++;
+            UpdatePanes(); // a pane on screen shows (and starts) its replacement
             SyncChrome();
         }
     }
@@ -226,11 +240,14 @@ public sealed class MainView : TgkView
         tab.Visible = false;
         tab.Changed += OnTabChanged;
         _tabs.Insert(index, tab);
+        if (_active >= index)
+            _active++;
         _content.AddChild(tab);
         _content.InvalidateLayout();
         tab.OnAttached();
     }
 
+    /// <summary>Removes <paramref name="tab"/> (and its pane); <c>_active</c> keeps pointing at the active tab, or is -1 when that was this one.</summary>
     private void Detach(TabContent tab)
     {
         int index = _tabs.IndexOf(tab);
@@ -238,7 +255,12 @@ public sealed class MainView : TgkView
             tab.OnDeactivated();
         tab.OnClosing();
         tab.Changed -= OnTabChanged;
+        LeaveSplit(tab);
         _tabs.RemoveAt(index);
+        if (index == _active)
+            _active = -1;
+        else if (index < _active)
+            _active--;
         if (ActiveKeyboardElement is { } focused && tab.ContainsElement(focused))
             SetActiveKeyboardElement(null);
         tab.Visible = false;
@@ -269,6 +291,11 @@ public sealed class MainView : TgkView
     {
         _strip.SetTabs(_tabs, _active);
         _strip.RefreshSync();
+        foreach (PaneHeader header in _paneHeaders)
+        {
+            if (header.Visible)
+                header.InvalidatePaint();
+        }
         TabContent? tab = ActiveTab;
         string sync = HostFormat.Sync(Services.Vault, DateTimeOffset.UtcNow);
         _status.Set(tab?.StatusText ?? (tab is HomeTabContent ? $"{Services.Vault.Current.Hosts.Count} saved hosts" : ""),
@@ -555,6 +582,7 @@ public sealed class MainView : TgkView
             return;
         _torndown = true;
         Services.Vault.Changed -= OnVaultChanged;
+        UiClock.Tick -= OnUiTick;
         foreach (IDisposable shortcut in _shortcuts)
             shortcut.Dispose();
         _shortcuts.Clear();
@@ -589,6 +617,13 @@ public sealed class MainView : TgkView
         Add(ctrl, Key.PageDown, () => CycleTab(1), repeats: true);
         Add(ctrl, Key.PageUp, () => CycleTab(-1), repeats: true);
         Add(ctrl, Key.Comma, ShowSettings);
+        // Split view (Terminator's keys): split right / down, maximize the pane, Alt+arrows move between panes.
+        bool SplitReady() => Ready() && ActiveTab?.Split is not null;
+        Add(ctrlShift, Key.E, () => SplitPane(SplitOrientation.Horizontal));
+        Add(ctrlShift, Key.O, () => SplitPane(SplitOrientation.Vertical));
+        Add(ctrlShift, Key.X, () => ToggleZoom(), SplitReady);
+        foreach ((Key key, PaneDirection direction) in new[] { (Key.Left, PaneDirection.Left), (Key.Right, PaneDirection.Right), (Key.Up, PaneDirection.Up), (Key.Down, PaneDirection.Down) })
+            Add(KeyModifiers.Alt, key, () => FocusPane(direction), () => SplitReady() && ActiveTab?.Split?.Zoomed is null);
         Key[] digits = [Key.Number1, Key.Number2, Key.Number3, Key.Number4, Key.Number5, Key.Number6, Key.Number7, Key.Number8, Key.Number9];
         for (int i = 0; i < digits.Length; i++)
         {
@@ -616,6 +651,21 @@ public sealed class MainView : TgkView
                     if (vault.Hosts.Find(h => h.Name == name) is { } host)
                         OpenTab(App.SessionTabFactory(host), activate: false);
                 }
+                break;
+            case "split":
+                // The new-tab page and two sessions: one large pane on the left, two stacked on the right.
+                foreach (string name in new[] { "staging-web", "web-01" })
+                {
+                    if (vault.Hosts.Find(h => h.Name == name) is { } host)
+                        OpenTab(App.SessionTabFactory(host), activate: false);
+                }
+                ApplyLayout(LayoutPreset.MainLeft);
+                break;
+            case "tabs-overflow":
+                // More tabs than fit in the strip.
+                for (int i = 0; i < 16 && vault.Hosts.Count > 0; i++)
+                    OpenTab(App.SessionTabFactory(vault.Hosts[i % vault.Hosts.Count]), activate: false);
+                ActivateTab(_tabs.Count - 1);
                 break;
             case "host-editor" when web is not null:
                 EditHost(web);
@@ -702,16 +752,36 @@ public sealed class MainView : TgkView
         protected override void LayoutChildren() => view.Layout(Transform.Computed.Width, Transform.Computed.Height);
     }
 
-    /// <summary>Holds every tab's content; each fills the area and only the active one is visible.</summary>
+    /// <summary>
+    /// Holds every tab's content (only the active tab, or its split view, is visible) and the panes' title bars and
+    /// dividers; draws the ring around the focused pane.
+    /// </summary>
     private sealed class ContentHost : VisualElement
     {
-        public ContentHost() => Style = new ElementStyle { BackColor = Theme.Surface };
+        private readonly MainView _view;
+        private SKRect? _focus;
 
-        protected override void LayoutChildren()
+        public ContentHost(MainView view)
         {
-            float w = Transform.Computed.Width, h = Transform.Computed.Height;
-            foreach (VisualElement child in Children)
-                child.Transform.SetLocalFrame(0, 0, w, h);
+            _view = view;
+            Style = new ElementStyle { BackColor = Theme.Surface };
         }
+
+        /// <summary>The focused pane of the split view on screen (title bar included), or null.</summary>
+        public void SetFocusRect(SKRect? rect)
+        {
+            if (rect == _focus)
+                return;
+            _focus = rect;
+            InvalidatePaint();
+        }
+
+        protected override void LayoutChildren() => _view.LayoutContent(Transform.Computed.Width, Transform.Computed.Height);
+
+        protected override void OnAfterStyleDraw(List<DrawCommand> cmds) => cmds.Add(new DrawCallbackCommand(c =>
+        {
+            if (_focus is { } focus)
+                Gfx.StrokeRound(c, SKRect.Inflate(focus, 1.5f, 1.5f), 3, Theme.Accent.WithAlpha(170));
+        }));
     }
 }

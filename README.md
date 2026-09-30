@@ -10,6 +10,10 @@ entirely on one machine.
 
 **Sessions**
 - Tabs like a browser: every tab is an SSH terminal; a new tab offers quick connect (`user@host:port`) and your saved hosts.
+  Any number of tabs: the tab strip scrolls (mouse wheel, touchpad, the ‹ › arrows) and lists them all.
+- Split view: show several sessions at once — 2 or 3 side by side, stacked, 1 large + 2, grids of 4 or 6 (the layout
+  button in the tab strip), or split any pane right / down (`Ctrl+Shift+E` / `Ctrl+Shift+O`). Drag the dividers to
+  resize, `Alt+arrows` to move between panes, `Ctrl+Shift+X` to maximize one; each pane stays a tab of its own.
 - Built-in xterm-compatible terminal: 256 colors and truecolor, alternate screen (vim, htop, mc, tmux), scrollback,
   mouse reporting, bracketed paste, wide characters, selection with copy/paste.
 - Auth with private keys (OpenSSH/PEM, with passphrase), password or keyboard-interactive; host key verification
