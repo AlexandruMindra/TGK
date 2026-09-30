@@ -135,6 +135,42 @@ public sealed class TgkApplication : Application
         }
     }
 
+    /// <summary>A downloaded, unpacked update (<see cref="UpdateInstaller.DownloadAsync"/>) to install when the window closes.</summary>
+    internal string? PendingUpdate { get; set; }
+
+    /// <summary>TGK starts again once the window has closed and the pending update is installed.</summary>
+    internal bool RelaunchRequested { get; private set; }
+
+    /// <summary>"Restart now": closes the window like the user would; <see cref="InstallPendingUpdate"/> then does the rest.</summary>
+    internal void RestartForUpdate()
+    {
+        RelaunchRequested = true;
+        AppWindow.Window?.Close();
+    }
+
+    /// <summary>
+    /// After <see cref="OnExit"/>: swaps the pending update in. A failure leaves the old version in place (the swap is
+    /// undone) and is recorded for a toast at the next start.
+    /// </summary>
+    internal void InstallPendingUpdate()
+    {
+        if (PendingUpdate is not { } staged)
+            return;
+        using UpdateInstaller installer = SelfUpdate.CreateInstaller();
+        try
+        {
+            installer.Apply(staged);
+            Log.Info("Update installed.");
+        }
+        catch (UpdateException ex)
+        {
+            Log.Error($"Update not installed: {ex}");
+            installer.DeleteStaging();
+            string message = ex.Message;
+            Services.UpdatePrefs(p => p.UpdateError = $"{message} TGK was not updated.");
+        }
+    }
+
     internal void OnMainViewShown(MainView view)
     {
         if (_devStartupDone)

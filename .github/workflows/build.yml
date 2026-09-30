@@ -3,6 +3,8 @@
 # - push to main -> the rolling "nightly" pre-release is replaced with this build (X.Y.Z-nightly.N)
 # - tag vX.Y.Z   -> an immutable release vX.Y.Z (the tag must equal <Version> in Directory.Build.props)
 # Versioning and release rules: docs/RELEASING.md
+# Installed clients update themselves from these archives: keep their names and the top-level TGK/ folder
+# (docs/RELEASING.md, "Self-update contract").
 name: Build client
 
 on:

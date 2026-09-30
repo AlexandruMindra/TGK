@@ -30,6 +30,9 @@ public sealed class ClientPrefs
     /// <summary>A version the user chose to skip: it is not mentioned again (a later one is).</summary>
     public string? SkippedUpdate { get; set; }
 
+    /// <summary>Why the update downloaded in the last run could not be installed when TGK closed; shown once, then cleared.</summary>
+    public string? UpdateError { get; set; }
+
     public ClientPrefs Clone()
     {
         var copy = (ClientPrefs)MemberwiseClone();

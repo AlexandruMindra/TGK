@@ -16,6 +16,20 @@
 
 Every binary also records its commit (`X.Y.Z+<sha>` in the informational version).
 
+## Self-update contract
+
+Clients look for updates on GitHub and install them in place ("Update now" in the status bar), so every release (and
+the nightly) must keep publishing:
+
+- `TGK-linux-x64.tar.gz` and `TGK-win-x64.zip`, each holding one top-level `TGK/` folder with the self-contained
+  publish output (the executable `TGK` / `TGK.exe` and `TGK.dll` among it);
+- a `TGK.dll` whose informational version equals the release (`X.Y.Z` for `vX.Y.Z`, the title's `X.Y.Z-nightly.N`
+  for the nightly) — the client refuses an archive holding another version;
+- the release title of the nightly as `Nightly X.Y.Z-nightly.N`.
+
+The client verifies each archive against the SHA-256 digest GitHub reports for the asset. Renaming the assets or
+changing the archive layout breaks updating for every installed client (they fall back to "Download from GitHub").
+
 ## Cutting a release
 
 ```bash

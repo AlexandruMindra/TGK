@@ -68,8 +68,13 @@ public readonly partial record struct AppVersion(int Major, int Minor, int Patch
     private static partial Regex VersionPattern();
 }
 
-/// <summary>A newer version and the release page to download it from.</summary>
-public sealed record UpdateInfo(AppVersion Version, string Url);
+/// <summary>
+/// A newer version, its release page and, when the release has one for this platform, the archive to install it from.
+/// </summary>
+public sealed record UpdateInfo(AppVersion Version, string Url, UpdatePackage? Package = null);
+
+/// <summary>A release archive: its download link, size and SHA-256 (hex, as GitHub reports it; null when it doesn't).</summary>
+public sealed record UpdatePackage(string Name, string Url, long Size, string? Sha256);
 
 /// <summary>
 /// Asks GitHub for the newest TGK release: the latest stable release (tag <c>vX.Y.Z</c>) and, for nightly builds, the
@@ -96,28 +101,42 @@ public sealed class UpdateChecker : IDisposable
         _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
     }
 
+    /// <summary>The release archive for a runtime identifier (what CI publishes), or null for platforms without builds.</summary>
+    public static string? PackageName(string runtimeIdentifier) => runtimeIdentifier switch
+    {
+        "linux-x64" => "TGK-linux-x64.tar.gz",
+        "win-x64" => "TGK-win-x64.zip",
+        _ => null,
+    };
+
     /// <summary>
-    /// The newest release after <paramref name="current"/>, or null when it is the newest. Throws
+    /// The newest release after <paramref name="current"/>, or null when it is the newest; with
+    /// <paramref name="package"/> (see <see cref="PackageName"/>) it includes that archive when the release has it. Throws
     /// <see cref="HttpRequestException"/> (also for unexpected responses), <see cref="JsonException"/> or
     /// <see cref="OperationCanceledException"/> (timeout) when GitHub can't be asked.
     /// </summary>
-    public async Task<UpdateInfo?> CheckAsync(AppVersion current, CancellationToken ct = default)
+    public async Task<UpdateInfo?> CheckAsync(AppVersion current, string? package = null, CancellationToken ct = default)
     {
         UpdateInfo? best = null;
-        // Links are built here from the tag rather than taken from the response, so only this repository's pages open.
-        if (await GetReleaseAsync($"{Api}/latest", ct).ConfigureAwait(false) is { } stable
+        // Links are built here from the tag rather than taken from the response, so only this repository's pages and
+        // files are ever opened or downloaded.
+        if (await GetReleaseAsync($"{Api}/latest", package, ct).ConfigureAwait(false) is { } stable
             && stable.Tag is { } tag && StableTag.IsMatch(tag) && AppVersion.TryParse(tag, out AppVersion version) && version > current)
-            best = new UpdateInfo(version, $"{ReleasesUrl}/tag/{tag}");
+            best = new UpdateInfo(version, $"{ReleasesUrl}/tag/{tag}", Package(tag, package, stable.Asset));
         if (current.IsNightly
-            && await GetReleaseAsync($"{Api}/tags/nightly", ct).ConfigureAwait(false) is { } nightly
+            && await GetReleaseAsync($"{Api}/tags/nightly", package, ct).ConfigureAwait(false) is { } nightly
             && AppVersion.TryParse(nightly.Name, out AppVersion nightlyVersion) && nightlyVersion.IsNightly
             && nightlyVersion > current && (best is null || nightlyVersion > best.Version))
-            best = new UpdateInfo(nightlyVersion, $"{ReleasesUrl}/tag/nightly");
+            best = new UpdateInfo(nightlyVersion, $"{ReleasesUrl}/tag/nightly", Package("nightly", package, nightly.Asset));
         return best;
     }
 
-    // Null when there is no such release (404: nothing released yet, or no nightly right now).
-    private async Task<(string? Tag, string? Name)?> GetReleaseAsync(string url, CancellationToken ct)
+    private static UpdatePackage? Package(string tag, string? name, (long Size, string? Sha256)? asset) =>
+        name is null || asset is not { } a ? null : new UpdatePackage(name, $"{ReleasesUrl}/download/{tag}/{name}", a.Size, a.Sha256);
+
+    // Null when there is no such release (404: nothing released yet, or no nightly right now). Asset: the size and
+    // SHA-256 of the archive named `package`, when the release has it.
+    private async Task<(string? Tag, string? Name, (long Size, string? Sha256)? Asset)?> GetReleaseAsync(string url, string? package, CancellationToken ct)
     {
         using HttpResponseMessage response = await _http.GetAsync(url, ct).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound)
@@ -131,7 +150,20 @@ public sealed class UpdateChecker : IDisposable
             throw new JsonException("Unexpected release format.");
         if (root.TryGetProperty("draft", out JsonElement draft) && draft.ValueKind == JsonValueKind.True)
             return null;
-        return (Text(root, "tag_name"), Text(root, "name"));
+        (long, string?)? asset = null;
+        if (package is not null && root.TryGetProperty("assets", out JsonElement assets) && assets.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement a in assets.EnumerateArray())
+            {
+                if (a.ValueKind != JsonValueKind.Object || Text(a, "name") != package)
+                    continue;
+                long size = a.TryGetProperty("size", out JsonElement s) && s.TryGetInt64(out long n) ? n : 0;
+                string? digest = Text(a, "digest") is { } d && d.StartsWith("sha256:", StringComparison.Ordinal) && d.Length == 71 ? d[7..].ToLowerInvariant() : null;
+                if (Text(a, "state") is null or "uploaded")
+                    asset = (size, digest);
+            }
+        }
+        return (Text(root, "tag_name"), Text(root, "name"), asset);
     }
 
     private static string? Text(JsonElement e, string name) =>

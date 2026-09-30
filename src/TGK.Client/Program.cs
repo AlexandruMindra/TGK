@@ -39,8 +39,11 @@ internal static class Program
         var app = new TgkApplication(services);
         Browser.Initialize(app); // blocks until the window closes
         app.OnExit(TimeSpan.FromSeconds(3)); // saves the open tabs ("reopen my tabs") and pushes pending changes
+        app.InstallPendingUpdate(); // an update downloaded in this run ("Update now")
         remote.Dispose(); // writes edits that were not saved or pushed yet
         local.Dispose();
+        if (app.RelaunchRequested)
+            SelfUpdate.Relaunch(); // after everything is written, so the new process reads it
     }
 
     private static string OsName() => OperatingSystem.IsWindows() ? "Windows" : OperatingSystem.IsMacOS() ? "macOS" : "Linux";

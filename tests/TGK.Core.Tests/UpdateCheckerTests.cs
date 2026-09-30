@@ -85,7 +85,7 @@ public sealed class UpdateCheckerTests
     {
         using var checker = new UpdateChecker(GitHub("v0.3.0", "Nightly 0.4.0-nightly.80"), "0.2.0");
 
-        UpdateInfo? update = await checker.CheckAsync(V("0.2.0"), Ct);
+        UpdateInfo? update = await checker.CheckAsync(V("0.2.0"), ct: Ct);
 
         Assert.Equal(V("0.3.0"), update!.Version);
         Assert.Equal("https://github.com/AlexandruMindra/TGK/releases/tag/v0.3.0", update.Url); // never the response's link
@@ -97,8 +97,8 @@ public sealed class UpdateCheckerTests
         var github = GitHub("v0.2.0", "Nightly 0.3.0-nightly.80");
         using var checker = new UpdateChecker(github);
 
-        Assert.Null(await checker.CheckAsync(V("0.2.0"), Ct));
-        Assert.Null(await checker.CheckAsync(V("0.3.0"), Ct)); // a local build of the next version
+        Assert.Null(await checker.CheckAsync(V("0.2.0"), ct: Ct));
+        Assert.Null(await checker.CheckAsync(V("0.3.0"), ct: Ct)); // a local build of the next version
         Assert.DoesNotContain(Nightly, github.Requests);
     }
 
@@ -107,35 +107,35 @@ public sealed class UpdateCheckerTests
     {
         using var checker = new UpdateChecker(GitHub("v0.2.0", "Nightly 0.3.0-nightly.80"));
 
-        Assert.Equal("https://github.com/AlexandruMindra/TGK/releases/tag/nightly", (await checker.CheckAsync(V("0.3.0-nightly.79"), Ct))!.Url);
-        Assert.Null(await checker.CheckAsync(V("0.3.0-nightly.80"), Ct));
+        Assert.Equal("https://github.com/AlexandruMindra/TGK/releases/tag/nightly", (await checker.CheckAsync(V("0.3.0-nightly.79"), ct: Ct))!.Url);
+        Assert.Null(await checker.CheckAsync(V("0.3.0-nightly.80"), ct: Ct));
         // The release a nightly was building up to is newer than the nightly.
         using var released = new UpdateChecker(GitHub("v0.3.0", null));
-        Assert.Equal(V("0.3.0"), (await released.CheckAsync(V("0.3.0-nightly.80"), Ct))!.Version);
+        Assert.Equal(V("0.3.0"), (await released.CheckAsync(V("0.3.0-nightly.80"), ct: Ct))!.Version);
     }
 
     [Fact]
     public async Task No_releases_yet_is_not_an_error()
     {
         using var checker = new UpdateChecker(GitHub(null, null));
-        Assert.Null(await checker.CheckAsync(V("0.1.0-nightly.3"), Ct));
+        Assert.Null(await checker.CheckAsync(V("0.1.0-nightly.3"), ct: Ct));
     }
 
     [Fact]
     public async Task Tags_that_are_not_versions_are_ignored()
     {
         using var checker = new UpdateChecker(GitHub("v9.9.9/../../evil", null));
-        Assert.Null(await checker.CheckAsync(V("0.2.0"), Ct));
+        Assert.Null(await checker.CheckAsync(V("0.2.0"), ct: Ct));
     }
 
     [Fact]
     public async Task Failures_throw_so_a_manual_check_can_say_so()
     {
         using var limited = new UpdateChecker(new FakeGitHub(new() { [Latest] = (HttpStatusCode.Forbidden, new { message = "rate limited" }) }));
-        await Assert.ThrowsAsync<HttpRequestException>(() => limited.CheckAsync(V("0.2.0"), Ct));
+        await Assert.ThrowsAsync<HttpRequestException>(() => limited.CheckAsync(V("0.2.0"), ct: Ct));
 
         using var garbage = new UpdateChecker(new FakeGitHub(new() { [Latest] = (HttpStatusCode.OK, "[1, 2") }));
-        await Assert.ThrowsAnyAsync<JsonException>(() => garbage.CheckAsync(V("0.2.0"), Ct));
+        await Assert.ThrowsAnyAsync<JsonException>(() => garbage.CheckAsync(V("0.2.0"), ct: Ct));
     }
 
     [Fact]
@@ -143,7 +143,41 @@ public sealed class UpdateCheckerTests
     {
         var github = GitHub("v0.2.0", null);
         using var checker = new UpdateChecker(github, "0.2.0");
-        await checker.CheckAsync(V("0.2.0"), Ct);
+        await checker.CheckAsync(V("0.2.0"), ct: Ct);
         Assert.Equal("TGK/0.2.0", github.UserAgent);
+    }
+}
+
+public sealed class UpdateCheckerPackageTests
+{
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) => Task.FromResult(respond(request));
+    }
+
+    [Fact]
+    public async Task The_platforms_archive_comes_with_its_size_and_checksum()
+    {
+        string digest = "sha256:" + new string('A', 64);
+        using var checker = new UpdateChecker(new Handler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                tag_name = "v0.3.0",
+                assets = new object[]
+                {
+                    new { name = "TGK-win-x64.zip", size = 5, digest = "sha256:" + new string('b', 64), state = "uploaded" },
+                    new { name = "TGK-linux-x64.tar.gz", size = 1234, digest, state = "uploaded", browser_download_url = "https://evil.example/x" },
+                },
+            })),
+        }));
+
+        UpdateInfo update = (await checker.CheckAsync(new AppVersion(0, 2, 0), UpdateChecker.PackageName("linux-x64"), Ct))!;
+
+        Assert.Equal(new UpdatePackage("TGK-linux-x64.tar.gz", "https://github.com/AlexandruMindra/TGK/releases/download/v0.3.0/TGK-linux-x64.tar.gz",
+            1234, new string('a', 64)), update.Package);
+        Assert.Null(UpdateChecker.PackageName("osx-arm64"));
     }
 }
