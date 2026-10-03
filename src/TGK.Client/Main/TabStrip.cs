@@ -205,11 +205,11 @@ public sealed class TabStrip : Control
         // Room left for the tabs by the "+" button (and, while scrolling, the arrows and the list button).
         private float Room => Math.Max(0, W - PlusSize - 2 * PlusGap);
 
-        private bool Overflow => _items.Count * MinTabW > Room + 0.5f;
+        private bool Overflowing => _items.Count * MinTabW > Room + 0.5f;
 
-        private float ViewLeft => Overflow ? ArrowW : 0;
+        private float ViewLeft => Overflowing ? ArrowW : 0;
 
-        private float ViewRight => Math.Max(ViewLeft, Overflow ? Room - 2 * ArrowW : Room);
+        private float ViewRight => Math.Max(ViewLeft, Overflowing ? Room - 2 * ArrowW : Room);
 
         private float ViewWidth => ViewRight - ViewLeft;
 
@@ -240,7 +240,7 @@ public sealed class TabStrip : Control
 
         private SKRect ListRect => ButtonRect(ViewRight + ArrowW, ArrowW);
 
-        private SKRect PlusRect => ButtonRect(Overflow ? ViewRight + 2 * ArrowW + PlusGap
+        private SKRect PlusRect => ButtonRect(Overflowing ? ViewRight + 2 * ArrowW + PlusGap
             : ViewLeft + Math.Min(_items.Count * TabWidth - Scroll, ViewWidth) + PlusGap, PlusSize);
 
         private int TabAt(float x, float y)
@@ -258,7 +258,7 @@ public sealed class TabStrip : Control
                 return CloseRect(tab).Contains(x, y) ? Part.Close : Part.Tab; // a hovered tab always shows its close button
             if (PlusRect.Contains(x, y))
                 return Part.Plus;
-            if (!Overflow)
+            if (!Overflowing)
                 return Part.None;
             return LeftRect.Contains(x, y) ? Part.Left : RightRect.Contains(x, y) ? Part.Right : ListRect.Contains(x, y) ? Part.List : Part.None;
         }
@@ -357,7 +357,7 @@ public sealed class TabStrip : Control
                 return;
             }
             // A tab dragged to either end of an overflowing strip scrolls it.
-            if (_dragging && !_overContent && Overflow)
+            if (_dragging && !_overContent && Overflowing)
             {
                 float before = Scroll;
                 if (_dragX < ViewLeft + DragScrollZone)
@@ -506,7 +506,7 @@ public sealed class TabStrip : Control
                 if (active)
                 {
                     Gfx.FillTopRound(c, r, 8, Theme.Surface);
-                    using var outline = new SKPath();
+                    using var outline = new SKPathBuilder();
                     outline.MoveTo(r.Left + 0.5f, r.Bottom);
                     outline.LineTo(r.Left + 0.5f, r.Top + 8);
                     outline.ArcTo(new SKRect(r.Left + 0.5f, r.Top + 0.5f, r.Left + 16.5f, r.Top + 16.5f), 180, 90, false);
@@ -514,7 +514,8 @@ public sealed class TabStrip : Control
                     outline.ArcTo(new SKRect(r.Right - 16.5f, r.Top + 0.5f, r.Right - 0.5f, r.Top + 16.5f), 270, 90, false);
                     outline.LineTo(r.Right - 0.5f, r.Bottom);
                     using var stroke = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1, Color = Theme.Border };
-                    c.DrawPath(outline, stroke);
+                    using SKPath outlinePath = outline.Detach();
+                    c.DrawPath(outlinePath, stroke);
                 }
                 else if (hover)
                 {
@@ -569,7 +570,7 @@ public sealed class TabStrip : Control
                 EdgeFade(c, ViewRight, ViewRight - FadeW);
             c.Restore();
 
-            if (Overflow)
+            if (Overflowing)
             {
                 DrawButton(c, LeftRect, "chevron-left", Part.Left, enabled: scroll > 0.5f, 15);
                 DrawButton(c, RightRect, "chevron-right", Part.Right, enabled: scroll < MaxScroll - 0.5f, 15);
@@ -784,11 +785,12 @@ public static class BrandMark
             StrokeJoin = SKStrokeJoin.Round,
             Color = SKColors.White,
         };
-        using var chevron = new SKPath();
+        using var chevron = new SKPathBuilder();
         chevron.MoveTo(r.Left + 70 * s, r.Top + 84 * s);
         chevron.LineTo(r.Left + 118 * s, r.Top + 128 * s);
         chevron.LineTo(r.Left + 70 * s, r.Top + 172 * s);
-        c.DrawPath(chevron, fg);
+        using SKPath chevronPath = chevron.Detach();
+        c.DrawPath(chevronPath, fg);
         c.DrawLine(r.Left + 140 * s, r.Top + 172 * s, r.Left + 188 * s, r.Top + 172 * s, fg);
     }
 }

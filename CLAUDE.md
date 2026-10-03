@@ -1,7 +1,7 @@
 # TGK — notes for contributors and coding agents
 
 - Tests: `scripts/test.sh` (builds, then runs every test project in parallel). E2E SSH setup: `docs/DEV-TESTING.md`.
-- Never modify `external/` (Blossom submodule).
+- Blossom (UI + windowing) comes from NuGet (`Blossom` in `src/TGK.Client/TGK.Client.csproj`); upgrade it there.
 - **Versioning and releases follow `docs/RELEASING.md` — mandatory:**
   - The only version is `<Version>` in `Directory.Build.props` = the NEXT release (never an already published one).
   - Release = tag `vX.Y.Z` equal to that version; CI rejects a mismatch. Published `v*` tags/releases are never

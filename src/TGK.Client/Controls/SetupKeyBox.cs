@@ -19,7 +19,7 @@ public sealed class SetupKeyBox : Control
             e.Handled = true;
             if (_secret.Length == 0)
                 return;
-            Browser.SetClipboardText(_secret);
+            Shell.SetClipboardText(_secret);
             Copied?.Invoke();
         };
     }

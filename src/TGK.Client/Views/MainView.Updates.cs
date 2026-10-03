@@ -348,7 +348,7 @@ public sealed partial class MainView
     {
         if (ExternalLink.Open(update.Url))
             return;
-        Browser.SetClipboardText(update.Url);
+        Shell.SetClipboardText(update.Url);
         ShowToast($"No browser could be opened; the link was copied: {update.Url}", ToastKind.Info);
     }
 }

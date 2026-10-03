@@ -9,15 +9,14 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="$(BlossomRoot)src\Blossom\Blossom.csproj" />
     <ProjectReference Include="..\TGK.Core\TGK.Core.csproj" />
     <ProjectReference Include="..\TGK.Terminal\TGK.Terminal.csproj" />
   </ItemGroup>
 
-  <!-- Vendored GLFW (glfw3-x64.dll, glfw3-x86.dll, libglfw.so.3.3) copied flat into the output -->
-  <ItemGroup>
-    <None Include="$(BlossomRoot)glfw\**\*">
-      <Link>%(Filename)%(Extension)</Link>
+  <!-- GLFW for Linux under the name Silk.NET loads (assets/glfw/README.md), copied next to the executable -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == '' or $(RuntimeIdentifier.StartsWith('linux'))">
+    <None Include="..\..\assets\glfw\libglfw.so.3.3">
+      <Link>libglfw.so.3.3</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <Visible>false</Visible>
@@ -25,7 +24,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Blossom's Browser auto-loads <exe dir>/assets/icon.png as the window icon -->
+    <!-- Blossom's Shell auto-loads <exe dir>/assets/icon.png as the window icon -->
     <Content Include="..\..\assets\icon.png">
       <Link>assets\icon.png</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -44,6 +43,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Blossom" Version="0.1.1" />
     <PackageReference Include="QRCoder" Version="1.8.0" />
   </ItemGroup>
 

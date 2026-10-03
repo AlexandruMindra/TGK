@@ -107,7 +107,7 @@ public sealed class PopupMenu : VisualElement, IKeyInput
         Close();
         // Run after the current input event so the action may freely rebuild the UI.
         if (item.Action is { } action)
-            Browser.Post(action);
+            Shell.Post(action);
     }
 
     public bool OnKey(KeyStroke k)

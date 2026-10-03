@@ -23,7 +23,7 @@ public sealed class ClientServices
 
     /// <summary>
     /// The user's vault: a server account or the local vault (<see cref="RoutingVaultService.Mode"/>). Its <c>Changed</c>
-    /// event fires on any thread: marshal with <c>Browser.Post</c>.
+    /// event fires on any thread: marshal with <c>Shell.Post</c>.
     /// </summary>
     public RoutingVaultService Vault { get; }
 

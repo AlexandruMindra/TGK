@@ -39,7 +39,7 @@ public class Label : Control
 
     public float LineHeight => MathF.Ceiling(_size * 1.45f);
 
-    private SKPaint Font => _mono ? Gfx.Font(_size, _weight >= Theme.WeightSemibold ? Theme.MonoBold : Theme.Mono) : Gfx.Font(_size, _weight);
+    private SKFont Font => _mono ? Gfx.Font(_size, _weight >= Theme.WeightSemibold ? Theme.MonoBold : Theme.Mono) : Gfx.Font(_size, _weight);
 
     /// <summary>Height needed to show the text at <paramref name="width"/> (respects <see cref="MaxLines"/>).</summary>
     public float MeasureHeight(float width) =>

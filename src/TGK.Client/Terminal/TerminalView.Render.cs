@@ -194,8 +194,8 @@ public sealed partial class TerminalView
         if (_runGlyphs.Count == 0)
             return;
         SKHorizontalRunBuffer run = _blobBuilder.AllocateHorizontalRun(_font.Fonts[fontIndex], _runGlyphs.Count, 0);
-        Span<ushort> glyphs = run.GetGlyphSpan();
-        Span<float> xs = run.GetPositionSpan();
+        Span<ushort> glyphs = run.Glyphs;
+        Span<float> xs = run.Positions;
         for (int i = 0; i < _runGlyphs.Count; i++)
         {
             glyphs[i] = _runGlyphs[i];
@@ -266,8 +266,8 @@ public sealed partial class TerminalView
         }
         GlyphRef glyph = _font.Lookup(rune, cell.Style.Has(CellFlags.Bold), cell.Style.Has(CellFlags.Italic), (int)cell.Width);
         SKHorizontalRunBuffer run = _blobBuilder.AllocateHorizontalRun(_font.Fonts[glyph.FontIndex], 1, 0);
-        run.GetGlyphSpan()[0] = glyph.Glyph;
-        run.GetPositionSpan()[0] = x + glyph.OffsetX;
+        run.Glyphs[0] = glyph.Glyph;
+        run.Positions[0] = x + glyph.OffsetX;
         using SKTextBlob? blob = _blobBuilder.Build();
         if (blob is not null)
         {

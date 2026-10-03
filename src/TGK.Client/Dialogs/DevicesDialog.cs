@@ -225,7 +225,7 @@ public sealed class DevicesDialog : DialogBase
             Gfx.StrokeRound(c, r, Theme.Radius, _session.Current ? Theme.Accent.WithAlpha(110) : Theme.Border);
             Icons.Draw(c, "terminal", 26, H / 2f, 20, _session.Current ? Theme.Accent : Theme.TextSecondary);
             float textW = W - 50 - 130;
-            SKPaint nameFont = Gfx.Font(Theme.FontMd, Theme.WeightSemibold);
+            SKFont nameFont = Gfx.Font(Theme.FontMd, Theme.WeightSemibold);
             string name = Gfx.Ellipsize(_session.DeviceName, nameFont, textW - (_session.Current ? 90 : 0));
             Gfx.Text(c, name, 50, 21, nameFont, Theme.TextPrimary);
             if (_session.Current)

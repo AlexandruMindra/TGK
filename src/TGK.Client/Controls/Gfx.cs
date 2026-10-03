@@ -19,30 +19,26 @@ public enum TextAlignment
 /// </summary>
 public static class Gfx
 {
-    private static readonly Dictionary<(float Size, SKTypeface Face), SKPaint> FontCache = new();
+    private static readonly Dictionary<(float Size, SKTypeface Face), SKFont> FontCache = new();
+    private static readonly SKPaint TextPaint = new() { IsAntialias = true, Style = SKPaintStyle.Fill };
     private static readonly SKPaint Fill = new() { IsAntialias = true, Style = SKPaintStyle.Fill };
     private static readonly SKPaint Stroke = new() { IsAntialias = true, Style = SKPaintStyle.Stroke };
     private static readonly SKPaint ShadowPaint = new() { IsAntialias = true };
 
     public const string Ellipsis = "…";
 
-    /// <summary>
-    /// A text paint for the UI font at <paramref name="size"/> (SkiaSharp 2.88's SKFont cannot measure strings, so text
-    /// is measured and drawn with SKPaint). Shared and cached: only its color is changed, by the draw helpers.
-    /// </summary>
-    public static SKPaint Font(float size, int weight = Theme.WeightRegular) => Font(size, Theme.Ui(weight));
+    /// <summary>The UI font at <paramref name="size"/>. Shared and cached: never change or dispose it.</summary>
+    public static SKFont Font(float size, int weight = Theme.WeightRegular) => Font(size, Theme.Ui(weight));
 
-    public static SKPaint Font(float size, SKTypeface face)
+    public static SKFont Font(float size, SKTypeface face)
     {
-        if (!FontCache.TryGetValue((size, face), out SKPaint? font))
+        if (!FontCache.TryGetValue((size, face), out SKFont? font))
         {
-            font = new SKPaint
+            font = new SKFont(face, size)
             {
-                Typeface = face,
-                TextSize = size,
-                IsAntialias = true,
-                SubpixelText = true,
-                HintingLevel = SKPaintHinting.Slight,
+                Edging = SKFontEdging.Antialias,
+                Subpixel = true,
+                Hinting = SKFontHinting.Slight,
             };
             FontCache[(size, face)] = font;
         }
@@ -51,7 +47,7 @@ public static class Gfx
 
     public static float Measure(string text, float size, int weight = Theme.WeightRegular) => Measure(text, Font(size, weight));
 
-    public static float Measure(string text, SKPaint font)
+    public static float Measure(string text, SKFont font)
     {
         if (text.Length == 0)
             return 0;
@@ -59,14 +55,14 @@ public static class Gfx
             return font.MeasureText(text);
         float width = 0;
         foreach ((string run, SKTypeface face) in Runs(text, font.Typeface))
-            width += Font(font.TextSize, face).MeasureText(run);
+            width += Font(font.Size, face).MeasureText(run);
         return width;
     }
 
     /// <summary>Baseline that vertically centers cap-height text on <paramref name="centerY"/>.</summary>
-    public static float Baseline(SKPaint font, float centerY)
+    public static float Baseline(SKFont font, float centerY)
     {
-        SKFontMetrics m = font.FontMetrics;
+        SKFontMetrics m = font.Metrics;
         float cap = m.CapHeight > 0 ? m.CapHeight : -m.Ascent * 0.7f;
         return MathF.Round(centerY + cap / 2f);
     }
@@ -76,7 +72,7 @@ public static class Gfx
         TextAlignment align = TextAlignment.Left, float maxWidth = float.MaxValue) =>
         Text(c, text, x, centerY, Font(size, weight), color, align, maxWidth);
 
-    public static void Text(SKCanvas c, string text, float x, float centerY, SKPaint font, SKColor color,
+    public static void Text(SKCanvas c, string text, float x, float centerY, SKFont font, SKColor color,
         TextAlignment align = TextAlignment.Left, float maxWidth = float.MaxValue)
     {
         if (string.IsNullOrEmpty(text) || maxWidth <= 0)
@@ -93,10 +89,10 @@ public static class Gfx
     }
 
     /// <summary>Draws text at an explicit baseline without ellipsis (used by text fields).</summary>
-    public static void TextAtBaseline(SKCanvas c, string text, float x, float baseline, SKPaint font, SKColor color) =>
+    public static void TextAtBaseline(SKCanvas c, string text, float x, float baseline, SKFont font, SKColor color) =>
         DrawRuns(c, text, x, baseline, font, color);
 
-    public static string Ellipsize(string text, SKPaint font, float maxWidth)
+    public static string Ellipsize(string text, SKFont font, float maxWidth)
     {
         if (Measure(text, font) <= maxWidth)
             return text;
@@ -114,7 +110,7 @@ public static class Gfx
     }
 
     /// <summary>Greedy word wrap into at most <paramref name="maxLines"/> lines (the last one ellipsized).</summary>
-    public static List<string> Wrap(string text, SKPaint font, float maxWidth, int maxLines = int.MaxValue)
+    public static List<string> Wrap(string text, SKFont font, float maxWidth, int maxLines = int.MaxValue)
     {
         var lines = new List<string>();
         foreach (string paragraph in text.Replace("\r\n", "\n").Split('\n'))
@@ -210,19 +206,18 @@ public static class Gfx
         ShadowPaint.MaskFilter = null;
     }
 
-    private static void DrawRuns(SKCanvas c, string text, float x, float baseline, SKPaint font, SKColor color)
+    private static void DrawRuns(SKCanvas c, string text, float x, float baseline, SKFont font, SKColor color)
     {
+        TextPaint.Color = color;
         if (IsSimple(text))
         {
-            font.Color = color;
-            c.DrawText(text, x, baseline, font);
+            c.DrawText(text, x, baseline, SKTextAlign.Left, font, TextPaint);
             return;
         }
         foreach ((string run, SKTypeface face) in Runs(text, font.Typeface))
         {
-            SKPaint runFont = Font(font.TextSize, face);
-            runFont.Color = color;
-            c.DrawText(run, x, baseline, runFont);
+            SKFont runFont = Font(font.Size, face);
+            c.DrawText(run, x, baseline, SKTextAlign.Left, runFont, TextPaint);
             x += runFont.MeasureText(run);
         }
     }

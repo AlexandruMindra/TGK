@@ -55,11 +55,17 @@ public static class TerminalFonts
         return faces;
     }
 
+    private static bool HasGlyph(SKTypeface face, int codepoint)
+    {
+        using var font = new SKFont(face);
+        return font.ContainsGlyph(codepoint);
+    }
+
     // SKTypeface.FromFamilyName never fails: a missing family silently resolves to another font, so check the name.
     private static (SKTypeface Regular, SKTypeface Bold)? Load(string family)
     {
         SKTypeface? regular = SKTypeface.FromFamilyName(family, SKFontStyle.Normal);
-        if (regular is null || !string.Equals(regular.FamilyName, family, StringComparison.OrdinalIgnoreCase) || regular.GetGlyph('M') == 0)
+        if (regular is null || !string.Equals(regular.FamilyName, family, StringComparison.OrdinalIgnoreCase) || !HasGlyph(regular, 'M'))
             return null;
         SKTypeface? bold = SKTypeface.FromFamilyName(family, SKFontStyle.Bold);
         if (bold is null || !string.Equals(bold.FamilyName, family, StringComparison.OrdinalIgnoreCase))

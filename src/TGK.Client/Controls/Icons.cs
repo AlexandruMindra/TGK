@@ -25,7 +25,7 @@ public static class Icons
         var matrix = SKMatrix.CreateScale(scale, scale);
         matrix.TransX = MathF.Round(cx - size / 2f);
         matrix.TransY = MathF.Round(cy - size / 2f);
-        c.DrawPicture(picture, ref matrix, Tint(color));
+        c.DrawPicture(picture, in matrix, Tint(color));
     }
 
     private static SKPicture? Get(string name)
@@ -39,7 +39,8 @@ public static class Icons
         {
             try
             {
-                var svg = new SkiaSharp.Extended.Svg.SKSvg();
+                // Not disposed: disposing the SKSvg would dispose the cached picture.
+                var svg = new Svg.Skia.SKSvg();
                 picture = svg.Load(path);
             }
             catch (Exception ex)

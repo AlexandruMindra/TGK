@@ -92,7 +92,7 @@ public interface IVaultService
     /// <summary>
     /// Raised after <see cref="Current"/>, <see cref="Status"/> or the login state changed.
     /// May be raised on ANY thread (often a thread-pool thread): UI handlers must marshal to the UI thread
-    /// (e.g. with <c>Browser.Post</c>) before touching UI state.
+    /// (e.g. with <c>Shell.Post</c>) before touching UI state.
     /// </summary>
     event Action? Changed;
 

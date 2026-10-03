@@ -523,7 +523,7 @@ public sealed partial class MainView : TgkView
                 IsDanger = failed,
                 Action = () =>
                 {
-                    Browser.SetClipboardText(address);
+                    Shell.SetClipboardText(address);
                     ShowToast($"Copied {address}", ToastKind.Success);
                 },
             });
