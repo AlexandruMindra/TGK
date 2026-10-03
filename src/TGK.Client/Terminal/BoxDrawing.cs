@@ -134,7 +134,7 @@ public static class BoxDrawing
         float lx = MathF.Floor(x + w / 2f) - MathF.Floor(t1 / 2f) + t1 / 2f; // centers of the lines they continue
         float ly = MathF.Floor(y + h / 2f) - MathF.Floor(t1 / 2f) + t1 / 2f;
         float r = Math.Min(w, h) / 2f;
-        using var path = new SKPath();
+        using var path = new SKPathBuilder();
         switch (rune)
         {
             case 0x256D: // ╭ down and right
@@ -170,7 +170,8 @@ public static class BoxDrawing
                 }
                 break;
         }
-        c.DrawPath(path, Stroke);
+        using SKPath curve = path.Detach();
+        c.DrawPath(curve, Stroke);
     }
 
     private static void DrawBlock(SKCanvas c, int rune, float x, float y, float w, float h, SKColor color)
@@ -208,15 +209,18 @@ public static class BoxDrawing
 
     private static void DrawPowerline(SKCanvas c, int rune, float x, float y, float w, float h, float t1)
     {
-        using var path = new SKPath();
+        using var builder = new SKPathBuilder();
         bool pointsRight = rune is 0xE0B0 or 0xE0B1;
         float tip = pointsRight ? x + w : x, back = pointsRight ? x : x + w;
-        path.MoveTo(back, y);
-        path.LineTo(tip, y + h / 2f);
-        path.LineTo(back, y + h);
-        if (rune is 0xE0B0 or 0xE0B2)
+        builder.MoveTo(back, y);
+        builder.LineTo(tip, y + h / 2f);
+        builder.LineTo(back, y + h);
+        bool solid = rune is 0xE0B0 or 0xE0B2;
+        if (solid)
+            builder.Close();
+        using SKPath path = builder.Detach();
+        if (solid)
         {
-            path.Close();
             c.DrawPath(path, Smooth);
         }
         else

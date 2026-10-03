@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using Blossom;
-using TGK.Client.Input;
 using TGK.Client.Platform;
 using TGK.Core;
 using TGK.Core.Services;
@@ -29,15 +28,20 @@ internal static class Program
         var remote = new RemoteVaultService(new RemoteVaultOptions { DeviceName = $"{Environment.MachineName} · {OsName()}" });
         var local = new LocalVaultService();
         var services = new ClientServices(new RoutingVaultService(remote, new MockVaultService(), local), new PrefsStore(), dev);
-        Browser.MaxFps = 120;
-        Browser.ShowDebugOverlay = dev.DebugOverlay;
-        KeyboardHub.AllowDebugOverlay = dev.DebugOverlay;
+        Shell.MaxFps = 120;
+        Shell.ShowDebugOverlay = dev.DebugOverlay;
 
         UiThread.Install();
-        // Runs on the UI thread once the window exists (the post queue is drained by the main loop).
-        Browser.Post(() => ConfigureWindow(dev.WindowSize));
         var app = new TgkApplication(services);
-        Browser.Initialize(app); // blocks until the window closes
+        app.EnableStatsOverlay = dev.DebugOverlay; // F12 toggles the frame-time overlay only with --fps
+        app.Window.MinWidth = MinWidth;
+        app.Window.MinHeight = MinHeight;
+        if (dev.WindowSize is { } size)
+        {
+            app.Window.Width = Math.Max(MinWidth, size.Width);
+            app.Window.Height = Math.Max(MinHeight, size.Height);
+        }
+        Shell.Initialize(app); // blocks until the window closes
         app.OnExit(TimeSpan.FromSeconds(3)); // saves the open tabs ("reopen my tabs") and pushes pending changes
         app.InstallPendingUpdate(); // an update downloaded in this run ("Update now")
         remote.Dispose(); // writes edits that were not saved or pushed yet
@@ -47,18 +51,4 @@ internal static class Program
     }
 
     private static string OsName() => OperatingSystem.IsWindows() ? "Windows" : OperatingSystem.IsMacOS() ? "macOS" : "Linux";
-
-    private static void ConfigureWindow((int Width, int Height)? size)
-    {
-        try
-        {
-            AppWindow.SetMinimumSize(MinWidth, MinHeight);
-            if (size is { } s)
-                AppWindow.SetSize(Math.Max(MinWidth, s.Width), Math.Max(MinHeight, s.Height));
-        }
-        catch (Exception ex)
-        {
-            Log.Warning($"Could not configure the window: {ex.Message}");
-        }
-    }
 }

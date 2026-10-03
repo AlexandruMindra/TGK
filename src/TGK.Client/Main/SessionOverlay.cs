@@ -225,9 +225,10 @@ public sealed class SessionOverlay : Control
             c.DrawOval(oval, paint);
             paint.Color = Theme.Accent;
             float start = UiClock.NowMs % 1000 / 1000f * 360f;
-            using var arc = new SKPath();
+            using var arc = new SKPathBuilder();
             arc.AddArc(oval, start, 100);
-            c.DrawPath(arc, paint);
+            using SKPath path = arc.Detach();
+            c.DrawPath(path, paint);
         }
     }
 }

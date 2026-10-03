@@ -7,7 +7,8 @@ namespace TGK.Client;
 
 /// <summary>
 /// Marshalling to the UI (GLFW main) thread. <see cref="Install"/> also sets a <see cref="SynchronizationContext"/>
-/// on it, so an <c>await</c> started on the UI thread resumes there.
+/// on it, so an <c>await</c> started on the UI thread resumes there, already while the application is built (Blossom
+/// installs its own, equivalent one only once the window has loaded).
 /// </summary>
 public static class UiThread
 {
@@ -15,7 +16,7 @@ public static class UiThread
 
     public static bool IsCurrent => Environment.CurrentManagedThreadId == _uiThreadId;
 
-    /// <summary>Call once from the UI thread before <c>Browser.Initialize</c>.</summary>
+    /// <summary>Call once from the UI thread before <c>Shell.Initialize</c>.</summary>
     public static void Install()
     {
         _uiThreadId = Environment.CurrentManagedThreadId;
@@ -23,7 +24,7 @@ public static class UiThread
     }
 
     /// <summary>Queues <paramref name="action"/> to run on the UI thread (thread-safe).</summary>
-    public static void Post(Action action) => Browser.Post(action);
+    public static void Post(Action action) => Shell.Post(action);
 
     /// <summary>Runs <paramref name="func"/> on the UI thread and returns its result, e.g. to show a dialog from a worker thread.</summary>
     public static Task<T> InvokeAsync<T>(Func<Task<T>> func)
@@ -31,7 +32,7 @@ public static class UiThread
         if (IsCurrent)
             return func();
         var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-        Browser.Post(async () =>
+        Shell.Post(async () =>
         {
             try
             {
@@ -51,7 +52,7 @@ public static class UiThread
 
     private sealed class UiSynchronizationContext : SynchronizationContext
     {
-        public override void Post(SendOrPostCallback d, object? state) => Browser.Post(() => d(state));
+        public override void Post(SendOrPostCallback d, object? state) => Shell.Post(() => d(state));
 
         public override void Send(SendOrPostCallback d, object? state)
         {
@@ -61,7 +62,7 @@ public static class UiThread
                 return;
             }
             using var done = new ManualResetEventSlim();
-            Browser.Post(() =>
+            Shell.Post(() =>
             {
                 try
                 {

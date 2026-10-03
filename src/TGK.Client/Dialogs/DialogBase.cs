@@ -153,7 +153,7 @@ public abstract class DialogBase : VisualElement, IKeyInput
             && (below is null || below == _previousFocus || below.ContainsElement(_previousFocus));
         View.SetActiveKeyboardElement(canRestore ? _previousFocus : below);
         OnClosed();
-        Browser.Post(Dispose);
+        Shell.Post(Dispose);
     }
 
     protected virtual void OnClosed() { }

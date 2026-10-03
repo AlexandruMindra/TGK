@@ -1,15 +1,12 @@
 using System;
-using System.Reflection;
 using Blossom;
 using Silk.NET.GLFW;
-using Silk.NET.Maths;
-using Silk.NET.Windowing;
 
 namespace TGK.Client.Platform;
 
 /// <summary>
-/// Access to the native window, which Blossom keeps private (no public size, minimum-size or resize API).
-/// Only valid on the UI thread once the window exists.
+/// The native window, through Blossom's <see cref="Shell"/> window API (sizes are set up front, in
+/// <c>Application.Window</c>). Only valid on the UI thread once the window exists.
 /// </summary>
 public static class AppWindow
 {
@@ -18,32 +15,31 @@ public static class AppWindow
     /// <summary>Raised on the UI thread after a resize, once Blossom has updated the view size.</summary>
     public static event Action? Resized;
 
-    public static IWindow? Window =>
-        (IWindow?)typeof(Browser).GetField("window", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null);
-
-    public static unsafe WindowHandle* Handle => Window is { } w ? (WindowHandle*)w.Handle : null;
-
-    /// <summary>Subscribes to the window's resize event (after Blossom's own handler, so view sizes are current).</summary>
+    /// <summary>Subscribes to the window's resize event (raised after Blossom's own handler, so view sizes are current).</summary>
     public static void HookResize()
     {
-        if (_hooked || Window is not { } window)
+        if (_hooked)
             return;
         _hooked = true;
-        window.Resize += _ => Resized?.Invoke();
+        Shell.ClientResized += (_, _) => Resized?.Invoke();
     }
 
-    public static unsafe void SetMinimumSize(int width, int height)
+    /// <summary>
+    /// Closes the window the way the user's close button does: the window's close callback runs (Blossom disposes the
+    /// application) and the main loop ends. Blossom has no public close, so this goes through GLFW's current context,
+    /// which is the app window on the UI thread.
+    /// </summary>
+    public static unsafe void Close()
     {
-        WindowHandle* handle = Handle;
-        if (handle is not null)
-            GlfwProvider.GLFW.Value.SetWindowSizeLimits(handle, width, height, Glfw.DontCare, Glfw.DontCare);
-    }
-
-    public static void SetSize(int width, int height)
-    {
-        if (Window is not { } window)
+        Glfw glfw = GlfwProvider.GLFW.Value;
+        WindowHandle* handle = glfw.GetCurrentContext();
+        if (handle is null)
             return;
-        window.Size = new Vector2D<int>(width, height);
-        window.Center();
+        glfw.SetWindowShouldClose(handle, true);
+        // Reading the callback means replacing it, so put it straight back, then run it as GLFW would.
+        GlfwCallbacks.WindowCloseCallback? onClose = glfw.SetWindowCloseCallback(handle, null);
+        glfw.SetWindowCloseCallback(handle, onClose);
+        onClose?.Invoke(handle);
+        glfw.PostEmptyEvent();
     }
 }

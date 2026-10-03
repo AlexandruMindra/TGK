@@ -14,7 +14,7 @@ public enum KeyModifiers
     Super = 8,
 }
 
-/// <summary>A key press (or an app-generated auto-repeat of one) with the modifiers held at that moment.</summary>
+/// <summary>A key press (or the OS's auto-repeat of one) with the modifiers held at that moment.</summary>
 public readonly record struct KeyStroke(Key Key, KeyModifiers Modifiers, bool IsRepeat = false)
 {
     public bool Ctrl => (Modifiers & KeyModifiers.Ctrl) != 0;

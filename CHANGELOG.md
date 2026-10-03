@@ -10,6 +10,18 @@ shows the current Unreleased section.
 
 ## [Unreleased]
 
+### Changed
+
+- TGK now uses the UI framework Blossom from its NuGet package (0.1.1) instead of a copy built from source, with
+  SkiaSharp 4 and Silk.NET 2.23 underneath. The screens look and behave as before, with these differences:
+  - Held keys repeat at your system's keyboard repeat delay and rate (TGK used a fixed 400 ms delay, then 30 per
+    second).
+  - Less CPU and battery use while TGK sits idle: the window now sleeps until there is input, terminal output or
+    something to animate, instead of waking about a thousand times a second.
+- Updated SkiaSharp (2.88.3 → 4.153) and ImageSharp (2.1.2 → 3.1.12), which had known high-severity vulnerabilities
+  ([GHSA-j7hp-h8jx-5ppr](https://github.com/advisories/GHSA-j7hp-h8jx-5ppr),
+  [GHSA-65x7-c272-7g7r](https://github.com/advisories/GHSA-65x7-c272-7g7r)).
+
 ## [0.2.2] - 2026-10-01
 
 ### Added

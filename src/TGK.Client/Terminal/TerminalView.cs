@@ -122,6 +122,7 @@ public sealed partial class TerminalView : VisualElement, IKeyInput, ISendsContr
         if (data.IsEmpty || _disposed)
             return;
         _incoming.Enqueue(data.ToArray());
+        UiClock.RequestTick(); // the next tick parses it
         if (Interlocked.Add(ref _queuedBytes, data.Length) <= MaxQueuedBytes)
             return;
         while (true)
@@ -261,6 +262,8 @@ public sealed partial class TerminalView : VisualElement, IKeyInput, ISendsContr
         ResetBlink();
         long now = UiClock.NowMs;
         bool caughtUp = _feeding is null && _incoming.IsEmpty;
+        if (!caughtUp)
+            UiClock.RequestTick(); // keep parsing on the next loop iteration instead of the next heartbeat
         if (EffectiveVisible && (caughtUp || now >= _nextFloodPaint))
         {
             _nextFloodPaint = now + Math.Clamp(_renderCostMs * 4, MinFloodPaintMs, MaxFloodPaintMs);

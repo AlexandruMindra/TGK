@@ -204,7 +204,7 @@ public sealed class IdentitiesDialog : DialogBase
 
     private void PasteKey()
     {
-        string text = Browser.GetClipboardText();
+        string text = Shell.GetClipboardText();
         if (!text.Contains("PRIVATE KEY", StringComparison.Ordinal) && !text.StartsWith("PuTTY-User-Key-File", StringComparison.Ordinal))
         {
             SetError("The clipboard does not contain a private key.");
@@ -398,7 +398,7 @@ public sealed class IdentitiesDialog : DialogBase
             Gfx.Text(c, _title, 56, _detail.Length > 0 ? H / 2f - 9 : H / 2f, Theme.FontBase, Theme.WeightSemibold,
                 _state == KeyState.Error ? Theme.Danger : Theme.TextPrimary, TextAlignment.Left, W - 66);
             // A loaded key shows its fingerprint in the monospace font, like ssh-keygen -l.
-            SKPaint detailFont = _state == KeyState.Ok ? Gfx.Font(Theme.FontSm, Theme.Mono) : Gfx.Font(Theme.FontSm);
+            SKFont detailFont = _state == KeyState.Ok ? Gfx.Font(Theme.FontSm, Theme.Mono) : Gfx.Font(Theme.FontSm);
             if (_detail.Length > 0)
                 Gfx.Text(c, _detail, 56, H / 2f + 10, detailFont, Theme.TextSecondary, TextAlignment.Left, W - 66);
         }

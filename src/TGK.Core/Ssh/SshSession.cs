@@ -24,7 +24,7 @@ namespace TGK.Core.Ssh;
 /// </para>
 /// <para>
 /// Threading: <see cref="StateChanged"/>, <see cref="DataReceived"/> and <see cref="TunnelsChanged"/> are raised on background threads, so UI
-/// handlers must marshal (e.g. <c>Browser.Post</c>). <see cref="Send"/>, <see cref="Resize"/>, <see cref="Disconnect"/>
+/// handlers must marshal (e.g. <c>Shell.Post</c>). <see cref="Send"/>, <see cref="Resize"/>, <see cref="Disconnect"/>
 /// and <see cref="Dispose"/> are thread-safe and do not wait on the network, so they are fine on the UI thread.
 /// </para>
 /// </remarks>

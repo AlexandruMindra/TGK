@@ -317,14 +317,14 @@ public sealed partial class TerminalView
     {
         string text = SelectedText;
         if (text.Length > 0)
-            Browser.SetClipboardText(text);
+            Shell.SetClipboardText(text);
     }
 
     public void Paste()
     {
         if (!InputEnabled)
             return;
-        string text = Browser.GetClipboardText();
+        string text = Shell.GetClipboardText();
         if (text.Length == 0)
             return;
         ScrollToBottom();

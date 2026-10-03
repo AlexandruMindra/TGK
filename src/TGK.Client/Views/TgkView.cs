@@ -13,7 +13,7 @@ using TGK.Client.Platform;
 namespace TGK.Client.Views;
 
 /// <summary>
-/// Base for TGK's screens: drives <see cref="KeyboardHub"/> auto-repeat and <see cref="UiClock"/> from the view loop,
+/// Base for TGK's screens: drives <see cref="UiClock"/> from the view loop,
 /// owns the dialog stack, the shared popup menu and the toast, and is the last stop for unhandled keys.
 /// </summary>
 public abstract class TgkView : View, IKeyInput
@@ -105,6 +105,7 @@ public abstract class TgkView : View, IKeyInput
     {
         KeyboardHub.Install(Application);
         AppWindow.HookResize();
+        UiClock.Start();
         Build();
         _built = true;
         if (_showPending)
@@ -166,17 +167,7 @@ public abstract class TgkView : View, IKeyInput
 
     internal void RemoveDialog(DialogBase dialog) => _dialogs.Remove(dialog);
 
-    public override void OnDeactivated()
-    {
-        KeyboardHub.CancelRepeat();
-        base.OnDeactivated();
-    }
-
-    private void OnLoop()
-    {
-        KeyboardHub.Tick();
-        UiClock.RaiseTick();
-    }
+    private void OnLoop() => UiClock.RaiseTick();
 
     public virtual bool OnKey(KeyStroke key)
     {

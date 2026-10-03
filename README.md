@@ -80,7 +80,7 @@ System Settings → Privacy & Security. If macOS says the app "is damaged", run 
 To build from source you need the [.NET 10 SDK](https://dotnet.microsoft.com/download).
 
 ```bash
-git clone --recurse-submodules https://github.com/AlexandruMindra/TGK.git
+git clone https://github.com/AlexandruMindra/TGK.git
 cd TGK
 dotnet run --project src/TGK.Client
 ```
@@ -127,5 +127,5 @@ End-to-end SSH tests against a local test server and GUI checks: [docs/DEV-TESTI
 ## License
 
 [MIT](LICENSE). Third-party components: [Blossom](https://github.com/cretucosmin3/Blossom) (MIT),
-[SSH.NET](https://github.com/sshnet/SSH.NET) (MIT), SkiaSharp and Silk.NET (MIT), QRCoder (MIT),
+[SSH.NET](https://github.com/sshnet/SSH.NET) (MIT), SkiaSharp and Silk.NET (MIT), QRCoder (MIT), GLFW (zlib),
 DejaVu Sans Mono ([license](assets/fonts/DejaVu-LICENSE.txt)).

@@ -315,7 +315,7 @@ public sealed class TunnelsEditor
                 Gfx.Text(c, "No tunnels yet. Add one below.", W / 2f, H / 2f, Theme.FontBase, Theme.WeightRegular, Theme.TextMuted, TextAlignment.Center);
                 return;
             }
-            SKPaint mono = Gfx.Font(Theme.FontSm, Theme.Mono);
+            SKFont mono = Gfx.Font(Theme.FontSm, Theme.Mono);
             for (int i = 0; i < tunnels.Count; i++)
             {
                 PortForward t = tunnels[i];

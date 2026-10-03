@@ -2,8 +2,8 @@ namespace TGK.Client.Input;
 
 /// <summary>
 /// Implemented by elements (or views) that take keyboard input from <see cref="KeyboardHub"/>.
-/// Controls must use this instead of Blossom's <c>Events.OnKeyDown/OnKeyType</c>, which lose Ctrl/Alt combos
-/// and key repeat; subscribing to both would deliver keys twice.
+/// Controls must use this instead of Blossom's own <c>Events.OnKeyDown/OnTextInput</c>: Blossom raises those on the
+/// focused element before the hub sees the key, so handling a key there would bypass the global shortcuts.
 /// </summary>
 public interface IKeyInput
 {

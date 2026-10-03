@@ -148,7 +148,7 @@ public sealed class TgkApplication : Application
     internal void RestartForUpdate()
     {
         RelaunchRequested = true;
-        AppWindow.Window?.Close();
+        AppWindow.Close();
     }
 
     /// <summary>

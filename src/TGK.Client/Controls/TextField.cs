@@ -199,7 +199,7 @@ public class TextField : Control, IKeyInput, IFocusable
     private void Copy()
     {
         if (HasSelection && !(IsPassword && !_revealed))
-            Browser.SetClipboardText(_text.Substring(SelectionStart, SelectionLength));
+            Shell.SetClipboardText(_text.Substring(SelectionStart, SelectionLength));
     }
 
     private void Cut()
@@ -212,7 +212,7 @@ public class TextField : Control, IKeyInput, IFocusable
 
     private void Paste()
     {
-        string clip = Browser.GetClipboardText();
+        string clip = Shell.GetClipboardText();
         if (clip.Length > 0)
             ReplaceSelection(Sanitize(clip));
     }
@@ -309,7 +309,7 @@ public class TextField : Control, IKeyInput, IFocusable
 
     // ---- geometry ----
 
-    private SKPaint Font => Mono ? Gfx.Font(FontSize, Theme.Mono) : Gfx.Font(FontSize);
+    private SKFont Font => Mono ? Gfx.Font(FontSize, Theme.Mono) : Gfx.Font(FontSize);
 
     private string Display => IsPassword && !_revealed ? new string('•', _text.Length) : _text;
 
@@ -490,7 +490,7 @@ public class TextField : Control, IKeyInput, IFocusable
         }
 
         EnsureCaretVisible();
-        SKPaint font = Font;
+        SKFont font = Font;
         float left = TextLeft, right = TextRight;
         float baseline = Gfx.Baseline(font, H / 2f);
         int save = c.Save();
