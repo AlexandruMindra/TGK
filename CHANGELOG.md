@@ -10,6 +10,18 @@ shows the current Unreleased section.
 
 ## [Unreleased]
 
+### Added
+
+- **Generate SSH keys** (Keys & identities → *Generate…*): a new Ed25519 key (recommended) or RSA 4096 key (for older
+  servers) is created on the device and kept in the vault with the identity.
+- **Copy public key** for any identity's private key, as an `authorized_keys` line to add on your servers.
+- **Keys found on this device**: when an identity has no key yet, the private keys already on the device are listed so
+  one click loads them. Only the usual places are searched, never the whole disk: `~/.ssh` (and its subfolders), the
+  `IdentityFile`s of `~/.ssh/config` and the keys used by saved PuTTY and WinSCP sessions; *Search Downloads, Desktop,
+  Documents* also looks at the top level of those folders. Encrypted keys are listed without asking for their
+  passphrase, and keys already in the vault are marked. Nothing leaves the device until you save the identity.
+- **Remove a loaded key** (× in the key box) to pick another one, e.g. from the keys found on this device.
+
 ## [0.2.3] - 2026-10-03
 
 ### Changed

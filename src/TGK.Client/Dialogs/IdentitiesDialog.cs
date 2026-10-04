@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Blossom;
 using Blossom.Core.Visual;
@@ -18,7 +19,7 @@ namespace TGK.Client.Dialogs;
 /// <summary>"Keys &amp; identities": the list of saved identities on the left, an editor for the selected one on the right.</summary>
 public sealed class IdentitiesDialog : DialogBase
 {
-    private const float ListW = 220, BodyH = 392, Gap = 16, KeyBoxH = 58;
+    private const float ListW = 220, BodyH = 440, Gap = 16, KeyBoxH = 58;
     private const int MaxKeyFileBytes = 64 * 1024;
 
     private readonly IVaultService _vault;
@@ -28,12 +29,18 @@ public sealed class IdentitiesDialog : DialogBase
     private readonly TextField _name, _user, _password, _passphrase;
     private readonly SegmentedControl _auth;
     private readonly KeyStatusBox _keyBox;
-    private readonly Button _paste, _import;
+    private readonly IconButton _clearKey;
+    private readonly Button _paste, _import, _generate, _copyPublic;
+    private readonly Label _foundCaption;
+    private readonly Button _searchMore;
+    private readonly FoundKeyList _found;
     private readonly Label _error;
     private readonly Button _delete, _save;
     private Identity _draft = new();
     private bool _isNew;
     private int _inspectGeneration;
+    private bool _scannedUserFolders;
+    private List<LocalKey>? _foundKeys;
 
     public IdentitiesDialog(TgkView view) : base(view, "Keys & identities", 780)
     {
@@ -61,15 +68,27 @@ public sealed class IdentitiesDialog : DialogBase
         _password = AddBody(new TextField("Leave empty to be asked when connecting") { IsPassword = true });
         _keyCaption = AddBody(Form.Caption("Private key"));
         _keyBox = AddBody(new KeyStatusBox());
-        _paste = AddBody(new Button("Paste from clipboard", ButtonVariant.Secondary, "clipboard"));
+        _clearKey = AddBody(new IconButton("x", 14));
+        _clearKey.Clicked += ClearKey;
+        _paste = AddBody(new Button("Paste", ButtonVariant.Secondary, "clipboard"));
         _paste.Clicked += PasteKey;
-        _import = AddBody(new Button("Import file…", ButtonVariant.Secondary, "file"));
+        _import = AddBody(new Button("Import…", ButtonVariant.Secondary, "file"));
         _import.Clicked += ImportKey;
+        _generate = AddBody(new Button("Generate…", ButtonVariant.Secondary, "bolt"));
+        _generate.Clicked += ShowGenerateMenu;
+        _copyPublic = AddBody(new Button("Copy public key", ButtonVariant.Secondary, "copy"));
+        _copyPublic.Clicked += CopyPublicKey;
+        _foundCaption = AddBody(Form.Caption("Found on this device"));
+        _searchMore = AddBody(new Button("Search Downloads, Desktop, Documents", ButtonVariant.Ghost, "search") { FontSize = Theme.FontSm });
+        _searchMore.Clicked += () => ScanDevice(includeUserFolders: true);
+        _found = AddBody(new FoundKeyList());
+        _found.Picked += UseFoundKey;
         _passphraseCaption = AddBody(Form.Caption("Passphrase"));
         _passphrase = AddBody(new TextField("Only for encrypted keys") { IsPassword = true });
         _passphrase.Changed += _ =>
         {
             _draft.KeyType = _draft.Fingerprint = null; // must be re-verified with the new passphrase
+            _copyPublic.Visible = false;
             InspectKey(delayMs: 350);
         };
         _error = AddBody(new Label("", Theme.FontSm, Theme.Danger) { MaxLines = 2, Visible = false });
@@ -84,6 +103,7 @@ public sealed class IdentitiesDialog : DialogBase
             Select(identities[0]);
         else
             StartNew();
+        ScanDevice(includeUserFolders: false);
     }
 
     protected override VisualElement? InitialFocus => _name;
@@ -120,15 +140,21 @@ public sealed class IdentitiesDialog : DialogBase
         SetError(null);
         UpdateAuthVisibility();
         ShowKeyStatus();
+        ShowFoundKeys(); // "In vault" marks change as identities are saved
         RefreshList();
     }
 
     private void UpdateAuthVisibility()
     {
-        bool key = _auth.SelectedIndex == 1;
+        bool key = _auth.SelectedIndex == 1, loaded = key && !string.IsNullOrWhiteSpace(_draft.PrivateKey);
         _passwordCaption.Visible = _password.Visible = !key;
-        _keyCaption.Visible = _keyBox.Visible = _paste.Visible = _import.Visible = key;
-        _passphraseCaption.Visible = _passphrase.Visible = key;
+        _keyCaption.Visible = _keyBox.Visible = _paste.Visible = _import.Visible = _generate.Visible = key;
+        // Without a key, the space below offers the keys found on this device; once one is loaded, its passphrase.
+        _passphraseCaption.Visible = _passphrase.Visible = loaded;
+        _copyPublic.Visible = loaded && _draft.Fingerprint is not null;
+        _clearKey.Visible = _keyBox.ReserveRight = loaded;
+        _foundCaption.Visible = _found.Visible = key && !loaded;
+        _searchMore.Visible = key && !loaded && !_scannedUserFolders;
         InvalidateLayout();
     }
 
@@ -144,7 +170,7 @@ public sealed class IdentitiesDialog : DialogBase
     private void ShowKeyStatus()
     {
         if (string.IsNullOrWhiteSpace(_draft.PrivateKey))
-            _keyBox.Set("No key loaded", "Paste an OpenSSH, PEM or PuTTY private key, or import it from a file.", KeyState.Empty);
+            _keyBox.Set("No key loaded", "Paste, import or generate a key, or pick one found below.", KeyState.Empty);
         else if (_draft.KeyType is not null && _draft.Fingerprint is not null)
             _keyBox.Set($"{ShortType(_draft.KeyType)} key", _draft.Fingerprint, KeyState.Ok);
         else
@@ -153,11 +179,24 @@ public sealed class IdentitiesDialog : DialogBase
 
     private static string ShortType(string keyType) => keyType.StartsWith("ssh-", StringComparison.Ordinal) ? keyType[4..] : keyType;
 
+    /// <summary>Unloads the key (nothing is saved until Save), so another one can be picked.</summary>
+    private void ClearKey()
+    {
+        ++_inspectGeneration; // drops any key check in flight
+        _draft.PrivateKey = _draft.KeyType = _draft.Fingerprint = null;
+        _passphrase.Text = "";
+        ++_inspectGeneration;
+        SetError(null);
+        ShowKeyStatus();
+        UpdateAuthVisibility();
+    }
+
     private void SetKey(string text)
     {
         _draft.PrivateKey = text;
         _draft.KeyType = _draft.Fingerprint = null;
         SetError(null);
+        UpdateAuthVisibility();
         InspectKey();
     }
 
@@ -190,6 +229,7 @@ public sealed class IdentitiesDialog : DialogBase
         {
             _draft.KeyType = type;
             _draft.Fingerprint = fingerprint;
+            UpdateAuthVisibility();
             _keyBox.Set(needsPassphrase ? $"{ShortType(type)} key · passphrase OK" : $"{ShortType(type)} key", fingerprint, KeyState.Ok);
         }
         else if (needsPassphrase && passphrase.Length == 0)
@@ -235,21 +275,131 @@ public sealed class IdentitiesDialog : DialogBase
         }
         if (path is null || IsClosed)
             return;
+        await LoadKeyFile(path);
+    }
 
+    private async Task<bool> LoadKeyFile(string path)
+    {
         try
         {
             var info = new FileInfo(path);
             if (info.Length > MaxKeyFileBytes)
             {
                 SetError("That file is too large to be a private key.");
-                return;
+                return false;
             }
-            SetKey(await File.ReadAllTextAsync(path));
+            string text = await File.ReadAllTextAsync(path);
+            if (IsClosed)
+                return false;
+            SetKey(text);
+            return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
             SetError($"Could not read the file: {ex.Message}");
+            return false;
         }
+    }
+
+    // ---- keys found on this device ----
+
+    /// <summary>Looks for key files in the usual places (never the whole disk), off the UI thread.</summary>
+    private async void ScanDevice(bool includeUserFolders)
+    {
+        _found.SetScanning();
+        _searchMore.Enabled = false;
+        List<LocalKey> keys;
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            keys = await Task.Run(() => LocalKeyScanner.Scan(includeUserFolders: includeUserFolders, ct: timeout.Token));
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"Key scan failed: {ex.Message}");
+            keys = [];
+        }
+        if (IsClosed)
+            return;
+        _searchMore.Enabled = true;
+        if (includeUserFolders)
+            _scannedUserFolders = true;
+        _foundKeys = keys;
+        ShowFoundKeys();
+        UpdateAuthVisibility();
+    }
+
+    private void ShowFoundKeys()
+    {
+        if (_foundKeys is not null)
+            _found.SetKeys(_foundKeys, _vault.Current.Identities.Select(i => i.Fingerprint).OfType<string>().ToHashSet(), _scannedUserFolders);
+    }
+
+    private async void UseFoundKey(LocalKey key)
+    {
+        if (!await LoadKeyFile(key.Path))
+            return;
+        if (_isNew && _name.Text.Trim() is "" or "New identity")
+        {
+            _name.Text = Path.GetFileNameWithoutExtension(key.Path);
+            RefreshList();
+        }
+        if (key.Encrypted)
+            _passphrase.Focus();
+    }
+
+    // ---- generate / public key ----
+
+    private void ShowGenerateMenu()
+    {
+        var items = new List<MenuItem>
+        {
+            new() { Text = "Ed25519", Hint = "Recommended", Icon = "key", Action = () => GenerateKey(KeyAlgorithm.Ed25519) },
+            new() { Text = "RSA 4096", Hint = "For older servers", Icon = "key", Action = () => GenerateKey(KeyAlgorithm.Rsa4096) },
+        };
+        var at = _generate.Transform.Computed;
+        View.Menu.Show(items, at.X, at.Y + at.Height + 4, Math.Max(at.Width, 220), at.Height);
+    }
+
+    private async void GenerateKey(KeyAlgorithm algorithm)
+    {
+        string comment = _name.Text.Trim();
+        int generation = ++_inspectGeneration; // supersedes any key check in flight
+        _generate.Enabled = false;
+        _keyBox.Set("Generating key…", "", KeyState.Busy);
+        GeneratedKey key = await Task.Run(() => KeyGenerator.Generate(algorithm, comment));
+        _generate.Enabled = true;
+        if (IsClosed || generation != _inspectGeneration)
+            return;
+        _passphrase.Text = ""; // the vault protects the key: it is not encrypted on its own
+        ++_inspectGeneration; // the passphrase change scheduled a check: the new key needs none
+        _draft.PrivateKey = key.PrivateKey;
+        _draft.KeyType = key.KeyType;
+        _draft.Fingerprint = key.Fingerprint;
+        SetError(null);
+        ShowKeyStatus();
+        UpdateAuthVisibility();
+        View.ShowToast($"New {ShortType(key.KeyType)} key generated. Copy its public key to your servers, then save.", ToastKind.Success);
+    }
+
+    private async void CopyPublicKey()
+    {
+        string? privateKey = _draft.PrivateKey;
+        if (string.IsNullOrWhiteSpace(privateKey))
+            return;
+        string passphrase = _passphrase.Text, comment = _name.Text.Trim();
+        _copyPublic.Enabled = false;
+        string? line = await Task.Run(() => KeyInspector.PublicKey(privateKey, passphrase, comment));
+        _copyPublic.Enabled = true;
+        if (IsClosed)
+            return;
+        if (line is null)
+        {
+            SetError("The public key could not be read from this private key.");
+            return;
+        }
+        Shell.SetClipboardText(line);
+        View.ShowToast("Public key copied. Add it to ~/.ssh/authorized_keys on the server.", ToastKind.Success);
     }
 
     // Fallback when no native picker exists: type the path.
@@ -352,12 +502,36 @@ public sealed class IdentitiesDialog : DialogBase
         }
         else
         {
+            float boxY = y + Form.CaptionH + Form.CaptionGap;
+            _clearKey.Transform.SetLocalFrame(x + w - 38, boxY + (KeyBoxH - 28) / 2f, 28, 28);
             y = Form.Place(_keyCaption, _keyBox, x, y, w, KeyBoxH) + 10;
-            float pw = _paste.PreferredWidth;
-            _paste.Transform.SetLocalFrame(x, y, pw, 32);
-            _import.Transform.SetLocalFrame(x + pw + 8, y, _import.PreferredWidth, 32);
+            float bx = x;
+            foreach (Button button in new[] { _paste, _import, _generate, _copyPublic })
+            {
+                if (!button.Visible)
+                    continue;
+                float bw = button.PreferredWidth;
+                button.Transform.SetLocalFrame(bx, y, bw, 32);
+                bx += bw + 8;
+            }
             y += 32 + Form.RowGap;
-            y = Form.Place(_passphraseCaption, _passphrase, x, y, w) + Form.RowGap;
+            if (_passphrase.Visible)
+            {
+                y = Form.Place(_passphraseCaption, _passphrase, x, y, w) + Form.RowGap;
+            }
+            else
+            {
+                _foundCaption.Transform.SetLocalFrame(x, y, w, Form.CaptionH);
+                if (_searchMore.Visible)
+                {
+                    float sw = _searchMore.PreferredWidth;
+                    _searchMore.Transform.SetLocalFrame(x + w - sw, y - 7, sw, 28);
+                }
+                y += Form.CaptionH + Form.CaptionGap;
+                float listH = top + BodyH - y - (_error.Visible ? 22 : 0);
+                _found.Transform.SetLocalFrame(x, y, w, listH);
+                y += listH + 6;
+            }
         }
         if (_error.Visible)
             _error.Transform.SetLocalFrame(x, y - 4, w, _error.MeasureHeight(w));
@@ -372,6 +546,10 @@ public sealed class IdentitiesDialog : DialogBase
     {
         private string _title = "", _detail = "";
         private KeyState _state;
+        private bool _reserveRight;
+
+        /// <summary>Leaves room at the right edge for the remove button.</summary>
+        public bool ReserveRight { get => _reserveRight; set => SetAndPaint(ref _reserveRight, value); }
 
         public void Set(string title, string detail, KeyState state)
         {
@@ -395,12 +573,13 @@ public sealed class IdentitiesDialog : DialogBase
             Gfx.StrokeRound(c, r, Theme.Radius, _state is KeyState.Empty or KeyState.Busy ? Theme.BorderInput : tint.WithAlpha(110));
             Gfx.FillRound(c, SKRect.Create(10, H / 2f - 17, 34, 34), Theme.Radius, tint.WithAlpha(32));
             Icons.Draw(c, "key", 27, H / 2f, 18, tint);
+            float textW = W - (_reserveRight ? 100 : 66);
             Gfx.Text(c, _title, 56, _detail.Length > 0 ? H / 2f - 9 : H / 2f, Theme.FontBase, Theme.WeightSemibold,
-                _state == KeyState.Error ? Theme.Danger : Theme.TextPrimary, TextAlignment.Left, W - 66);
+                _state == KeyState.Error ? Theme.Danger : Theme.TextPrimary, TextAlignment.Left, textW);
             // A loaded key shows its fingerprint in the monospace font, like ssh-keygen -l.
             SKFont detailFont = _state == KeyState.Ok ? Gfx.Font(Theme.FontSm, Theme.Mono) : Gfx.Font(Theme.FontSm);
             if (_detail.Length > 0)
-                Gfx.Text(c, _detail, 56, H / 2f + 10, detailFont, Theme.TextSecondary, TextAlignment.Left, W - 66);
+                Gfx.Text(c, _detail, 56, H / 2f + 10, detailFont, Theme.TextSecondary, TextAlignment.Left, textW);
         }
     }
 
@@ -532,6 +711,136 @@ public sealed class IdentitiesDialog : DialogBase
             }
             if (count == 0)
                 Gfx.Text(c, "No identities yet", W / 2f, 30, Theme.FontBase, Theme.WeightRegular, Theme.TextMuted, TextAlignment.Center);
+        }
+    }
+
+    /// <summary>The private keys found on this device; a click loads one. Keys already in the vault are listed last.</summary>
+    private sealed class FoundKeyList : Control
+    {
+        private const float RowH = 42, Inset = 4;
+        private List<LocalKey> _items = [];
+        private HashSet<string> _inVault = [];
+        private string _empty = "";
+        private bool _scanning;
+        private int _hover = -1;
+        private float _scroll, _pointerY = -1;
+
+        public FoundKeyList()
+        {
+            IsClipping = true;
+            Events.OnMouseMove += (_, e) =>
+            {
+                _pointerY = e.Relative.Y;
+                SetAndPaint(ref _hover, IndexAt(_pointerY));
+            };
+            Events.OnClick += (_, e) =>
+            {
+                e.Handled = true;
+                int i = IndexAt(e.Relative.Y);
+                if (i >= 0)
+                    Picked?.Invoke(_items[i]);
+            };
+            Events.OnScroll += (_, e) =>
+            {
+                e.Handled = true;
+                SetAndPaint(ref _scroll, Math.Clamp(_scroll - e.Offset.Y * RowH, 0, MaxScroll));
+                SetAndPaint(ref _hover, IndexAt(_pointerY));
+            };
+        }
+
+        public event Action<LocalKey>? Picked;
+
+        private float MaxScroll => Math.Max(0, 2 * Inset + _items.Count * RowH - H);
+
+        public void SetScanning()
+        {
+            _scanning = true;
+            InvalidatePaint();
+        }
+
+        public void SetKeys(List<LocalKey> keys, HashSet<string> inVault, bool searchedUserFolders)
+        {
+            _scanning = false;
+            _inVault = inVault;
+            _items = keys.OrderBy(k => k.Fingerprint is not null && inVault.Contains(k.Fingerprint)).ToList(); // stable: keeps the scan order
+            _empty = searchedUserFolders
+                ? "No private keys found in ~/.ssh, your SSH config, Downloads, Desktop or Documents."
+                : "No private keys found in ~/.ssh or your SSH config.";
+            _scroll = 0;
+            _hover = IndexAt(_pointerY);
+            InvalidatePaint();
+        }
+
+        protected override void OnHoverChanged()
+        {
+            if (!IsHovered)
+            {
+                _hover = -1;
+                _pointerY = -1;
+            }
+        }
+
+        private int IndexAt(float y)
+        {
+            if (y < 0 || y >= H)
+                return -1;
+            float contentY = y + _scroll - Inset;
+            int i = (int)(contentY / RowH);
+            return contentY >= 0 && i < _items.Count ? i : -1;
+        }
+
+        private static string Display(string path)
+        {
+            string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            return path.StartsWith(home + Path.DirectorySeparatorChar, StringComparison.Ordinal) ? "~" + path[home.Length..] : path;
+        }
+
+        protected override void Paint(SKCanvas c)
+        {
+            var r = new SKRect(0, 0, W, H);
+            Gfx.FillRound(c, r, Theme.Radius, Theme.Input);
+            Gfx.StrokeRound(c, r, Theme.Radius, Theme.Border);
+            if (_items.Count == 0)
+            {
+                Gfx.Text(c, _scanning ? "Looking for keys on this device…" : _empty, 14, 22, Theme.FontSm, Theme.WeightRegular,
+                    Theme.TextMuted, TextAlignment.Left, W - 28);
+                return;
+            }
+            bool scrollable = MaxScroll > 0;
+            float right = W - (scrollable ? 12 : 4);
+            c.Save();
+            c.ClipRect(new SKRect(1, 1, W - 1, H - 1));
+            for (int i = 0; i < _items.Count; i++)
+            {
+                var row = new SKRect(4, Inset + i * RowH - _scroll, right, Inset + (i + 1) * RowH - _scroll);
+                if (row.Bottom < 0 || row.Top > H)
+                    continue;
+                LocalKey key = _items[i];
+                bool inVault = key.Fingerprint is not null && _inVault.Contains(key.Fingerprint);
+                if (i == _hover)
+                    Gfx.FillRound(c, row, Theme.RadiusSm, Theme.SurfaceRaised);
+                Icons.Draw(c, key.Encrypted ? "lock" : "key", row.Left + 18, row.MidY, 16, inVault ? Theme.TextMuted : Theme.Accent);
+                string tag = inVault ? "In vault" : key.Encrypted ? "Encrypted" : "";
+                float tagW = tag.Length > 0 ? 80 : 0;
+                string title = Path.GetFileName(key.Path) + (key.KeyType is { } t ? $" · {ShortType(t)}" : "");
+                Gfx.Text(c, title, row.Left + 36, row.MidY - 8, Theme.FontBase, Theme.WeightRegular,
+                    inVault ? Theme.TextSecondary : Theme.TextPrimary, TextAlignment.Left, row.Width - 44 - tagW);
+                string detail = key.Comment is { Length: > 0 } comment ? $"{comment} · {Display(key.Path)}" : Display(key.Path);
+                Gfx.Text(c, detail, row.Left + 36, row.MidY + 9, Theme.FontSm, Theme.WeightRegular, Theme.TextMuted,
+                    TextAlignment.Left, row.Width - 44);
+                if (tag.Length > 0)
+                    Gfx.Text(c, tag, row.Right - 10, row.MidY - 8, Theme.FontSm, Theme.WeightRegular,
+                        inVault ? Theme.TextMuted : Theme.Warning, TextAlignment.Right);
+            }
+            c.Restore();
+
+            if (scrollable)
+            {
+                float track = H - 2 * Inset;
+                float thumb = Math.Max(24, track * H / (H + MaxScroll));
+                float y = Inset + (track - thumb) * (_scroll / MaxScroll);
+                Gfx.FillRound(c, SKRect.Create(W - 8, y, 4, thumb), 2, Theme.TextMuted.WithAlpha(110));
+            }
         }
     }
 }

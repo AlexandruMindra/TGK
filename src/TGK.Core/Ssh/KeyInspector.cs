@@ -39,6 +39,25 @@ public static class KeyInspector
         }
     }
 
+    /// <summary>
+    /// The public half of <paramref name="privateKeyText"/> as an <c>authorized_keys</c> line
+    /// (<c>ssh-ed25519 AAAA...</c>, plus <paramref name="comment"/> when given), or null when the key cannot be read.
+    /// </summary>
+    public static string? PublicKey(string privateKeyText, string? passphrase, string? comment = null)
+    {
+        try
+        {
+            using PrivateKeyFile keyFile = Load(privateKeyText, passphrase);
+            KeyHostAlgorithm algorithm = keyFile.HostKeyAlgorithms.OfType<KeyHostAlgorithm>().First();
+            string line = $"{keyFile.Key} {Convert.ToBase64String(algorithm.Data)}";
+            return string.IsNullOrWhiteSpace(comment) ? line : $"{line} {comment.Trim()}";
+        }
+        catch (SshSessionException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>True when the key is encrypted and cannot be loaded without a passphrase.</summary>
     public static bool NeedsPassphrase(string privateKeyText)
     {
