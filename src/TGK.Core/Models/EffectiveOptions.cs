@@ -39,7 +39,10 @@ public sealed record EffectiveHostOptions(
     Resolved<int> ScrollbackLines,
     Resolved<string> CursorShape,
     Resolved<bool> CursorBlink,
-    Resolved<bool> CopyOnSelect)
+    Resolved<bool> CopyOnSelect,
+    Resolved<AgentAccess> AgentAccess,
+    Resolved<IReadOnlyList<string>> AgentCommands,
+    Resolved<IReadOnlyList<string>> AgentProtectedPaths)
 {
     /// <summary>Name of the host's group (for <see cref="OptionSource.Group"/>), or null when it has none.</summary>
     public string? GroupName { get; init; }
@@ -54,6 +57,7 @@ public static class EffectiveOptions
     public const string DefaultTerminalType = "xterm-256color";
     public const string DefaultColorScheme = "TGK Dark";
     public const bool DefaultLegacyAlgorithms = false;
+    public const AgentAccess DefaultAgentAccess = AgentAccess.Off;
 
     /// <summary>The bundled terminal font.</summary>
     public const string DefaultFontFamily = "DejaVu Sans Mono";
@@ -104,7 +108,10 @@ public static class EffectiveOptions
             Value(levels, o => o.ScrollbackLines, BuiltIn.ScrollbackLines),
             Reference(levels, o => o.CursorShape, BuiltIn.CursorShape),
             Value(levels, o => o.CursorBlink, BuiltIn.CursorBlink),
-            Value(levels, o => o.CopyOnSelect, BuiltIn.CopyOnSelect));
+            Value(levels, o => o.CopyOnSelect, BuiltIn.CopyOnSelect),
+            Value(levels, o => o.AgentAccess, DefaultAgentAccess),
+            Reference<IReadOnlyList<string>>(levels, o => o.AgentCommands?.ToList(), []),
+            Reference<IReadOnlyList<string>>(levels, o => o.AgentProtectedPaths?.ToList(), []));
     }
 
     private static readonly TerminalSettings BuiltIn = new();

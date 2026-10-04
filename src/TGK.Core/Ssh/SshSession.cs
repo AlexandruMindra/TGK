@@ -46,12 +46,6 @@ public sealed class SshSession : IDisposable
     private const long MaxBufferedOutput = 256 * 1024;
     private const long MaxPendingInput = 4 * 1024 * 1024;
 
-    // Hidden prompts that ask for the account password (PAM's "Password: " and common translations). Prompts that also
-    // mention a code or token (e.g. "One-time password (OATH)") are second factors and never get the password.
-    private static readonly string[] PasswordWords =
-        ["password", "passwort", "passwd", "mot de passe", "contraseña", "senha", "wachtwoord", "hasło", "пароль", "lösenord", "salasana", "heslo", "密码", "密碼", "パスワード", "비밀번호"];
-    private static readonly string[] SecondFactorWords = ["one-time", "one time", "otp", "oath", "code", "token", "verification", "factor"];
-
     private readonly IHostKeyVerifier _verifier;
     private readonly InteractivePromptHandler? _promptUser;
     private readonly Lock _gate = new();
@@ -262,7 +256,7 @@ public sealed class SshSession : IDisposable
         try
         {
             SshConnectRequest[] hops = [.. request.JumpChain, request];
-            Hop? previous = null;
+            SshHop? previous = null;
             for (int i = 0; i < hops.Length; i++)
             {
                 SshConnectRequest target = hops[i];
@@ -271,7 +265,7 @@ public sealed class SshSession : IDisposable
                 if (previous is not null)
                     TryTransition(SessionState.Connecting, $"Connecting to {target.Label} through {previous.Request.Label}...");
 
-                Hop hop = CreateHop(target, isFinal: i == hops.Length - 1, via: previous?.Forward);
+                SshHop hop = CreateHop(target, isFinal: i == hops.Length - 1, via: previous?.Forward);
                 connection.Hops.Add(hop);
                 lock (_gate)
                 {
@@ -313,7 +307,7 @@ public sealed class SshSession : IDisposable
             // From here on SSH.NET's timeout only limits how long a write may wait for the server to accept more input
             // (its channel window). A busy program may not read its input for a long time; that is not an error. The
             // jump hosts carry that input too.
-            foreach (Hop hop in connection.Hops)
+            foreach (SshHop hop in connection.Hops)
                 hop.Client.ConnectionInfo.Timeout = Timeout.InfiniteTimeSpan;
 
             lock (_gate)
@@ -334,85 +328,31 @@ public sealed class SshSession : IDisposable
     }
 
     /// <summary>
-    /// Loads the key and creates the client for one hop, connecting directly or, for a hop behind a jump host, to
-    /// <paramref name="via"/>'s local port. Its host key is always verified against the hop's own host and port.
+    /// Creates the client for one hop (see <see cref="SshHop.Create"/>), connecting directly or, for a hop behind a
+    /// jump host, to <paramref name="via"/>'s local port. Its host key is always verified against the hop's own host and port.
     /// </summary>
-    private Hop CreateHop(SshConnectRequest request, bool isFinal, ForwardedPortLocal? via)
+    private SshHop CreateHop(SshConnectRequest request, bool isFinal, ForwardedPortLocal? via)
     {
-        string username = request.Username.Trim();
-        PrivateKeyFile? keyFile = string.IsNullOrWhiteSpace(request.PrivateKey)
-            ? null
-            : KeyInspector.Load(request.PrivateKey, request.Passphrase);
-
-        // SSH.NET tries the methods the server allows in the order listed here.
-        ConnectionInfo? info = null;
-        var methods = new List<AuthenticationMethod>();
-        if (keyFile is not null)
-            methods.Add(new PrivateKeyAuthenticationMethod(username, new SingleSignatureKeySource(keyFile, () => info?.ServerVersion)));
-        if (!string.IsNullOrEmpty(request.Password))
-            methods.Add(new PasswordAuthenticationMethod(username, request.Password));
-        if (!string.IsNullOrEmpty(request.Password) || _promptUser is not null)
-        {
-            var interactive = new KeyboardInteractiveAuthenticationMethod(username);
-            bool passwordSent = false; // the prompts of one sign-in arrive one request at a time
-            interactive.AuthenticationPrompt += (_, e) =>
-            {
-                foreach (AuthenticationPrompt prompt in e.Prompts)
-                    prompt.Response = AnswerPrompt(request, e.Instruction, prompt, ref passwordSent);
-            };
-            methods.Add(interactive);
-        }
-
-        info = via is null
-            ? new ConnectionInfo(request.Host.Trim(), request.Port, username, methods.ToArray())
-            : new ConnectionInfo(via.BoundHost, (int)via.BoundPort, username, methods.ToArray());
-        // SSH.NET waits for key exchange and authentication, which include our prompts, with this timeout.
-        info.Timeout = request.ConnectTimeout + PromptTimeout;
-        if (!request.LegacyAlgorithms)
-            SshAlgorithms.RemoveLegacy(info);
-
-        var client = new SshClient(info)
-        {
-            KeepAliveInterval = request.KeepAlive > TimeSpan.Zero ? request.KeepAlive : Timeout.InfiniteTimeSpan,
-        };
-        var hop = new Hop(request, isFinal, client, keyFile);
-        client.HostKeyReceived += (_, e) => OnHostKeyReceived(hop, e);
-        client.ErrorOccurred += (_, e) => OnConnectionError(hop, e.Exception);
+        SshHop hop = SshHop.Create(request, isFinal, via, _promptUser is null ? null : AskUser, PromptTimeout);
+        hop.Client.HostKeyReceived += (_, e) => OnHostKeyReceived(hop, e);
+        hop.Client.ErrorOccurred += (_, e) => OnConnectionError(hop, e.Exception);
         return hop;
     }
 
-    // Runs on an SSH.NET worker thread; throwing fails the keyboard-interactive method (and so the sign-in).
-    private string AnswerPrompt(SshConnectRequest request, string instruction, AuthenticationPrompt prompt, ref bool passwordSent)
+    // Runs on an SSH.NET worker thread while the sign-in waits; null when declined (which cancels the attempt) or timed out.
+    private string? AskUser(InteractivePrompt question)
     {
-        if (!prompt.IsEchoed && !string.IsNullOrEmpty(request.Password) && IsPasswordPrompt(prompt.Request))
+        string? answer = WaitForUser(token => _promptUser!(question, token), null);
+        if (answer is null)
         {
-            // The password is offered once: a server that asks again has rejected it.
-            if (passwordSent)
-                throw new SshAuthenticationException("Permission denied (keyboard-interactive).");
-            passwordSent = true;
-            return request.Password;
+            lock (_gate)
+                _promptDeclined |= !_promptTimedOut;
         }
-
-        if (_promptUser is null)
-        {
-            throw new SshSessionException(SshErrorKind.UnsupportedAuthMethod,
-                $"{request.Host} asks \"{prompt.Request.Trim()}\" to sign in, which can't be answered here.");
-        }
-        var question = new InteractivePrompt(request.Host, request.Port, request.Username, instruction ?? "", prompt.Request, prompt.IsEchoed);
-        string? answer = WaitForUser(token => _promptUser(question, token), null);
-        if (answer is not null)
-            return answer;
-        lock (_gate)
-            _promptDeclined |= !_promptTimedOut;
-        throw new SshAuthenticationException("The sign-in prompt was not answered.");
+        return answer;
     }
 
-    private static bool IsPasswordPrompt(string text) =>
-        Array.Exists(PasswordWords, w => text.Contains(w, StringComparison.OrdinalIgnoreCase))
-        && !Array.Exists(SecondFactorWords, w => text.Contains(w, StringComparison.OrdinalIgnoreCase));
-
     // Raised on SSH.NET's message-listener thread during key exchange; the connection waits for our answer.
-    private void OnHostKeyReceived(Hop hop, HostKeyEventArgs e)
+    private void OnHostKeyReceived(SshHop hop, HostKeyEventArgs e)
     {
         string fingerprint = "SHA256:" + e.FingerPrintSHA256;
         lock (_gate)
@@ -491,7 +431,7 @@ public sealed class SshSession : IDisposable
     // behind it. So the session ends as lost: at once for a jump host (the root cause, reported before the hops behind
     // it notice), after a moment for the final host, in which a shell that exited just before (and whose server then
     // disconnected) ends it as closed instead.
-    private void OnConnectionError(Hop hop, Exception error)
+    private void OnConnectionError(SshHop hop, Exception error)
     {
         if (State != SessionState.Connected)
             return;
@@ -742,7 +682,7 @@ public sealed class SshSession : IDisposable
         private int _disposed;
 
         /// <summary>Jump hosts in connection order, then the final host.</summary>
-        public List<Hop> Hops { get; } = [];
+        public List<SshHop> Hops { get; } = [];
 
         public SshClient Final => Hops[^1].Client;
         public ShellStream? Shell { get; set; }
@@ -751,54 +691,9 @@ public sealed class SshSession : IDisposable
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0)
                 return;
-            Try(() => Shell?.Dispose());
+            SshHop.Try(() => Shell?.Dispose());
             for (int i = Hops.Count - 1; i >= 0; i--) // innermost first: each hop runs through the ones before it
                 Hops[i].Dispose();
-        }
-    }
-
-    /// <summary>One SSH connection of a (possibly jumped) session.</summary>
-    private sealed class Hop(SshConnectRequest request, bool isFinal, SshClient client, PrivateKeyFile? keyFile) : IDisposable
-    {
-        public SshConnectRequest Request { get; } = request;
-        public bool IsFinal { get; } = isFinal;
-        public SshClient Client { get; } = client;
-
-        /// <summary>Guarded by the session's gate.</summary>
-        public string? TrustedFingerprint { get; set; }
-
-        /// <summary>The local port leading to the next hop (jump hosts only).</summary>
-        public ForwardedPortLocal? Forward { get; private set; }
-
-        /// <summary>Listens on an ephemeral loopback port whose connections this hop forwards to <paramref name="next"/>.</summary>
-        public void ForwardTo(SshConnectRequest next)
-        {
-            var forward = new ForwardedPortLocal(IPAddress.Loopback.ToString(), 0, next.Host.Trim(), (uint)next.Port);
-            Client.AddForwardedPort(forward);
-            forward.Start();
-            Forward = forward;
-        }
-
-        public void Dispose()
-        {
-            IList<AuthenticationMethod> methods = Client.ConnectionInfo.AuthenticationMethods; // unreadable once disposed
-            // Best effort: each step runs even if an earlier one fails on a half-closed connection.
-            Try(Client.Dispose);
-            foreach (AuthenticationMethod method in methods)
-                Try(() => (method as IDisposable)?.Dispose());
-            Try(() => keyFile?.Dispose());
-        }
-    }
-
-    private static void Try(Action action)
-    {
-        try
-        {
-            action();
-        }
-        catch (Exception)
-        {
-            // Teardown errors are irrelevant: the connection is gone either way.
         }
     }
 }

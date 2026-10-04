@@ -19,6 +19,8 @@
     <ProjectReference Include="..\..\src\TGK.Core\TGK.Core.csproj" />
     <!-- The end-to-end SSH tests render the session through the real emulator. -->
     <ProjectReference Include="..\..\src\TGK.Terminal\TGK.Terminal.csproj" />
+    <!-- The agent tests start the real tgk-mcp. -->
+    <ProjectReference Include="..\..\src\TGK.Mcp\TGK.Mcp.csproj" />
   </ItemGroup>
 
 </Project>

@@ -10,6 +10,8 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <!-- DPAPI for the Windows "keep me signed in" credentials. -->
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
+    <!-- The MCP server agents talk to (low-level API only: no hosting or DI). -->
+    <PackageReference Include="ModelContextProtocol.Core" Version="2.2.0" />
   </ItemGroup>
 
   <ItemGroup>

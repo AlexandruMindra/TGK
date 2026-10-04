@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- tgk-mcp: the stdio MCP server agents (Claude Code…) start; it relays to the running TGK. docs/AGENTS.md -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>tgk-mcp</AssemblyName>
+    <RootNamespace>TGK.Mcp</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TGK.Core\TGK.Core.csproj" />
+  </ItemGroup>
+
+</Project>

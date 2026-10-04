@@ -11,6 +11,8 @@
   <ItemGroup>
     <ProjectReference Include="..\TGK.Core\TGK.Core.csproj" />
     <ProjectReference Include="..\TGK.Terminal\TGK.Terminal.csproj" />
+    <!-- tgk-mcp ships next to TGK (its executable, deps and runtimeconfig are copied into the output). -->
+    <ProjectReference Include="..\TGK.Mcp\TGK.Mcp.csproj" />
   </ItemGroup>
 
   <!-- GLFW for Linux under the name Silk.NET loads (assets/glfw/README.md), copied next to the executable -->

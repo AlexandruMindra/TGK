@@ -21,6 +21,8 @@ public sealed class HostOptions
     public const float MaxFontSize = 72;
     public const int MaxScrollbackLines = 1_000_000;
     public const int MaxFontFamilyLength = 128;
+    public const int MaxAgentRules = 100;
+    public const int MaxAgentRuleLength = 300;
 
     // ---- Connection ----
 
@@ -80,6 +82,23 @@ public sealed class HostOptions
 
     public bool? CopyOnSelect { get; set; }
 
+    // ---- Agents (MCP) ----
+
+    /// <summary>What local agents (MCP clients connected through TGK) may do on the host; built-in default: <see cref="Models.AgentAccess.Off"/>.</summary>
+    public AgentAccess? AgentAccess { get; set; }
+
+    /// <summary>
+    /// Command prefixes agents may run without asking (e.g. <c>git status</c>, <c>systemctl status</c>); with
+    /// <see cref="Models.AgentAccess.ReadOnly"/> the only commands besides the built-in read-only ones.
+    /// </summary>
+    public List<string>? AgentCommands { get; set; }
+
+    /// <summary>
+    /// Paths (globs: <c>*</c>, <c>**</c>, <c>~/</c>) that agents may only read or change with approval, in addition to
+    /// the built-in ones (<c>~/.ssh/**</c>, private keys…); with <see cref="Models.AgentAccess.ReadOnly"/> they are refused.
+    /// </summary>
+    public List<string>? AgentProtectedPaths { get; set; }
+
     /// <summary>Members this version does not know (e.g. from a newer client), kept so that saving does not drop them.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? Unknown { get; set; }
@@ -90,7 +109,8 @@ public sealed class HostOptions
         JumpHostId is null && KeepAliveSeconds is null && ConnectTimeoutSeconds is null && AutoReconnect is null
         && StartupCommand is null && Environment is null && TerminalType is null
         && FontSize is null && FontFamily is null && ColorScheme is null && LegacyAlgorithms is null
-        && ScrollbackLines is null && CursorShape is null && CursorBlink is null && CopyOnSelect is null;
+        && ScrollbackLines is null && CursorShape is null && CursorBlink is null && CopyOnSelect is null
+        && AgentAccess is null && AgentCommands is null && AgentProtectedPaths is null;
 
     /// <summary>
     /// <paramref name="defaults"/> with the terminal settings an older version kept on this device only
@@ -123,6 +143,8 @@ public sealed class HostOptions
     {
         var copy = (HostOptions)MemberwiseClone();
         copy.Environment = Environment?.Select(e => e.Clone()).ToList();
+        copy.AgentCommands = AgentCommands is null ? null : [.. AgentCommands];
+        copy.AgentProtectedPaths = AgentProtectedPaths is null ? null : [.. AgentProtectedPaths];
         copy.Unknown = Unknown is null ? null : new(Unknown);
         return copy;
     }
@@ -154,8 +176,48 @@ public sealed class HostOptions
             return $"The scrollback must be between 0 and {MaxScrollbackLines:N0} lines.";
         if (CursorShape is not null and not (TerminalSettings.CursorBlock or TerminalSettings.CursorBar or TerminalSettings.CursorUnderline))
             return "Choose a cursor style.";
+        if (AgentAccess is { } access && !Enum.IsDefined(access))
+            return "Choose what agents may do.";
+        if (ValidateRules(AgentCommands, "allowed command") is { } commands)
+            return commands;
+        if (ValidateRules(AgentProtectedPaths, "protected path") is { } paths)
+            return paths;
         return null;
     }
+
+    private static string? ValidateRules(List<string>? rules, string what)
+    {
+        if (rules is null)
+            return null;
+        if (rules.Count > MaxAgentRules)
+            return $"At most {MaxAgentRules} {what}s.";
+        foreach (string rule in rules)
+        {
+            if (string.IsNullOrWhiteSpace(rule))
+                return $"An {what} is empty.";
+            if (rule.Length > MaxAgentRuleLength)
+                return $"An {what} is longer than {MaxAgentRuleLength} characters.";
+            if (rule.Any(char.IsControl))
+                return $"The {what} \"{rule}\" contains a line break or control character.";
+        }
+        return null;
+    }
+}
+
+/// <summary>What local agents (MCP clients) may do on a host. See docs/AGENTS.md.</summary>
+public enum AgentAccess
+{
+    /// <summary>Nothing: the host is not shown to agents.</summary>
+    Off,
+
+    /// <summary>Read files and run read-only commands (built-in ones and the allowed commands); never change anything.</summary>
+    ReadOnly,
+
+    /// <summary>Reads are free; writes and other commands need the user's approval (allowed commands excepted).</summary>
+    Ask,
+
+    /// <summary>Everything without asking, except protected paths.</summary>
+    Full,
 }
 
 /// <summary>An environment variable for the remote session.</summary>
