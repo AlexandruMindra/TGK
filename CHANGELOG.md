@@ -10,6 +10,8 @@ shows the current Unreleased section.
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-04
+
 ### Added
 
 - **Generate SSH keys** (Keys & identities → *Generate…*): a new Ed25519 key (recommended) or RSA 4096 key (for older
@@ -126,7 +128,8 @@ First release.
   vault on one device; moving between the two; encrypted backups.
 - Linux and Windows builds.
 
-[Unreleased]: https://github.com/AlexandruMindra/TGK/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/AlexandruMindra/TGK/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/AlexandruMindra/TGK/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/AlexandruMindra/TGK/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/AlexandruMindra/TGK/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/AlexandruMindra/TGK/compare/v0.2.0...v0.2.1
