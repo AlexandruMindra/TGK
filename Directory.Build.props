@@ -6,6 +6,6 @@
     <LangVersion>latest</LangVersion>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <!-- Product version (client + server): the NEXT release. Rules: docs/RELEASING.md -->
-    <Version>0.2.3</Version>
+    <Version>0.3.0</Version>
   </PropertyGroup>
 </Project>
