@@ -43,6 +43,12 @@ public interface IAgentHost
 
     /// <summary>Asks the user; no answer within a reasonable time is <see cref="ApprovalAnswer.Deny"/>.</summary>
     Task<ApprovalAnswer> ApproveAsync(ApprovalRequest request, CancellationToken ct);
+
+    /// <summary>
+    /// The sudo password of the host's user (the saved password, one typed earlier, or asked now); null when the user
+    /// declined. <paramref name="error"/> says why a previous one did not work (it is asked again then).
+    /// </summary>
+    Task<string?> SudoPasswordAsync(HostEntry host, SshConnectRequest request, string? error, CancellationToken ct);
 }
 
 /// <summary>One agent's connection to TGK (one MCP session): its name, approvals and the files it has read.</summary>
@@ -113,6 +119,7 @@ public sealed class AgentToolbox : IDisposable
 
     private readonly IAgentHost _host;
     private readonly ConnectionPool _pool;
+    private int _running;
 
     public AgentToolbox(IAgentHost host, AgentActivity activity)
     {
@@ -125,6 +132,15 @@ public sealed class AgentToolbox : IDisposable
 
     public ConnectionPool Pool => _pool;
 
+    /// <summary>Calls running now (including ones waiting for approval or a connection).</summary>
+    public int Running => Volatile.Read(ref _running);
+
+    /// <summary>Raised (on any thread) when a call started or ended.</summary>
+    public event Action? RunningChanged;
+
+    /// <summary>Raised (on any thread) after each call with its record and the text the agent got back.</summary>
+    public event Action<AgentActivityEntry, string>? CallFinished;
+
     public void Dispose() => _pool.Dispose();
 
     /// <summary>Runs tool <paramref name="name"/> for <paramref name="session"/>; never throws except for cancellation.</summary>
@@ -132,6 +148,8 @@ public sealed class AgentToolbox : IDisposable
     {
         var call = new Call(this, session, name, arguments);
         await session.Calls.WaitAsync(ct).ConfigureAwait(false);
+        Interlocked.Increment(ref _running);
+        RunningChanged?.Invoke();
         try
         {
             ToolOutcome outcome = name switch
@@ -180,6 +198,8 @@ public sealed class AgentToolbox : IDisposable
         finally
         {
             session.Calls.Release();
+            Interlocked.Decrement(ref _running);
+            RunningChanged?.Invoke();
         }
     }
 
@@ -218,6 +238,7 @@ public sealed class AgentToolbox : IDisposable
     {
         string command = call.String("command");
         string? cwd = call.OptionalString("cwd");
+        bool sudo = call.Bool("sudo") ?? false;
         int seconds = call.Int("timeout_seconds") ?? (int)DefaultCommandTimeout.TotalSeconds;
         TimeSpan timeout = TimeSpan.FromSeconds(Math.Clamp(seconds, 1, (int)MaxCommandTimeout.TotalSeconds));
         call.Summary = command;
@@ -231,9 +252,19 @@ public sealed class AgentToolbox : IDisposable
             line = $"cd -- {RemotePath.Quote(dir)} && {command}";
             await call.ApproveAsync(AgentPolicy.Read(call.Rules, dir, home), "Run a command", call.Summary, null, $"run|{line}", ct).ConfigureAwait(false);
         }
-        await call.ApproveAsync(AgentPolicy.Run(call.Rules, command, home), "Run a command", call.Summary, null, $"run|{line}", ct).ConfigureAwait(false);
+        if (sudo)
+        {
+            call.Summary = "sudo: " + call.Summary;
+            await call.ApproveAsync(AgentPolicy.Sudo(call.Rules), "Run a command as root (sudo)", call.Summary, null, $"sudo|{line}", ct).ConfigureAwait(false);
+        }
+        else
+        {
+            await call.ApproveAsync(AgentPolicy.Run(call.Rules, command, home), "Run a command", call.Summary, null, $"run|{line}", ct).ConfigureAwait(false);
+        }
 
-        CommandResult result = await lease.Connection.RunAsync(line, timeout, ct: ct).ConfigureAwait(false);
+        CommandResult result = sudo
+            ? await RunSudoAsync(call, lease, line, timeout, ct).ConfigureAwait(false)
+            : await lease.Connection.RunAsync(line, timeout, ct: ct).ConfigureAwait(false);
         var sb = new StringBuilder();
         if (result.TimedOut)
             sb.Append(CultureInfo.InvariantCulture, $"Stopped after {timeout.TotalSeconds:0} s (timeout_seconds can be raised up to {MaxCommandTimeout.TotalSeconds:0}).\n");
@@ -251,6 +282,38 @@ public sealed class AgentToolbox : IDisposable
             sb.Append(CultureInfo.InvariantCulture, $"[output cut at {RemoteConnection.DefaultMaxOutput / 1024} KB per stream; narrow it down with head, tail or grep]\n");
         call.Detail = result.TimedOut ? "timed out" : result.ExitCode is { } c ? $"exit {c}" : $"signal {result.ExitSignal}";
         return new ToolOutcome(sb.ToString(), result.TimedOut);
+    }
+
+    /// <summary>
+    /// Runs <paramref name="line"/> through sudo. A passwordless sudo runs it directly (never sending a password it
+    /// could read); otherwise the password goes to sudo on stdin, with cached credentials ignored so that sudo always
+    /// consumes it. A wrong password is asked for again (twice at most).
+    /// </summary>
+    private async Task<CommandResult> RunSudoAsync(Call call, ConnectionPool.Lease lease, string line, TimeSpan timeout, CancellationToken ct)
+    {
+        string wrapped = $"sh -c {RemotePath.Quote(line)}";
+        CommandResult probe = await lease.Connection.RunAsync("sudo -n true", TimeSpan.FromSeconds(15), ct: ct).ConfigureAwait(false);
+        if (probe.ExitCode == 0)
+            return await lease.Connection.RunAsync($"sudo -n -- {wrapped} </dev/null", timeout, ct: ct).ConfigureAwait(false);
+        if (probe.Stderr.Contains("not found", StringComparison.OrdinalIgnoreCase))
+            throw new ToolException($"{call.Host!.DisplayName} has no sudo.");
+
+        VaultData vault = Vault();
+        SshConnectRequest request = SshConnectRequest.ForHost(vault, call.Host!);
+        string? error = null;
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            string password = await _host.SudoPasswordAsync(call.Host!, request, error, ct).ConfigureAwait(false)
+                ?? throw new ToolException("The user did not give the sudo password.", denied: true);
+            byte[] input = Encoding.UTF8.GetBytes(password + "\n");
+            CommandResult result = await lease.Connection.RunAsync($"sudo -S -k -p '' -- {wrapped}", timeout, input: input, ct: ct).ConfigureAwait(false);
+            bool wrong = result.ExitCode != 0 && (result.Stderr.Contains("incorrect password", StringComparison.OrdinalIgnoreCase)
+                || result.Stderr.Contains("Sorry, try again", StringComparison.Ordinal));
+            if (!wrong)
+                return result;
+            error = $"sudo did not accept the password for {request.Username}@{request.Host}.";
+        }
+        throw new ToolException("sudo did not accept the password.");
     }
 
     private async Task<ToolOutcome> ReadFileAsync(Call call, CancellationToken ct)
@@ -587,7 +650,7 @@ public sealed class AgentToolbox : IDisposable
 
     private static string Preview(string content)
     {
-        string[] lines = content.Replace("\r\n", "\n").Split('\n');
+        string[] lines = content.Replace("\r\n", "\n").TrimEnd('\n').Split('\n');
         string shown = string.Join('\n', lines.Take(200).Select(l => "+" + l));
         return lines.Length > 200 ? shown + $"\n… {lines.Length - 200} more lines" : shown;
     }
@@ -713,9 +776,11 @@ public sealed class AgentToolbox : IDisposable
             _finished = true;
             AgentOutcome result = kind ?? (outcome.IsError ? AgentOutcome.Failed : AgentOutcome.Ok);
             string? detail = result == AgentOutcome.Ok ? Detail : OneLine(outcome.Text, 300);
-            toolbox.Activity.Add(new AgentActivityEntry(DateTimeOffset.UtcNow, Session.Client, Host?.DisplayName, tool,
+            var entry = new AgentActivityEntry(DateTimeOffset.UtcNow, Session.Client, Host?.DisplayName, tool,
                 Summary.Length > 0 ? Summary : SummaryFromArgs(), result, detail, Stopwatch.GetElapsedTime(_started),
-                result == AgentOutcome.Ok ? _approvedBy : null));
+                result == AgentOutcome.Ok ? _approvedBy : null);
+            toolbox.Activity.Add(entry);
+            toolbox.CallFinished?.Invoke(entry, outcome.Text);
             return outcome;
         }
 

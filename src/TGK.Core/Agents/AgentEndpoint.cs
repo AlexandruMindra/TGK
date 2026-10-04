@@ -208,7 +208,10 @@ public sealed class AgentEndpoint : IAsyncDisposable
             await stream.WriteAsync("OK\n"u8.ToArray(), connection.Token).ConfigureAwait(false);
             announced = true;
             SessionsChanged?.Invoke();
-            await McpAgentServer.RunAsync(stream, stream, _toolbox, connection.Session, () => SessionsChanged?.Invoke(), connection.Token).ConfigureAwait(false);
+            // The agent hanging up must also end its calls in progress (and close the prompts they wait on): the MCP
+            // server would otherwise let them finish first.
+            var input = new EndNotifyingStream(stream, connection.Cancel);
+            await McpAgentServer.RunAsync(input, stream, _toolbox, connection.Session, () => SessionsChanged?.Invoke(), connection.Token).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is OperationCanceledException or IOException or SocketException or ObjectDisposedException)
         {
@@ -274,6 +277,38 @@ public sealed class AgentEndpoint : IAsyncDisposable
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
         }
+    }
+
+    /// <summary>A read-only view of a stream that calls <paramref name="ended"/> once reading reaches its end.</summary>
+    private sealed class EndNotifyingStream(Stream inner, Action ended) : Stream
+    {
+        private int _ended;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override int Read(byte[] buffer, int offset, int count) => Check(inner.Read(buffer, offset, count));
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default) =>
+            Check(await inner.ReadAsync(buffer, ct).ConfigureAwait(false));
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct) =>
+            ReadAsync(buffer.AsMemory(offset, count), ct).AsTask();
+
+        private int Check(int read)
+        {
+            if (read == 0 && Interlocked.Exchange(ref _ended, 1) == 0)
+                ended();
+            return read;
+        }
+
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class Connection(Socket socket, CancellationTokenSource cts) : IDisposable

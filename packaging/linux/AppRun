@@ -1,4 +1,9 @@
 #!/bin/sh
 # Entry point of the AppImage: the app lives in usr/lib/tgk (the self-contained publish folder).
+# "--mcp" runs tgk-mcp instead, the MCP server agents start (docs/AGENTS.md).
 HERE="$(dirname "$(readlink -f "$0")")"
+if [ "$1" = "--mcp" ]; then
+  shift
+  exec "$HERE/usr/lib/tgk/tgk-mcp" "$@"
+fi
 exec "$HERE/usr/lib/tgk/TGK" "$@"

@@ -23,8 +23,9 @@ public enum OptionsLevel
 public sealed record OptionsError(string Message, FormPage Page, TextField? Field);
 
 /// <summary>
-/// The inheritable <see cref="HostOptions"/> on three pages (Connection, Session, Appearance), shared by the host
-/// editor, the group settings and the settings dialog (which shows the appearance part on its Terminal page). An empty field (or "Inherit") inherits; its caption says
+/// The inheritable <see cref="HostOptions"/> on four pages (Connection, Session, Appearance, Agents), shared by the
+/// host editor, the group settings and the settings dialog (which shows the appearance part on its Terminal page). An
+/// empty field (or "Inherit") inherits; its caption says
 /// what it inherits and from where, and a "Reset to …" link clears an overridden value.
 /// </summary>
 public sealed class OptionsEditor
@@ -37,7 +38,8 @@ public sealed class OptionsEditor
     private readonly Guid? _hostId;
     private readonly Func<EffectiveHostOptions> _resolveInherited;
     private readonly Func<HostOptions, VaultData> _candidate;
-    private readonly FormPage _connection, _session, _appearance;
+    private readonly FormPage _connection, _session, _appearance, _agents;
+    private readonly Func<float, float>? _agentsHeader;
     private readonly List<Guid?> _jumpValues = [];
     private Guid? _deletedJump; // this level's own jump host, when that host no longer exists
     private EffectiveHostOptions _inherited;
@@ -62,6 +64,11 @@ public sealed class OptionsEditor
     private readonly SegmentedControl _legacy;
     private readonly Label _legacyHelp;
 
+    private readonly OptionCaption _accessCaption, _commandsCaption, _pathsCaption;
+    private readonly SegmentedControl _access;
+    private readonly Label _accessHelp;
+    private readonly RuleListEditor _commands, _paths;
+
     /// <param name="options">The values to edit (not modified; see <see cref="Store"/>).</param>
     /// <param name="inherited">What applies when this level sets nothing (called again by <see cref="RefreshInherited"/>).</param>
     /// <param name="candidate">
@@ -69,13 +76,14 @@ public sealed class OptionsEditor
     /// since a change of one level can create a loop through hosts, groups and defaults.
     /// </param>
     /// <param name="hostId">The edited host, which is not offered as its own jump host.</param>
+    /// <param name="agentsHeader">Lays out the owner's own content at the top of the Agents page; returns its height.</param>
     /// <param name="arrangeAppearance">
     /// Lay out the appearance page; false when the owner places those controls on a page of its own
     /// (see <see cref="ArrangeAppearance"/>).
     /// </param>
     public OptionsEditor(TgkView view, HostOptions options, OptionsLevel level, Func<EffectiveHostOptions> inherited,
-        Func<HostOptions, VaultData> candidate, FormPage connection, FormPage session, FormPage appearance, Guid? hostId = null,
-        bool arrangeAppearance = true)
+        Func<HostOptions, VaultData> candidate, FormPage connection, FormPage session, FormPage appearance, FormPage agents,
+        Guid? hostId = null, Func<float, float>? agentsHeader = null, bool arrangeAppearance = true)
     {
         _view = view;
         _level = level;
@@ -83,7 +91,8 @@ public sealed class OptionsEditor
         _resolveInherited = inherited;
         _candidate = candidate;
         _inherited = inherited();
-        (_connection, _session, _appearance) = (connection, session, appearance);
+        (_connection, _session, _appearance, _agents) = (connection, session, appearance, agents);
+        _agentsHeader = agentsHeader;
         string inheritWord = level == OptionsLevel.Global ? "Default" : "Inherit";
 
         // ---- Connection ----
@@ -149,10 +158,40 @@ public sealed class OptionsEditor
         _font.Changed += () => { _fontCaption.Overridden = _font.Field.Text.Length > 0; AppearanceChanged?.Invoke(); };
         _fontCaption.ResetClicked += () => { _font.Value = null; _fontCaption.Overridden = false; AppearanceChanged?.Invoke(); };
 
+        // ---- Agents ----
+        _accessCaption = agents.Add(new OptionCaption("Agent access (MCP)"));
+        _access = agents.Add(new SegmentedControl(inheritWord, "Off", "Read only", "Ask", "Full"));
+        _access.SelectionChanged += i =>
+        {
+            _accessCaption.Overridden = i > 0;
+            UpdateAccessHelp();
+        };
+        _accessCaption.ResetClicked += () => { _access.SelectedIndex = 0; _accessCaption.Overridden = false; UpdateAccessHelp(); };
+        _accessHelp = agents.Add(new Label("", Theme.FontXs, Theme.TextMuted) { MaxLines = 3 });
+        _commandsCaption = agents.Add(new OptionCaption("Allowed commands"));
+        _commands = agents.Add(new RuleListEditor("Add command", "e.g. systemctl status *",
+            "Run without asking. In Read only, the only commands besides built-in read-only ones (ls, cat, grep, git status…). * matches anything."));
+        _commands.Changed += () =>
+        {
+            _commandsCaption.Overridden = _commands.Overridden;
+            LayoutChanged?.Invoke();
+        };
+        _commandsCaption.ResetClicked += _commands.Reset;
+        _pathsCaption = agents.Add(new OptionCaption("Protected paths"));
+        _paths = agents.Add(new RuleListEditor("Add path", "e.g. /srv/secrets/**",
+            "Always need approval (refused in Read only), like the built-in ones: ~/.ssh, private keys, .env, /etc/shadow… ** matches any depth."));
+        _paths.Changed += () =>
+        {
+            _pathsCaption.Overridden = _paths.Overridden;
+            LayoutChanged?.Invoke();
+        };
+        _pathsCaption.ResetClicked += _paths.Reset;
+
         connection.Layout = ArrangeConnection;
         session.Layout = ArrangeSession;
         if (arrangeAppearance)
             appearance.Layout = w => ArrangeAppearance(w, 0);
+        agents.Layout = ArrangeAgents;
         Load(options);
         RefreshInherited();
     }
@@ -210,6 +249,9 @@ public sealed class OptionsEditor
         _font.Value = o.FontSize;
         BuildFamilyOptions(o.FontFamily);
         _legacy.SelectedIndex = TriIndex(o.LegacyAlgorithms);
+        _access.SelectedIndex = o.AgentAccess is { } access ? (int)access + 1 : 0;
+        _commands.Load(o.AgentCommands);
+        _paths.Load(o.AgentProtectedPaths);
 
         UpdateJumpCaption();
         _keepAliveCaption.Overridden = o.KeepAliveSeconds is not null;
@@ -222,6 +264,9 @@ public sealed class OptionsEditor
         _fontCaption.Overridden = o.FontSize is not null;
         _familyCaption.Overridden = o.FontFamily is not null;
         _legacyCaption.Overridden = o.LegacyAlgorithms is not null;
+        _accessCaption.Overridden = o.AgentAccess is not null;
+        _commandsCaption.Overridden = o.AgentCommands is not null;
+        _pathsCaption.Overridden = o.AgentProtectedPaths is not null;
     }
 
     /// <summary>Writes the edited values into <paramref name="target"/>; returns the first problem instead (target untouched).</summary>
@@ -253,9 +298,13 @@ public sealed class OptionsEditor
             FontFamily = SelectedFamily,
             ColorScheme = _scheme.Selected,
             LegacyAlgorithms = TriValue(_legacy),
+            AgentAccess = _access.SelectedIndex > 0 ? (AgentAccess)(_access.SelectedIndex - 1) : null,
+            AgentCommands = _commands.Collect(),
+            AgentProtectedPaths = _paths.Collect(),
         };
         if (result.Validate() is { } problem)
-            return new(problem, _connection, null);
+            return new(problem, problem.Contains("agent", StringComparison.OrdinalIgnoreCase) || problem.Contains("command", StringComparison.Ordinal)
+                || problem.Contains("path", StringComparison.Ordinal) ? _agents : _connection, null);
         if (EffectiveOptions.NewJumpChainProblem(Vault, _candidate(result)) is { } route)
             return new(route, _connection, null);
         target.JumpHostId = result.JumpHostId;
@@ -269,6 +318,9 @@ public sealed class OptionsEditor
         target.FontFamily = result.FontFamily;
         target.ColorScheme = result.ColorScheme;
         target.LegacyAlgorithms = result.LegacyAlgorithms;
+        target.AgentAccess = result.AgentAccess;
+        target.AgentCommands = result.AgentCommands;
+        target.AgentProtectedPaths = result.AgentProtectedPaths;
         return null;
     }
 
@@ -316,7 +368,36 @@ public sealed class OptionsEditor
         Set(_familyCaption, i.FontFamily.Value, i.FontFamily.Source);
         BuildFamilyOptions(SelectedFamily);
         Set(_legacyCaption, OnOff(i.LegacyAlgorithms.Value), i.LegacyAlgorithms.Source);
+        Set(_accessCaption, AccessName(i.AgentAccess.Value), i.AgentAccess.Source);
+        int commands = i.AgentCommands.Value.Count, paths = i.AgentProtectedPaths.Value.Count;
+        Set(_commandsCaption, commands == 0 ? "none" : commands == 1 ? "1 command" : $"{commands} commands", i.AgentCommands.Source);
+        _commands.SetInherited(i.AgentCommands.Value);
+        Set(_pathsCaption, paths == 0 ? "only the built-in ones" : paths == 1 ? "1 path" : $"{paths} paths", i.AgentProtectedPaths.Source);
+        _paths.SetInherited(i.AgentProtectedPaths.Value);
+        UpdateAccessHelp();
         UpdateRoute();
+    }
+
+    private static string AccessName(AgentAccess access) => access switch
+    {
+        AgentAccess.ReadOnly => "read only",
+        AgentAccess.Ask => "ask",
+        AgentAccess.Full => "full",
+        _ => "off",
+    };
+
+    private void UpdateAccessHelp()
+    {
+        AgentAccess access = _access.SelectedIndex > 0 ? (AgentAccess)(_access.SelectedIndex - 1) : _inherited.AgentAccess.Value;
+        string target = _level == OptionsLevel.Host ? "this host" : "these hosts";
+        _accessHelp.Text = access switch
+        {
+            AgentAccess.ReadOnly => $"Agents can read files and run read-only commands on {target}, never change anything.",
+            AgentAccess.Ask => $"Agents can read freely; you approve every change and command that is not read-only or allowed below.",
+            AgentAccess.Full => $"Agents can run commands and change files on {target} without asking, except protected paths. For hosts you can rebuild.",
+            _ => $"Agents (Claude Code and other MCP clients connected through TGK) can't see or use {target}.",
+        };
+        _accessHelp.Color = access == AgentAccess.Full ? Theme.Warning : Theme.TextMuted;
     }
 
     private void Set(OptionCaption caption, string value, OptionSource source) => caption.SetInherited(value, source switch
@@ -509,5 +590,19 @@ public sealed class OptionsEditor
         float y = Place(_schemeCaption, _scheme, 0, top, w, SchemePicker.MeasureHeight()) + RowGap;
         Place(_familyCaption, _family, 0, y, col);
         return Place(_fontCaption, _font, col + Gap, y, w - col - Gap);
+    }
+
+    private float ArrangeAgents(float w)
+    {
+        float y = _agentsHeader?.Invoke(w) ?? 0;
+        y = Place(_accessCaption, _access, 0, y, w);
+        y = Help(_accessHelp, 0, y, w) + RowGap;
+        float commandsH = _commands.MeasureHeight(w);
+        y = Place(_commandsCaption, _commands, 0, y, w, commandsH) + RowGap;
+        _commands.Arrange(w);
+        float pathsH = _paths.MeasureHeight(w);
+        y = Place(_pathsCaption, _paths, 0, y, w, pathsH);
+        _paths.Arrange(w);
+        return y;
     }
 }

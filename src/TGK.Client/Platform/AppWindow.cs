@@ -42,4 +42,17 @@ public static class AppWindow
         onClose?.Invoke(handle);
         glfw.PostEmptyEvent();
     }
+
+    /// <summary>
+    /// Asks the desktop to draw attention to the window (taskbar flash, dock bounce) when it is not focused — e.g. an
+    /// agent needs the user to approve something. Goes through GLFW's current context, the app window on the UI thread.
+    /// </summary>
+    public static unsafe void RequestAttention()
+    {
+        Glfw glfw = GlfwProvider.GLFW.Value;
+        WindowHandle* handle = glfw.GetCurrentContext();
+        if (handle is null || glfw.GetWindowAttrib(handle, WindowAttributeGetter.Focused))
+            return;
+        glfw.RequestWindowAttention(handle);
+    }
 }

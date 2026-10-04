@@ -115,6 +115,14 @@ public static class AgentPolicy
         }
     }
 
+    /// <summary>Commands as root (TGK supplies the sudo password): always the user's call, never in read-only mode.</summary>
+    public static AgentDecision Sudo(AgentRules rules) => rules.Access switch
+    {
+        AgentAccess.Off => AgentDecision.Deny("Agents have no access to this host."),
+        AgentAccess.ReadOnly => AgentDecision.Deny("Agents have read-only access to this host; sudo is not available to them."),
+        _ => AgentDecision.Ask("Commands as root always need approval."),
+    };
+
     /// <summary>The protected-path pattern <paramref name="path"/> (absolute) matches, or null.</summary>
     public static string? ProtectedPattern(AgentRules rules, string path, string home)
     {

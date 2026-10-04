@@ -40,6 +40,12 @@ public sealed class ClientPrefs
     /// <summary>Why the update downloaded in the last run could not be installed when TGK closed; shown once, then cleared.</summary>
     public string? UpdateError { get; set; }
 
+    /// <summary>
+    /// Serve agents (MCP clients such as Claude Code, through <c>tgk-mcp</c>) on this device. Off by default; what they
+    /// may do on each host is the vault's Agent access setting.
+    /// </summary>
+    public bool AgentsEnabled { get; set; }
+
     public ClientPrefs Clone()
     {
         var copy = (ClientPrefs)MemberwiseClone();

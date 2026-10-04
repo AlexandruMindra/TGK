@@ -32,7 +32,7 @@ mv "$payload" "$app/Contents/MacOS"
 cp "$root/assets/icon.icns" "$app/Contents/Resources/icon.icns"
 short=${version%%-*} # CFBundleShortVersionString must be X.Y.Z
 sed -e "s/@SHORT_VERSION@/$short/g" -e "s/@VERSION@/$version/g" "$root/packaging/macos/Info.plist" > "$app/Contents/Info.plist"
-chmod +x "$app/Contents/MacOS/TGK"
+chmod +x "$app/Contents/MacOS/TGK" "$app/Contents/MacOS/tgk-mcp" # tgk-mcp: what agents run (docs/AGENTS.md)
 
 # No AppleDouble (._*) files or extended attributes in the archive.
 (cd "$work" && COPYFILE_DISABLE=1 tar --no-xattrs -czf "$out/TGK-$rid.tar.gz" TGK.app 2>/dev/null \

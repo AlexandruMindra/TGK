@@ -2,7 +2,9 @@ using System;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
+using Blossom;
 using SkiaSharp;
+using TGK.Client.Agents;
 using TGK.Client.Controls;
 using TGK.Client.Main;
 using TGK.Client.Terminal;
@@ -13,19 +15,22 @@ using TGK.Core.Services;
 namespace TGK.Client.Dialogs;
 
 /// <summary>
-/// Settings: the terminal's look and behaviour and the connection and session defaults every host inherits, plus the
-/// "reopen my tabs" preference. All of it lives in the vault and syncs to all devices; only the update notices are
-/// per device (<c>ClientServices.Prefs</c>).
+/// Settings: the terminal's look and behaviour and the connection and session defaults every host inherits, the
+/// "reopen my tabs" preference, and agents — whether this device serves them and the default agent access. The vault
+/// parts sync to all devices; the update notices, the update channel and "allow agents" are per device
+/// (<c>ClientServices.Prefs</c>).
 /// </summary>
 public sealed class SettingsDialog : TabbedDialog
 {
-    public const int TerminalTab = 0, ConnectionTab = 1, SessionTab = 2, StartupTab = 3;
+    public const int TerminalTab = 0, ConnectionTab = 1, SessionTab = 2, StartupTab = 3, AgentsTab = 4;
     private const string TerminalSubtitle = "Synced to all your devices. Groups and hosts can override the color scheme and the font.";
     private const string LocalTerminalSubtitle = "Kept in your local vault. Groups and hosts can override the color scheme and the font.";
     private const string SyncedSubtitle = "Connection defaults for all hosts, synced to all your devices. Groups and hosts can override them.";
     private const string LocalVaultSubtitle = "Connection defaults for all hosts, kept in your local vault. Groups and hosts can override them.";
     private const string StartupSubtitle = "Reopening your tabs (synced to all your devices) and update notices (this device).";
     private const string LocalStartupSubtitle = "Reopening your tabs (kept in your local vault) and update notices.";
+    private const string AgentsSubtitle = "Agents on this device, and what they may do on hosts that don't say (synced).";
+    private const string LocalAgentsSubtitle = "Agents on this device, and what they may do on hosts that don't say.";
     private static readonly int[] ScrollbackSizes = [1_000, 5_000, 10_000, 50_000, 100_000];
     private static readonly string[] CursorShapes = [TerminalSettings.CursorBlock, TerminalSettings.CursorBar, TerminalSettings.CursorUnderline];
     private static readonly TerminalSettings BuiltIn = new();
@@ -42,15 +47,46 @@ public sealed class SettingsDialog : TabbedDialog
     private readonly Label _updatesHint;
     private readonly Label _channelCaption, _channelHint;
     private readonly SegmentedControl _channel;
+    private readonly Checkbox _agentsOn;
+    private readonly Label _agentsHint, _agentsStatus, _setupCaption, _setupCommand, _defaultsCaption;
+    private readonly Button _copyCommand, _copyJson, _activity;
 
-    public SettingsDialog(TgkView view) : base(view, "Settings", 640, "Terminal", "Connection", "Session", "Startup")
+    public SettingsDialog(TgkView view) : base(view, "Settings", 640, "Terminal", "Connection", "Session", "Startup", "Agents")
     {
         HostOptions saved = view.Services.Vault.Current.Defaults;
         EffectiveHostOptions current = EffectiveOptions.Resolve(null, null, saved);
         Subtitle = view.Services.IsLocal ? LocalTerminalSubtitle : TerminalSubtitle;
         FormPage page = PageAt(TerminalTab);
 
-        // Color scheme, font and size: the appearance part of the defaults, shown on the Terminal page.
+        FormPage agentsPage = PageAt(AgentsTab);
+        _agentsOn = agentsPage.Add(new Checkbox("Allow agents (MCP) on this device", view.Services.Prefs.AgentsEnabled));
+        _agentsHint = agentsPage.Add(new Label(
+            "Lets Claude Code and other MCP clients on this computer use your saved hosts through TGK while it runs: commands, reading " +
+            "and editing files. Passwords and keys never leave TGK. Hosts stay closed to agents unless you open them, below for all " +
+            "hosts or in a group's or host's Agents tab; you approve what their access mode does not allow.",
+            Theme.FontSm, Theme.TextMuted) { MaxLines = 5 });
+        _agentsStatus = agentsPage.Add(new Label("", Theme.FontSm, Theme.TextSecondary) { MaxLines = 2 });
+        _setupCaption = agentsPage.Add(Form.Caption("Add TGK to Claude Code (once)"));
+        _setupCommand = agentsPage.Add(new Label(AgentService.ClaudeSetupCommand, Theme.FontSm, Theme.TextPrimary) { Mono = true, MaxLines = 3 });
+        _copyCommand = agentsPage.Add(new Button("Copy command", ButtonVariant.Secondary, "copy"));
+        _copyCommand.Clicked += () =>
+        {
+            Shell.SetClipboardText(AgentService.ClaudeSetupCommand);
+            View.ShowToast("Copied. Run it in a terminal, then start Claude Code.", ToastKind.Success);
+        };
+        _copyJson = agentsPage.Add(new Button("Copy JSON config", ButtonVariant.Secondary, "clipboard"));
+        _copyJson.Clicked += () =>
+        {
+            Shell.SetClipboardText(AgentService.JsonConfig);
+            View.ShowToast("Copied the mcpServers entry (for .mcp.json and other MCP clients).", ToastKind.Success);
+        };
+        _activity = agentsPage.Add(new Button("Activity…", ButtonVariant.Secondary, "agent"));
+        _activity.Clicked += () => (View as MainView)?.ShowAgentActivity();
+        _defaultsCaption = agentsPage.Add(new Label("Defaults for all hosts", Theme.FontBase, Theme.TextPrimary, Theme.WeightSemibold));
+        RefreshAgentsStatus();
+
+        // Color scheme, font and size: the appearance part of the defaults, shown on the Terminal page; the agent-access
+        // defaults are shown on the Agents page under the device settings above.
         _defaults = new OptionsEditor(view, saved, OptionsLevel.Global, () => EffectiveOptions.Resolve((HostOptions?)null, null, null),
             options =>
             {
@@ -58,7 +94,7 @@ public sealed class SettingsDialog : TabbedDialog
                 vault.Defaults = options;
                 return vault;
             },
-            PageAt(ConnectionTab), PageAt(SessionTab), page, arrangeAppearance: false);
+            PageAt(ConnectionTab), PageAt(SessionTab), page, agentsPage, agentsHeader: LayoutAgentsHeader, arrangeAppearance: false);
         _defaults.LayoutChanged += InvalidateLayout;
 
         _scrollbackCaption = page.Add(Form.Caption("Scrollback"));
@@ -133,8 +169,50 @@ public sealed class SettingsDialog : TabbedDialog
         bool local = View.Services.IsLocal;
         Subtitle = index == TerminalTab ? (local ? LocalTerminalSubtitle : TerminalSubtitle)
             : index == StartupTab ? (local ? LocalStartupSubtitle : StartupSubtitle)
+            : index == AgentsTab ? (local ? LocalAgentsSubtitle : AgentsSubtitle)
             : local ? LocalVaultSubtitle : SyncedSubtitle;
+        if (index == AgentsTab)
+            RefreshAgentsStatus();
         _defaults.RefreshInherited();
+    }
+
+    private void RefreshAgentsStatus()
+    {
+        AgentService agents = View.App.Agents;
+        int sessions = agents.Sessions.Count;
+        _agentsStatus.Text = agents.Error is { } error ? $"Not serving agents: {error}"
+            : !agents.IsRunning ? "Off: agents can't reach TGK on this device."
+            : sessions == 0 ? "On: waiting for agents."
+            : $"On: {sessions} agent{(sessions == 1 ? "" : "s")} connected ({string.Join(", ", agents.Sessions.Select(a => a.Client).Distinct())}).";
+        _agentsStatus.Color = agents.Error is not null ? Theme.Warning : agents.IsRunning ? Theme.Success : Theme.TextSecondary;
+    }
+
+    // The device part of the Agents tab, above the access defaults (OptionsEditor).
+    private float LayoutAgentsHeader(float width)
+    {
+        float y = 0;
+        _agentsOn.Transform.SetLocalFrame(0, y, Math.Min(width, _agentsOn.PreferredWidth), 22);
+        y += 22 + 8;
+        float hintH = _agentsHint.MeasureHeight(width - 28);
+        _agentsHint.Transform.SetLocalFrame(28, y, width - 28, hintH);
+        y += hintH + 6;
+        _agentsStatus.Transform.SetLocalFrame(28, y, width - 28, 18);
+        y += 18 + Form.RowGap;
+        _setupCaption.Transform.SetLocalFrame(0, y, width, Form.CaptionH);
+        y += Form.CaptionH + 6;
+        float ch = _setupCommand.MeasureHeight(width);
+        _setupCommand.Transform.SetLocalFrame(0, y, width, ch);
+        y += ch + 8;
+        float x = 0;
+        foreach (Button b in new[] { _copyCommand, _copyJson, _activity })
+        {
+            float bw = Math.Max(88, b.PreferredWidth);
+            b.Transform.SetLocalFrame(x, y, bw, 32);
+            x += bw + 8;
+        }
+        y += 32 + Form.RowGap + 8;
+        _defaultsCaption.Transform.SetLocalFrame(0, y, width, 20);
+        return y + 20 + 10;
     }
 
     private float LayoutStartup(float width)
@@ -208,6 +286,11 @@ public sealed class SettingsDialog : TabbedDialog
             main.SetCheckForUpdates(_checkUpdates.Checked);
             main.SetUpdateChannel(SelectedChannel);
         }
+        bool agentsOn = _agentsOn.Checked;
+        if (agentsOn != View.Services.Prefs.AgentsEnabled)
+            View.Services.UpdatePrefs(p => p.AgentsEnabled = agentsOn);
+        if (agentsOn != View.App.Agents.IsRunning)
+            _ = View.App.Agents.ApplyAsync(agentsOn); // also retries when serving failed before
         Close();
     }
 

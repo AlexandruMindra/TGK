@@ -53,6 +53,7 @@ public sealed class DevOptions
         "main", "split", "tabs-overflow", "update", "host-editor", "host-editor-connection", "host-editor-tunnels", "host-editor-appearance", "group-settings", "connection-defaults",
         "identities", "settings", "hostkey", "hostkey-changed", "password-prompt", "menu", "devices", "change-password",
         "local-create", "local-unlock", "local-main", "upload-to-server", "offline-copy", "backup-export", "backup-import",
+        "agents", "host-editor-agents", "agent-approval", "agent-command", "agent-activity",
     ];
 
     /// <summary>Scenes of the login screen (the rest need a signed-in vault: a restored session, else the mock).</summary>

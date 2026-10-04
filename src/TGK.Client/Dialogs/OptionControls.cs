@@ -249,6 +249,127 @@ public sealed class EnvEditor : VisualElement
     private sealed record Row(TextField Name, TextField Value, IconButton Remove, EnvVar Source);
 }
 
+/// <summary>
+/// A list of text rules (one field per row, remove buttons, "Add …"), e.g. the commands agents may run. While nothing
+/// is set at this level it shows the inherited rules; adding one starts from a copy of them (lists replace, never merge).
+/// </summary>
+public sealed class RuleListEditor : VisualElement
+{
+    private const float RowGap = 8, AddH = 30, InheritedH = 20;
+    private readonly List<(TextField Field, IconButton Remove)> _rows = [];
+    private readonly Label _inherited;
+    private readonly Button _add;
+    private readonly Label _help;
+    private readonly string _placeholder;
+    private IReadOnlyList<string> _inheritedRules = [];
+    private bool _overridden;
+
+    public RuleListEditor(string addText, string placeholder, string help)
+    {
+        Style = new ElementStyle();
+        _placeholder = placeholder;
+        _inherited = new Label("", Theme.FontSm, Theme.TextMuted) { Mono = true, Visible = false, MaxLines = 3 };
+        _add = new Button(addText, ButtonVariant.Secondary, "plus");
+        _add.Clicked += AddRule;
+        _help = new Label(help, Theme.FontXs, Theme.TextMuted) { MaxLines = 3 };
+        AddChild(_inherited);
+        AddChild(_add);
+        AddChild(_help);
+    }
+
+    /// <summary>Rows were added or removed, or the list started or stopped overriding.</summary>
+    public event Action? Changed;
+
+    public bool Overridden => _overridden;
+
+    public void Load(IReadOnlyList<string>? own)
+    {
+        foreach (var row in _rows.ToList())
+            RemoveRow(row, notify: false);
+        _overridden = own is not null;
+        foreach (string rule in own ?? [])
+            AddRow(rule);
+    }
+
+    public void SetInherited(IReadOnlyList<string> rules)
+    {
+        _inheritedRules = rules;
+        _inherited.Text = string.Join("   ", rules);
+    }
+
+    public void Reset()
+    {
+        Load(null);
+        Changed?.Invoke();
+    }
+
+    /// <summary>The rules to store (null = inherit); empty rows are skipped.</summary>
+    public List<string>? Collect() => _overridden
+        ? _rows.Select(r => r.Field.Text.Trim()).Where(t => t.Length > 0).Distinct(StringComparer.Ordinal).ToList()
+        : null;
+
+    private bool ShowsInherited => !_overridden && _inheritedRules.Count > 0;
+
+    public float MeasureHeight(float width) =>
+        (ShowsInherited ? Math.Max(InheritedH, _inherited.MeasureHeight(width)) + RowGap : 0) + _rows.Count * (Theme.FieldHeight + RowGap) + AddH;
+
+    public void Arrange(float width)
+    {
+        float y = 0;
+        _inherited.Visible = ShowsInherited;
+        if (ShowsInherited)
+        {
+            float h = Math.Max(InheritedH, _inherited.MeasureHeight(width));
+            _inherited.Transform.SetLocalFrame(0, 0, width, h);
+            y += h + RowGap;
+        }
+        foreach (var (field, remove) in _rows)
+        {
+            field.Transform.SetLocalFrame(0, y, width - Theme.FieldHeight - 8, Theme.FieldHeight);
+            remove.Transform.SetLocalFrame(width - Theme.FieldHeight, y, Theme.FieldHeight, Theme.FieldHeight);
+            y += Theme.FieldHeight + RowGap;
+        }
+        float addW = _add.PreferredWidth;
+        _add.Transform.SetLocalFrame(0, y, addW, AddH);
+        _help.Transform.SetLocalFrame(addW + 14, y - 2, Math.Max(0, width - addW - 14), AddH + 6);
+    }
+
+    private void AddRule()
+    {
+        if (!_overridden)
+        {
+            _overridden = true;
+            foreach (string rule in _inheritedRules)
+                AddRow(rule);
+        }
+        var row = AddRow("");
+        Changed?.Invoke();
+        row.Field.Focus();
+    }
+
+    private (TextField Field, IconButton Remove) AddRow(string rule)
+    {
+        var row = (Field: new TextField(_placeholder) { Text = rule, Mono = true, MaxLength = HostOptions.MaxAgentRuleLength }, Remove: new IconButton("x"));
+        row.Remove.Clicked += () => RemoveRow(row, notify: true);
+        _rows.Add(row);
+        AddChild(row.Field);
+        AddChild(row.Remove);
+        return row;
+    }
+
+    private void RemoveRow((TextField Field, IconButton Remove) row, bool notify)
+    {
+        _rows.Remove(row);
+        foreach (VisualElement element in new VisualElement[] { row.Field, row.Remove })
+        {
+            RemoveChild(element);
+            element.Dispose();
+        }
+        if (notify)
+            Changed?.Invoke();
+    }
+}
+
 /// <summary>[−] size [+]: an empty field inherits (its placeholder shows the inherited size).</summary>
 public sealed class FontStepper : VisualElement
 {

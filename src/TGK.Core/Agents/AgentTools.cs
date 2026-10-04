@@ -47,7 +47,8 @@ public static class AgentTools
                 {{HostProperty}},
                 "command": { "type": "string", "description": "The command line, run by the user's shell (sh -c style)." },
                 "cwd": { "type": "string", "description": "Directory to run in (absolute, ~/…, or relative to the home directory). Default: home." },
-                "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 600, "description": "Stop the command after this long. Default 30." }
+                "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 600, "description": "Stop the command after this long. Default 30." },
+                "sudo": { "type": "boolean", "description": "Run it as root through sudo; TGK supplies the password. The user approves every such command. Do not put sudo in the command itself." }
               },
               "required": ["host", "command"],
               "additionalProperties": false

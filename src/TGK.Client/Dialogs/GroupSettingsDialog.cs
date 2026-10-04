@@ -10,12 +10,12 @@ using TGK.Core.Services;
 namespace TGK.Client.Dialogs;
 
 /// <summary>
-/// Create, rename or delete a host group and edit the settings its hosts inherit (Connection, Session, Appearance;
+/// Create, rename or delete a host group and edit the settings its hosts inherit (Connection, Session, Appearance, Agents;
 /// a host's own values win, and unset values come from the connection defaults).
 /// </summary>
 public sealed class GroupSettingsDialog : TabbedDialog
 {
-    public const int GeneralTab = 0, ConnectionTab = 1, SessionTab = 2, AppearanceTab = 3;
+    public const int GeneralTab = 0, ConnectionTab = 1, SessionTab = 2, AppearanceTab = 3, AgentsTab = 4;
     private readonly IVaultService _vault;
     private readonly HostGroup _group;
     private readonly bool _isNew;
@@ -25,7 +25,7 @@ public sealed class GroupSettingsDialog : TabbedDialog
 
     /// <param name="group">The group to edit, or null for a new one.</param>
     public GroupSettingsDialog(TgkView view, HostGroup? group)
-        : base(view, group is null ? "New group" : "Group settings", 640, "General", "Connection", "Session", "Appearance")
+        : base(view, group is null ? "New group" : "Group settings", 640, "General", "Connection", "Session", "Appearance", "Agents")
     {
         _vault = view.Services.Vault;
         _isNew = group is null;
@@ -49,14 +49,14 @@ public sealed class GroupSettingsDialog : TabbedDialog
         string hosts = _isNew ? "New hosts can be added to it in their General settings."
             : count == 0 ? "The group has no hosts yet." : $"The group has {count} host{(count == 1 ? "" : "s")}.";
         _info = general.Add(new Label(
-            $"{hosts} They use the group's Connection, Session and Appearance settings unless they set their own; " +
+            $"{hosts} They use the group's Connection, Session, Appearance and Agents settings unless they set their own; " +
             "what the group leaves unset comes from the connection defaults in Settings.",
             Theme.FontBase, Theme.TextSecondary) { MaxLines = 4 });
         general.Layout = LayoutGeneral;
 
         _options = new OptionsEditor(view, _group.Options, OptionsLevel.Group,
             () => EffectiveOptions.Resolve(null, null, _vault.Current.Defaults), Candidate,
-            PageAt(ConnectionTab), PageAt(SessionTab), PageAt(AppearanceTab));
+            PageAt(ConnectionTab), PageAt(SessionTab), PageAt(AppearanceTab), PageAt(AgentsTab));
         _options.LayoutChanged += InvalidateLayout;
 
         if (!_isNew)

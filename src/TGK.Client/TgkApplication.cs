@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Blossom;
 using Blossom.Core;
+using TGK.Client.Agents;
 using TGK.Client.Main;
 using TGK.Client.Platform;
 using TGK.Client.Views;
@@ -24,6 +25,7 @@ public sealed class TgkApplication : Application
     {
         Title = "TGK";
         Services = services;
+        Agents = new AgentService(this);
         // Subscribed first: the background sync of a restored session may already find it revoked.
         services.Vault.SessionEnded += reason => UiThread.Post(() => OnSessionEnded(reason));
         if (!services.Dev.SkipRestore)
@@ -42,9 +44,14 @@ public sealed class TgkApplication : Application
             SetActiveView(_login);
         }
         AppWindow.Resized += () => (ActiveView as TgkView)?.FitToWindow();
+        if (services.Prefs.AgentsEnabled && services.Dev.Scene is null)
+            UiThread.Post(() => _ = Agents.ApplyAsync(true));
     }
 
     public ClientServices Services { get; }
+
+    /// <summary>Agents (MCP): the local endpoint, approvals and activity.</summary>
+    public AgentService Agents { get; }
 
     /// <summary>
     /// The seam for session tabs: builds the tab content that connects to <c>host</c> (a saved host, or an unsaved
@@ -105,6 +112,7 @@ public sealed class TgkApplication : Application
     private void OnSessionEnded(string reason)
     {
         _main?.Teardown();
+        Agents.OnSignedOut();
         ShowLogin(reason);
     }
 
@@ -122,6 +130,7 @@ public sealed class TgkApplication : Application
             // The save completes once it is stored on this device (or its push attempt finished). Waited for with a
             // timeout only: the UI loop is gone, so nothing may depend on it from here on.
             _main?.OnExit()?.Wait(Left());
+            Agents.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(1)); // stops serving; closes the agents' connections
             var vault = Services.Vault;
             if (vault.Mode != VaultMode.Server || !vault.IsLoggedIn || vault.PendingChanges == 0)
                 return;

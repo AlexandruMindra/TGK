@@ -125,6 +125,40 @@ public sealed class AgentEndToEndTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task An_agent_hanging_up_cancels_its_calls_and_their_prompts()
+    {
+        _host.Vault = Vault("127.0.0.1", 22);
+        var entered = new TaskCompletionSource();
+        var cancelled = new TaskCompletionSource();
+        _host.OnConnect = async ct =>
+        {
+            // Like a host key prompt nobody answers.
+            entered.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.Infinite, ct);
+            }
+            finally
+            {
+                cancelled.TrySetResult();
+            }
+        };
+        McpClient client = await StartClientAsync();
+        Task<CallToolResult> call = client.CallToolAsync(AgentTools.ReadFile, new Dictionary<string, object?> { ["host"] = "lab", ["path"] = "/etc/hosts" }, cancellationToken: Ct).AsTask();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        Assert.Single(_endpoint!.Sessions);
+
+        await client.DisposeAsync();
+        _client = null;
+
+        await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        for (int i = 0; i < 50 && _endpoint.Sessions.Count > 0; i++)
+            await Task.Delay(100, Ct);
+        Assert.Empty(_endpoint.Sessions);
+        _ = call.Exception; // the client went away mid-call
+    }
+
+    [Fact]
     [Trait("Category", "E2E")]
     public async Task Agent_reads_searches_and_edits_files_and_runs_commands()
     {
@@ -217,6 +251,13 @@ public sealed class AgentEndToEndTests : IAsyncLifetime
             Assert.Equal(AgentOutcome.Ok, _toolbox!.Activity.Recent[0].Outcome);
             Assert.Equal("user", _toolbox.Activity.Recent[0].ApprovedBy);
 
+            // sudo: always asked (here passwordless: the server runs as root), never in read-only mode.
+            _host.Answers.Enqueue(ApprovalAnswer.AllowOnce);
+            (text, error) = await CallAsync(AgentTools.RunCommand, new() { ["host"] = "prod", ["command"] = "id -u", ["sudo"] = true });
+            Assert.False(error, text);
+            Assert.Contains("--- stdout ---\n0\n", text);
+            Assert.Equal("Run a command as root (sudo)", _host.Requests.Last().Action);
+
             // Read only: reading works, changing does not, and nobody is asked.
             int asks = _host.Requests.Count;
             (text, error) = await CallAsync(AgentTools.ReadFile, new() { ["host"] = "ro", ["path"] = $"{_remoteDir}/f.txt" });
@@ -226,6 +267,9 @@ public sealed class AgentEndToEndTests : IAsyncLifetime
             Assert.Contains("read-only", text);
             (text, error) = await CallAsync(AgentTools.RunCommand, new() { ["host"] = "ro", ["command"] = $"rm -rf {_remoteDir}" });
             Assert.True(error);
+            (text, error) = await CallAsync(AgentTools.RunCommand, new() { ["host"] = "ro", ["command"] = "id", ["sudo"] = true });
+            Assert.True(error);
+            Assert.Contains("sudo is not available", text);
             Assert.Equal(asks, _host.Requests.Count);
         }
         finally
@@ -260,8 +304,13 @@ public sealed class AgentEndToEndTests : IAsyncLifetime
 
         public List<ApprovalRequest> Requests { get; } = [];
 
+        /// <summary>Runs before connecting (e.g. to simulate a prompt that waits).</summary>
+        public Func<CancellationToken, Task>? OnConnect { get; set; }
+
         public async Task<RemoteConnection> ConnectAsync(HostEntry host, SshConnectRequest request, CancellationToken ct)
         {
+            if (OnConnect is { } hook)
+                await hook(ct);
             var connection = new RemoteConnection(new RemoteConnectionEndToEndTests.TrustAll());
             try
             {
@@ -274,6 +323,9 @@ public sealed class AgentEndToEndTests : IAsyncLifetime
             }
             return connection;
         }
+
+        public Task<string?> SudoPasswordAsync(HostEntry host, SshConnectRequest request, string? error, CancellationToken ct) =>
+            Task.FromResult(error is null ? request.Password : null);
 
         public Task<ApprovalAnswer> ApproveAsync(ApprovalRequest request, CancellationToken ct)
         {

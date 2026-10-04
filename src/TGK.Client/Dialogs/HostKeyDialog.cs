@@ -21,12 +21,12 @@ public sealed class HostKeyDialog : DialogBase
     private readonly TaskCompletionSource<bool> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private CancellationTokenRegistration _cancelRegistration;
 
-    private HostKeyDialog(TgkView view, HostKeyInfo info)
+    private HostKeyDialog(TgkView view, HostKeyInfo info, string? requester)
         : base(view, info.IsChanged ? "Host key has changed" : "Unknown host key", 540)
     {
         _info = info;
         string target = info.Port == 22 ? info.Host : $"{info.Host}:{info.Port}";
-        Subtitle = target;
+        Subtitle = requester is null ? target : $"{target} · {requester}";
         _banner = AddBody(new Banner(info.IsChanged));
         _message = AddBody(new Label(info.IsChanged
             ? $"The key presented by {target} does not match the one you trusted before. Someone may be intercepting the connection (man-in-the-middle), or the server was reinstalled. Only continue if you have verified the new fingerprint."
@@ -59,9 +59,10 @@ public sealed class HostKeyDialog : DialogBase
     /// <see cref="UiThread.InvokeAsync{T}"/>). Completes with true only when the user trusts the key; cancelling
     /// <paramref name="ct"/> closes the dialog with false.
     /// </summary>
-    public static Task<bool> ShowAsync(TgkView view, HostKeyInfo info, CancellationToken ct = default)
+    /// <param name="requester">Who connects when it is not the user, e.g. "for an agent" (shown with the address).</param>
+    public static Task<bool> ShowAsync(TgkView view, HostKeyInfo info, CancellationToken ct = default, string? requester = null)
     {
-        var dialog = new HostKeyDialog(view, info);
+        var dialog = new HostKeyDialog(view, info, requester);
         dialog.Open();
         if (ct.CanBeCanceled)
             dialog._cancelRegistration = ct.Register(() => UiThread.Post(dialog.Cancel));

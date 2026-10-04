@@ -66,6 +66,7 @@ public sealed partial class MainView : TgkView
         _status = new StatusBar();
         _status.TunnelsClicked += ShowTunnelMenu;
         _status.UpdateClicked += ShowUpdateMenu;
+        _status.AgentsClicked += ShowAgentMenu;
         _root.AddChild(_content);
         _root.AddChild(_sidebar);
         _root.AddChild(_strip);
@@ -82,6 +83,8 @@ public sealed partial class MainView : TgkView
         NewTab();
         StartWorkspace();
         StartUpdateChecks();
+        App.Agents.Changed += RefreshAgentChip;
+        RefreshAgentChip();
     }
 
     // Versions before 0.2.1 kept the terminal settings on each device: the first device to start this version moves
@@ -680,6 +683,8 @@ public sealed partial class MainView : TgkView
             return;
         _torndown = true;
         StopUpdates();
+        App.Agents.Changed -= RefreshAgentChip;
+        App.Agents.OnSignedOut();
         Services.Vault.Changed -= OnVaultChanged;
         UiClock.Tick -= OnUiTick;
         foreach (IDisposable shortcut in _shortcuts)
@@ -791,6 +796,29 @@ public sealed partial class MainView : TgkView
                 var settings = new SettingsDialog(this);
                 settings.Open();
                 settings.ShowTab(SettingsDialog.ConnectionTab);
+                break;
+            case "agents":
+                var agentSettings = new SettingsDialog(this);
+                agentSettings.Open();
+                agentSettings.ShowTab(SettingsDialog.AgentsTab);
+                break;
+            case "host-editor-agents" when web is not null:
+                EditHost(web, HostEditorDialog.AgentsTab);
+                break;
+            case "agent-approval":
+                _ = AgentApprovalDialog.ShowAsync(this, new Core.Agents.ApprovalRequest("claude-code 2.1.0", web?.DisplayName ?? "web-01", "Change a file",
+                    "/etc/nginx/sites-available/default", Core.Agents.TextDiff.Unified(
+                        "server {\n    listen 80;\n    server_name example.com;\n    root /var/www/html;\n    index index.html;\n}\n",
+                        "server {\n    listen 80;\n    listen [::]:80;\n    server_name example.com www.example.com;\n    root /var/www/html;\n    index index.html;\n}\n"),
+                    "Changes need approval on this host."), TimeSpan.FromMinutes(2), default);
+                break;
+            case "agent-command":
+                _ = AgentApprovalDialog.ShowAsync(this, new Core.Agents.ApprovalRequest("claude-code 2.1.0", web?.DisplayName ?? "web-01", "Run a command",
+                    "sudo systemctl restart nginx && journalctl -u nginx -n 20 --no-pager", null,
+                    "Commands that may change things need approval on this host."), TimeSpan.FromMinutes(2), default);
+                break;
+            case "agent-activity":
+                ShowAgentActivity();
                 break;
             case "identities":
                 ShowIdentities();

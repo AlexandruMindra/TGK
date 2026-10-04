@@ -8,8 +8,8 @@ using TGK.Core.Ssh;
 namespace TGK.Client.Main;
 
 /// <summary>
-/// Bottom bar: active session on the left; its tunnels, terminal size and sync status on the right, and a quiet chip
-/// when a newer TGK version is available.
+/// Bottom bar: active session on the left; its tunnels, terminal size and sync status on the right, a chip while
+/// agents (MCP) are connected, and a quiet chip when a newer TGK version is available.
 /// </summary>
 public sealed class StatusBar : Control
 {
@@ -19,8 +19,10 @@ public sealed class StatusBar : Control
     private string _sync = "";
     private IReadOnlyList<TunnelStatus> _tunnels = [];
     private string? _update;
-    private SKRect _chip = SKRect.Empty, _updateChip = SKRect.Empty;
-    private bool _chipHover, _updateHover;
+    private string? _agents;
+    private bool _agentsBusy;
+    private SKRect _chip = SKRect.Empty, _updateChip = SKRect.Empty, _agentChip = SKRect.Empty;
+    private bool _chipHover, _updateHover, _agentHover;
 
     public StatusBar()
     {
@@ -28,10 +30,14 @@ public sealed class StatusBar : Control
         {
             SetAndPaint(ref _chipHover, _chip.Contains(e.Relative.X, e.Relative.Y));
             SetAndPaint(ref _updateHover, _updateChip.Contains(e.Relative.X, e.Relative.Y));
+            SetAndPaint(ref _agentHover, _agentChip.Contains(e.Relative.X, e.Relative.Y));
         };
         Events.OnClick += (_, e) =>
         {
-            SKRect chip = _chip.Contains(e.Relative.X, e.Relative.Y) ? _chip : _updateChip.Contains(e.Relative.X, e.Relative.Y) ? _updateChip : SKRect.Empty;
+            SKRect chip = _chip.Contains(e.Relative.X, e.Relative.Y) ? _chip
+                : _updateChip.Contains(e.Relative.X, e.Relative.Y) ? _updateChip
+                : _agentChip.Contains(e.Relative.X, e.Relative.Y) ? _agentChip
+                : SKRect.Empty;
             if (chip.IsEmpty)
                 return;
             e.Handled = true;
@@ -39,6 +45,8 @@ public sealed class StatusBar : Control
             var window = new SKRect(at.X + chip.Left, at.Y + chip.Top, at.X + chip.Right, at.Y + chip.Bottom);
             if (chip == _chip)
                 TunnelsClicked?.Invoke(window);
+            else if (chip == _agentChip)
+                AgentsClicked?.Invoke(window);
             else
                 UpdateClicked?.Invoke(window);
         };
@@ -49,6 +57,20 @@ public sealed class StatusBar : Control
 
     /// <summary>The update chip was clicked; the argument is its window rect.</summary>
     public event Action<SKRect>? UpdateClicked;
+
+    /// <summary>The agents chip was clicked; the argument is its window rect.</summary>
+    public event Action<SKRect>? AgentsClicked;
+
+    /// <summary>
+    /// Shows the agents chip with <paramref name="text"/> (e.g. "2 agents"), or hides it (null); <paramref name="busy"/>
+    /// while an agent call runs or waits for approval.
+    /// </summary>
+    public void SetAgents(string? text, bool busy)
+    {
+        bool changed = SetAndPaint(ref _agents, text) | SetAndPaint(ref _agentsBusy, busy);
+        if (changed && text is null)
+            _agentHover = false;
+    }
 
     /// <summary>Shows the update chip with <paramref name="text"/> (e.g. "TGK 0.3.0 available"), or hides it (null).</summary>
     public void SetUpdate(string? text)
@@ -72,7 +94,7 @@ public sealed class StatusBar : Control
     protected override void OnHoverChanged()
     {
         if (!IsHovered)
-            _chipHover = _updateHover = false;
+            _chipHover = _updateHover = _agentHover = false;
     }
 
     protected override void Paint(SKCanvas c)
@@ -82,6 +104,7 @@ public sealed class StatusBar : Control
         float cy = H / 2f;
 
         float right = PaintUpdateChip(c, W - 12, cy);
+        right = PaintAgentChip(c, right, cy);
         float syncW = Gfx.Measure(_sync, Theme.FontXs);
         Gfx.Text(c, _sync, right, cy, Theme.FontXs, Theme.WeightRegular, Theme.TextMuted, TextAlignment.Right);
         right -= syncW + 18;
@@ -115,6 +138,21 @@ public sealed class StatusBar : Control
         Icons.Draw(c, "download", _updateChip.Left + 12, cy, 12, color);
         Gfx.Text(c, _update, _updateChip.Left + 22, cy, Theme.FontXs, Theme.WeightRegular, color);
         return _updateChip.Left - 12;
+    }
+
+    // "[agent] 1 agent", accent-colored while a call runs.
+    private float PaintAgentChip(SKCanvas c, float right, float cy)
+    {
+        _agentChip = SKRect.Empty;
+        if (_agents is null)
+            return right;
+        float w = Gfx.Measure(_agents, Theme.FontXs) + 30;
+        _agentChip = new SKRect(right - w + 6, 3, right + 6, H - 3);
+        Gfx.FillRound(c, _agentChip, Theme.RadiusSm, _agentsBusy ? Theme.AccentSoft : _agentHover ? Theme.SurfaceHover : Theme.SurfaceRaised);
+        SKColor color = _agentsBusy ? Theme.Accent : Theme.TextSecondary;
+        Icons.Draw(c, "agent", _agentChip.Left + 12, cy, 12, color);
+        Gfx.Text(c, _agents, _agentChip.Left + 22, cy, Theme.FontXs, Theme.WeightRegular, color);
+        return _agentChip.Left - 12;
     }
 
     // "⇄ 3 tunnels" (amber with the failed count when any failed); returns the new right edge for the text beside it.

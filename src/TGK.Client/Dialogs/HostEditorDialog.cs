@@ -13,12 +13,13 @@ using TGK.Core.Services;
 namespace TGK.Client.Dialogs;
 
 /// <summary>
-/// Create or edit a saved host: General (address, credentials, group), Connection, Session, Tunnels and Appearance.
+/// Create or edit a saved host: General (address, credentials, group), Connection, Session, Tunnels, Appearance and
+/// Agents (what MCP agents may do on it).
 /// Saves (and deletes) through the vault.
 /// </summary>
 public sealed class HostEditorDialog : TabbedDialog
 {
-    public const int GeneralTab = 0, ConnectionTab = 1, SessionTab = 2, TunnelsTab = 3, AppearanceTab = 4;
+    public const int GeneralTab = 0, ConnectionTab = 1, SessionTab = 2, TunnelsTab = 3, AppearanceTab = 4, AgentsTab = 5;
     private const float PortW = 100, Gap = 16;
     private readonly IVaultService _vault;
     private readonly HostEntry _entry;
@@ -34,7 +35,7 @@ public sealed class HostEditorDialog : TabbedDialog
     /// <param name="host">The host to edit, or null for a new one.</param>
     /// <param name="template">Prefill for a new host (e.g. when duplicating).</param>
     public HostEditorDialog(TgkView view, HostEntry? host, HostEntry? template = null)
-        : base(view, host is null ? "New host" : "Edit host", 640, "General", "Connection", "Session", "Tunnels", "Appearance")
+        : base(view, host is null ? "New host" : "Edit host", 640, "General", "Connection", "Session", "Tunnels", "Appearance", "Agents")
     {
         _vault = view.Services.Vault;
         _isNew = host is null;
@@ -74,7 +75,7 @@ public sealed class HostEditorDialog : TabbedDialog
         general.Layout = LayoutGeneral;
 
         _options = new OptionsEditor(view, _entry.Options, OptionsLevel.Host, ResolveInherited, Candidate,
-            PageAt(ConnectionTab), PageAt(SessionTab), PageAt(AppearanceTab), _entry.Id);
+            PageAt(ConnectionTab), PageAt(SessionTab), PageAt(AppearanceTab), PageAt(AgentsTab), _entry.Id);
         _options.LayoutChanged += InvalidateLayout;
         _tunnels = new TunnelsEditor(PageAt(TunnelsTab), _entry.Tunnels);
         _tunnels.LayoutChanged += InvalidateLayout;
