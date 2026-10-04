@@ -303,10 +303,14 @@ public sealed class RuleListEditor : VisualElement
         Changed?.Invoke();
     }
 
-    /// <summary>The rules to store (null = inherit); empty rows are skipped.</summary>
-    public List<string>? Collect() => _overridden
-        ? _rows.Select(r => r.Field.Text.Trim()).Where(t => t.Length > 0).Distinct(StringComparer.Ordinal).ToList()
-        : null;
+    /// <summary>The rules to store (null = inherit); empty rows are skipped, and no rules at all inherit again.</summary>
+    public List<string>? Collect()
+    {
+        if (!_overridden)
+            return null;
+        List<string> rules = _rows.Select(r => r.Field.Text.Trim()).Where(t => t.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+        return rules.Count > 0 ? rules : null;
+    }
 
     private bool ShowsInherited => !_overridden && _inheritedRules.Count > 0;
 
@@ -365,6 +369,8 @@ public sealed class RuleListEditor : VisualElement
             RemoveChild(element);
             element.Dispose();
         }
+        if (_rows.Count == 0)
+            _overridden = false; // removing the last rule inherits again (it never silently drops inherited rules)
         if (notify)
             Changed?.Invoke();
     }

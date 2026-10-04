@@ -57,8 +57,7 @@ command, or the diff of a file change, or the content of a new file) and why it 
   disconnects.
 - **Deny**, Escape, closing the dialog, or no answer within 2 minutes: the agent is told you did not approve it.
 
-Enter only approves once the keyboard has been quiet for a second, so typing in another window can't approve
-anything. Prompts for an agent's connection (an unknown host key, a password the vault does not have, a one-time code)
+Approving takes a click: Enter does nothing in this dialog, so keys meant for a terminal can't approve anything. Prompts for an agent's connection (an unknown host key, a password the vault does not have, a one-time code)
 appear as the usual dialogs, marked "for an agent". Passwords typed for agents are kept in memory until TGK closes or
 you sign out.
 

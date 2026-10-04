@@ -225,6 +225,13 @@ public class AgentPolicyTests
         Assert.Equal(AgentAccess.Ask, back.AgentAccess);
         Assert.Equal(["~/private/**"], back.AgentProtectedPaths);
 
+        // A mode from a newer client is read as Off instead of failing the whole item.
+        Assert.Equal(AgentAccess.Off, JsonSerializer.Deserialize<HostOptions>("""{ "agentAccess": "supervised" }""", TgkJson.Options)!.AgentAccess);
+        Assert.Equal(AgentAccess.ReadOnly, JsonSerializer.Deserialize<HostOptions>("""{ "agentAccess": "readOnly" }""", TgkJson.Options)!.AgentAccess);
+        Assert.Equal(AgentAccess.Off, JsonSerializer.Deserialize<HostOptions>("""{ "agentAccess": 3 }""", TgkJson.Options)!.AgentAccess);
+        Assert.Null(JsonSerializer.Deserialize<HostOptions>("""{ "agentAccess": null }""", TgkJson.Options)!.AgentAccess);
+        Assert.Contains("\"agentAccess\": null", JsonSerializer.Serialize(new HostOptions(), TgkJson.Options));
+
         Assert.NotNull(new HostOptions { AgentCommands = [""] }.Validate());
         Assert.NotNull(new HostOptions { AgentProtectedPaths = ["a\nb"] }.Validate());
         Assert.NotNull(new HostOptions { AgentAccess = (AgentAccess)42 }.Validate());

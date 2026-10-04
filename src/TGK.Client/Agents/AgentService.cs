@@ -27,8 +27,11 @@ public sealed class AgentService : IAgentHost, IAsyncDisposable
     private readonly TgkApplication _app;
     private readonly Dictionary<string, string> _passwords = []; // typed for agents in this run, by user@host:port
     private readonly Lock _gate = new();
-    private readonly LinkedList<(AgentActivityEntry Entry, string Result)> _transcript = new();
+    private readonly LinkedList<TranscriptItem> _transcript = new();
+    private readonly SemaphoreSlim _applying = new(1, 1);
     private AgentEndpoint? _endpoint;
+    private long _transcriptSeq;
+    private volatile bool _signedOut; // between sign-out (or lock) and the next sign-in: agents get nothing
 
     /// <summary>Calls kept for the agent log tab, with the text the agent got back (cut at <see cref="MaxTranscriptChars"/>).</summary>
     public const int MaxTranscript = 200, MaxTranscriptChars = 16_000;
@@ -44,21 +47,26 @@ public sealed class AgentService : IAgentHost, IAsyncDisposable
         Toolbox.CallFinished += (entry, result) =>
         {
             string kept = result.Length > MaxTranscriptChars ? result[..MaxTranscriptChars] + "\n[…]\n" : result;
+            TranscriptItem item;
             lock (_gate)
             {
-                _transcript.AddLast((entry, kept));
+                item = new TranscriptItem(++_transcriptSeq, entry, kept);
+                _transcript.AddLast(item);
                 while (_transcript.Count > MaxTranscript)
                     _transcript.RemoveFirst();
             }
-            UiThread.Post(() => CallFinished?.Invoke(entry, kept));
+            UiThread.Post(() => CallFinished?.Invoke(item));
         };
     }
 
+    /// <summary>One agent call and the text it got back; <see cref="Seq"/> grows with every call.</summary>
+    public sealed record TranscriptItem(long Seq, AgentActivityEntry Entry, string Result);
+
     /// <summary>Raised on the UI thread after each agent call, with the text the agent got back.</summary>
-    public event Action<AgentActivityEntry, string>? CallFinished;
+    public event Action<TranscriptItem>? CallFinished;
 
     /// <summary>The recent calls with their results, oldest first (for the agent log tab).</summary>
-    public IReadOnlyList<(AgentActivityEntry Entry, string Result)> Transcript
+    public IReadOnlyList<TranscriptItem> Transcript
     {
         get
         {
@@ -122,6 +130,23 @@ public sealed class AgentService : IAgentHost, IAsyncDisposable
     /// <summary>Starts or stops serving to match the preference. UI thread.</summary>
     public async Task ApplyAsync(bool enabled)
     {
+        // One at a time: a new endpoint must not start while the old one is still shutting down (and deleting its socket).
+        await _applying.WaitAsync();
+        try
+        {
+            await ApplyCoreAsync(enabled);
+        }
+        finally
+        {
+            _applying.Release();
+        }
+        Changed?.Invoke();
+    }
+
+    private async Task ApplyCoreAsync(bool enabled)
+    {
+        if (!enabled)
+            Error = null;
         if (enabled && _endpoint is null)
         {
             var endpoint = new AgentEndpoint(Toolbox);
@@ -149,36 +174,48 @@ public sealed class AgentService : IAgentHost, IAsyncDisposable
             Toolbox.Pool.CloseAll();
             Log.Info("Stopped serving agents.");
         }
-        Changed?.Invoke();
     }
 
-    /// <summary>Ends the agents' sessions and connections (sign-out, lock).</summary>
+    /// <summary>
+    /// Sign-out or lock: ends the agents' sessions and connections, forgets passwords typed for them and what they did
+    /// (the next account on this device must not see it), and refuses their calls until <see cref="OnSignedIn"/>.
+    /// </summary>
     public void OnSignedOut()
     {
+        _signedOut = true;
         _endpoint?.DisconnectAll();
         Toolbox.Pool.CloseAll();
         lock (_gate)
+        {
             _passwords.Clear();
+            _transcript.Clear();
+        }
+        Activity.Clear();
+        Notify();
     }
+
+    /// <summary>A main view opens for a signed-in vault: agents may work again.</summary>
+    public void OnSignedIn() => _signedOut = false;
 
     /// <summary>Ends the agents' sessions; they may reconnect.</summary>
     public void DisconnectAll() => _endpoint?.DisconnectAll();
 
     public async ValueTask DisposeAsync()
     {
-        if (_endpoint is { } endpoint)
-        {
-            _endpoint = null;
-            await endpoint.DisposeAsync().ConfigureAwait(false); // also at exit, when the UI thread no longer runs continuations
-        }
+        _signedOut = true;
+        AgentEndpoint? endpoint = _endpoint;
+        _endpoint = null;
+        // Connections first: at exit the endpoint's wait for calls in progress may be cut short.
         Toolbox.Dispose();
+        if (endpoint is not null)
+            await endpoint.DisposeAsync().ConfigureAwait(false); // also at exit, when the UI thread no longer runs continuations
     }
 
     private void Notify() => UiThread.Post(() => Changed?.Invoke());
 
     // ---- IAgentHost (called on worker threads) ----
 
-    public VaultData? Vault => _app.Services.Vault.IsLoggedIn ? _app.Services.Vault.Current : null;
+    public VaultData? Vault => !_signedOut && _app.Services.Vault.IsLoggedIn ? _app.Services.Vault.Current : null;
 
     public async Task<RemoteConnection> ConnectAsync(HostEntry host, SshConnectRequest request, CancellationToken ct)
     {
@@ -186,9 +223,9 @@ public sealed class AgentService : IAgentHost, IAsyncDisposable
         for (int attempt = 0; ; attempt++)
         {
             var connection = new RemoteConnection(
-                new KnownHostsVerifier(_app.Services.Vault, (info, token) => AskAsync(view => HostKeyDialog.ShowAsync(view, info, token, "for an agent"), false)),
+                new KnownHostsVerifier(_app.Services.Vault, (info, token) => AskAsync(view => HostKeyDialog.ShowAsync(view, info, token, "for an agent"), false, token)),
                 (prompt, token) => AskAsync(view => SignInPromptDialog.ShowAsync(view,
-                    $"{prompt.Username}@{(prompt.Port == 22 ? prompt.Host : $"{prompt.Host}:{prompt.Port}")} (for an agent)", prompt, true, token), (string?)null));
+                    $"{prompt.Username}@{(prompt.Port == 22 ? prompt.Host : $"{prompt.Host}:{prompt.Port}")} (for an agent)", prompt, true, token), (string?)null, token));
             try
             {
                 await connection.ConnectAsync(request, ct).ConfigureAwait(false);
@@ -215,7 +252,7 @@ public sealed class AgentService : IAgentHost, IAsyncDisposable
     {
         try
         {
-            return await AskAsync(view => AgentApprovalDialog.ShowAsync(view, request, ApprovalTimeout, ct), ApprovalAnswer.Deny).ConfigureAwait(false);
+            return await AskAsync(view => AgentApprovalDialog.ShowAsync(view, request, ApprovalTimeout, ct), ApprovalAnswer.Deny, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -239,8 +276,8 @@ public sealed class AgentService : IAgentHost, IAsyncDisposable
         string target = $"{request.Username}@{(request.Port == 22 ? request.Host : $"{request.Host}:{request.Port}")}";
         string? password = await AskAsync(view => new PromptDialog(view, "sudo password", target,
             $"An agent wants to run a command as root on {host.DisplayName}. Enter the sudo password of {request.Username}; it is kept until TGK closes or you sign out.",
-            "Password", "Continue", isPassword: true, error: error, guardEnter: true).ShowAsync(ct), (string?)null).ConfigureAwait(false);
-        if (password is not null)
+            "Password", "Continue", isPassword: true, error: error, guardEnter: true).ShowAsync(ct), (string?)null, ct).ConfigureAwait(false);
+        if (password is not null && !_signedOut)
         {
             lock (_gate)
                 _passwords[key] = password;
@@ -262,7 +299,7 @@ public sealed class AgentService : IAgentHost, IAsyncDisposable
         if (string.IsNullOrWhiteSpace(hop.Username))
         {
             string? user = await AskAsync(view => new PromptDialog(view, "Username required", what,
-                $"An agent wants to connect to {what}, which has no saved username.", "Username", "Continue", guardEnter: true).ShowAsync(ct), (string?)null).ConfigureAwait(false);
+                $"An agent wants to connect to {what}, which has no saved username.", "Username", "Continue", guardEnter: true).ShowAsync(ct), (string?)null, ct).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(user))
                 throw new OperationCanceledException("No username was entered.");
             hop = hop with { Username = user.Trim() };
@@ -277,8 +314,8 @@ public sealed class AgentService : IAgentHost, IAsyncDisposable
         string target = $"{hop.Username}@{(hop.Port == 22 ? hop.Host : $"{hop.Host}:{hop.Port}")}";
         string? password = await AskAsync(view => new PromptDialog(view, "Password required", target,
             $"An agent wants to connect to {what}, which has no saved password. It is used for the agent's connection only and kept until TGK closes or you sign out.",
-            "Password", "Connect", isPassword: true, error: error, guardEnter: true).ShowAsync(ct), (string?)null).ConfigureAwait(false);
-        if (password is null)
+            "Password", "Connect", isPassword: true, error: error, guardEnter: true).ShowAsync(ct), (string?)null, ct).ConfigureAwait(false);
+        if (password is null || _signedOut)
             throw new OperationCanceledException("No password was entered.");
         lock (_gate)
             _passwords[Key(hop)] = password;
@@ -287,12 +324,26 @@ public sealed class AgentService : IAgentHost, IAsyncDisposable
 
     private static string Key(SshConnectRequest r) => $"{r.Username}@{r.Host}:{r.Port}";
 
-    /// <summary>Shows a dialog on the main view (drawing attention to the window); <paramref name="fallback"/> when TGK is locked.</summary>
-    private Task<T> AskAsync<T>(Func<MainView, Task<T>> show, T fallback) => UiThread.InvokeAsync(() =>
+    /// <summary>
+    /// Shows a dialog on the main view (drawing attention to the window); <paramref name="fallback"/> when TGK is
+    /// locked or signed out. <paramref name="ct"/> ends the wait even when the UI no longer runs (at exit).
+    /// </summary>
+    private async Task<T> AskAsync<T>(Func<MainView, Task<T>> show, T fallback, CancellationToken ct)
     {
-        if (_app.Main is not { } main || !_app.Services.Vault.IsLoggedIn)
-            return Task.FromResult(fallback);
-        AppWindow.RequestAttention();
-        return show(main);
-    });
+        Task<T> asked = UiThread.InvokeAsync(() =>
+        {
+            if (_signedOut || _app.Main is not { IsTornDown: false } main || !_app.Services.Vault.IsLoggedIn)
+                return Task.FromResult(fallback);
+            AppWindow.RequestAttention();
+            return show(main);
+        });
+        try
+        {
+            return await asked.WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return fallback;
+        }
+    }
 }

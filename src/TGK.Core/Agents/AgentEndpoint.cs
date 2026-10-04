@@ -128,16 +128,16 @@ public sealed class AgentEndpoint : IAsyncDisposable
     {
         _stop.Cancel();
         _listener?.Dispose();
+        // Unpublished first: at exit the wait below may be cut short.
+        TryDelete(_socketPath);
+        // Only our own publication: a newer TGK may have replaced it.
+        if (ReadInfo(_infoPath) is { } info && info.Token == _token)
+            TryDelete(_infoPath);
         DisconnectAll();
         Task[] running;
         lock (_gate)
             running = _connections.Select(c => c.Task).ToArray();
         await Task.WhenAny(Task.WhenAll(running), Task.Delay(2000)).ConfigureAwait(false);
-        TryDelete(_socketPath);
-        // Only our own publication: a newer TGK may have replaced it.
-        if (ReadInfo(_infoPath) is { } info && info.Token == _token)
-            TryDelete(_infoPath);
-        _stop.Dispose();
     }
 
     /// <summary>The endpoint a running TGK published, or null.</summary>

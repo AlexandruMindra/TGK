@@ -22,6 +22,7 @@ public sealed class ConnectionPool : IDisposable
     private readonly Dictionary<Guid, Entry> _entries = [];
     private readonly Timer _sweeper;
     private bool _disposed;
+    private int _generation; // bumped by CloseAll: a connection opened across it is not kept
 
     /// <param name="connect">Opens a connection to a saved host (credentials, prompts and route are the caller's business).</param>
     public ConnectionPool(Func<HostEntry, CancellationToken, Task<RemoteConnection>> connect)
@@ -51,9 +52,11 @@ public sealed class ConnectionPool : IDisposable
     public async Task<Lease> AcquireAsync(HostEntry host, string routeKey, CancellationToken ct)
     {
         Entry entry;
+        int generation;
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            generation = _generation;
             if (!_entries.TryGetValue(host.Id, out entry!))
                 _entries[host.Id] = entry = new Entry();
         }
@@ -69,10 +72,10 @@ public sealed class ConnectionPool : IDisposable
             RemoteConnection connection = await _connect(host, ct).ConfigureAwait(false);
             lock (_gate)
             {
-                if (_disposed)
+                if (_disposed || generation != _generation)
                 {
                     connection.Dispose();
-                    throw new ObjectDisposedException(nameof(ConnectionPool));
+                    throw new OperationCanceledException("Agent connections were closed meanwhile.");
                 }
             }
             entry.Files = new RemoteFiles(connection);
@@ -127,6 +130,7 @@ public sealed class ConnectionPool : IDisposable
         List<RemoteFiles> open;
         lock (_gate)
         {
+            _generation++;
             open = _entries.Values.Select(e => e.Files).OfType<RemoteFiles>().ToList();
             foreach (Entry e in _entries.Values)
                 e.Files = null;

@@ -85,6 +85,7 @@ public sealed class HostOptions
     // ---- Agents (MCP) ----
 
     /// <summary>What local agents (MCP clients connected through TGK) may do on the host; built-in default: <see cref="Models.AgentAccess.Off"/>.</summary>
+    [JsonConverter(typeof(TolerantAgentAccessConverter))]
     public AgentAccess? AgentAccess { get; set; }
 
     /// <summary>
@@ -201,6 +202,40 @@ public sealed class HostOptions
                 return $"The {what} \"{rule}\" contains a line break or control character.";
         }
         return null;
+    }
+}
+
+/// <summary>
+/// Reads <see cref="Models.AgentAccess"/> leniently: a mode this version does not know (from a newer client) is read as
+/// <see cref="Models.AgentAccess.Off"/>, the safe side, instead of failing to read the whole host or group.
+/// </summary>
+public sealed class TolerantAgentAccessConverter : JsonConverter<AgentAccess?>
+{
+    public override bool HandleNull => true;
+
+    public override AgentAccess? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        switch (reader.TokenType)
+        {
+            case JsonTokenType.Null:
+                return null;
+            case JsonTokenType.String:
+                string? text = reader.GetString();
+                return Enum.TryParse(text, ignoreCase: true, out AgentAccess value) && Enum.IsDefined(value) && !int.TryParse(text, out _)
+                    ? value
+                    : Models.AgentAccess.Off;
+            default:
+                reader.Skip();
+                return Models.AgentAccess.Off;
+        }
+    }
+
+    public override void Write(Utf8JsonWriter writer, AgentAccess? value, JsonSerializerOptions options)
+    {
+        if (value is { } access)
+            writer.WriteStringValue(JsonNamingPolicy.CamelCase.ConvertName(access.ToString()));
+        else
+            writer.WriteNullValue();
     }
 }
 

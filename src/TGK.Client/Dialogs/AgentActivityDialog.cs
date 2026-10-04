@@ -60,6 +60,12 @@ public sealed class AgentActivityDialog : DialogBase
 
     private void Refresh()
     {
+        if (View is MainView { IsTornDown: true })
+        {
+            // Signed out with the dialog open: it goes with the view (and must not keep it alive).
+            _agents.Changed -= Refresh;
+            return;
+        }
         IReadOnlyList<AgentSession> sessions = _agents.Sessions;
         int open = _agents.Toolbox.Pool.OpenHosts.Count;
         _status.Text = !_agents.IsRunning

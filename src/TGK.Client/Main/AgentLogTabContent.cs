@@ -15,6 +15,7 @@ public sealed class AgentLogTabContent : TabContent
     private const int MaxLinesPerCall = 80;
     private TerminalView _terminal = null!;
     private AgentService _agents = null!;
+    private long _shown; // the last transcript item written
 
     public override Blossom.Core.Visual.VisualElement? DefaultFocus => _terminal;
 
@@ -25,8 +26,8 @@ public sealed class AgentLogTabContent : TabContent
         _terminal = new TerminalView(Host.Services.Prefs.Terminal) { InputEnabled = false };
         AddChild(_terminal);
         Write("\u001b[2mWhat agents do on your hosts appears here as it happens, with what they got back. Read only.\u001b[0m\r\n\r\n");
-        foreach ((AgentActivityEntry entry, string result) in _agents.Transcript)
-            Append(entry, result);
+        foreach (AgentService.TranscriptItem item in _agents.Transcript)
+            Append(item);
         _agents.CallFinished += Append;
         UpdateStatus();
         _agents.Changed += UpdateStatus;
@@ -53,8 +54,12 @@ public sealed class AgentLogTabContent : TabContent
             : $"Agent log · {sessions} agent{(sessions == 1 ? "" : "s")} connected");
     }
 
-    private void Append(AgentActivityEntry entry, string result)
+    private void Append(AgentService.TranscriptItem item)
     {
+        if (item.Seq <= _shown)
+            return; // already written from the transcript when the tab opened
+        _shown = item.Seq;
+        (AgentActivityEntry entry, string result) = (item.Entry, item.Result);
         var sb = new StringBuilder();
         string color = entry.Outcome switch { AgentOutcome.Denied => "33", AgentOutcome.Failed => "31", _ => "32" };
         string outcome = entry.Outcome switch
@@ -63,7 +68,7 @@ public sealed class AgentLogTabContent : TabContent
             AgentOutcome.Failed => "failed",
             _ => entry.ApprovedBy is "user" or "session" ? "approved" : "ok",
         };
-        sb.Append($"\u001b[2m{entry.Time.ToLocalTime():HH:mm:ss}\u001b[0m \u001b[36m{entry.Client}\u001b[0m → \u001b[1m{entry.Host ?? "-"}\u001b[0m  {entry.Tool}  \u001b[{color}m[{outcome}]\u001b[0m \u001b[2m{entry.Duration.TotalSeconds:0.0} s\u001b[0m\r\n");
+        sb.Append($"\u001b[2m{entry.Time.ToLocalTime():HH:mm:ss}\u001b[0m \u001b[36m{Clean(entry.Client)}\u001b[0m → \u001b[1m{Clean(entry.Host ?? "-")}\u001b[0m  {entry.Tool}  \u001b[{color}m[{outcome}]\u001b[0m \u001b[2m{entry.Duration.TotalSeconds:0.0} s\u001b[0m\r\n");
         if (entry.Summary.Length > 0)
             sb.Append($"\u001b[33m{(entry.Tool == AgentTools.RunCommand ? "$ " : "▸ ")}{Clean(entry.Summary)}\u001b[0m\r\n");
         string[] lines = result.TrimEnd('\n').Split('\n');

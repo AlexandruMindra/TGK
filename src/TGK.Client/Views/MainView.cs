@@ -39,6 +39,9 @@ public sealed partial class MainView : TgkView
     private long _peekOpenAt = -1, _peekCloseAt = -1;
     private bool _vaultRefreshQueued;
     private bool _torndown;
+
+    /// <summary>Signed out or locked: the view is about to be discarded.</summary>
+    internal bool IsTornDown => _torndown;
     private TabContent? _tunnelMenuTab; // the tab whose tunnels the open tunnel menu lists
     private IReadOnlyList<TunnelStatus>? _tunnelMenuTunnels;
     private SKRect _tunnelMenuChip;

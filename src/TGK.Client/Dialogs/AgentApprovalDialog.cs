@@ -13,7 +13,7 @@ namespace TGK.Client.Dialogs;
 /// An agent asks to do something the host's policy does not allow on its own: run a command, change a file, read a
 /// protected path. Shows what exactly (the command, or the diff of the change) and why approval is needed.
 /// Allow (once), Allow for this session (the same command, or the same file, again), or Deny. Closing, Escape and
-/// no answer in time are a denial.
+/// no answer in time are a denial; Enter does nothing (approving takes a click).
 /// </summary>
 public sealed class AgentApprovalDialog : DialogBase
 {
@@ -50,8 +50,9 @@ public sealed class AgentApprovalDialog : DialogBase
         AddLeftButton("Deny", ButtonVariant.Secondary, Cancel);
         AddButton("Allow for this session", ButtonVariant.Secondary, () => Answer(ApprovalAnswer.AllowSession));
         AddButton("Allow", ButtonVariant.Primary, () => Answer(ApprovalAnswer.AllowOnce));
-        // It takes the focus from wherever the user is typing: a stray Enter must not approve anything.
-        EnterGuardMs = PromptDialog.UnsolicitedEnterGuardMs;
+        // It takes the focus from wherever the user is typing, and several may stack up: approving takes a click,
+        // never Enter.
+        EnterAccepts = false;
     }
 
     /// <summary>Asks on the UI thread; completes with the answer (Deny when closed, timed out or <paramref name="ct"/> cancelled).</summary>
@@ -94,7 +95,7 @@ public sealed class AgentApprovalDialog : DialogBase
         return y + th - top;
     }
 
-    protected override void Accept() => Answer(ApprovalAnswer.AllowOnce);
+    protected override void Accept() { } // Enter is off (EnterAccepts)
 
     protected override void Cancel()
     {

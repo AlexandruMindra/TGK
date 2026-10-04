@@ -67,6 +67,7 @@ public sealed class TgkApplication : Application
     {
         if (_main is not null)
             RemoveView(_main);
+        Agents.OnSignedIn();
         _main = new MainView(Services);
         AddView(_main);
         SetActiveView(_main);
