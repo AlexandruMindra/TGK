@@ -119,7 +119,8 @@ public static class AgentTools
 
         new(Grep, "Search file contents",
             "Searches file contents on a host for a regular expression (ripgrep when the server has it, else grep -E), below a directory " +
-            "or in one file, and returns matching lines as path:line:text. Skips binary files, .git and hidden directories such as .ssh.",
+            "or in one file, and returns matching lines as path:line:text. Skips binary files, .git, node_modules and protected paths " +
+            "(keys and credentials such as .ssh, ssh, *.pem, *.key, .env, shadow).",
             $$"""
             {
               "type": "object",

@@ -25,8 +25,8 @@ public sealed partial class ShellCommand
         "which", "type", "command", "printenv", "lsblk", "lscpu", "lsusb", "lspci", "nproc", "ss", "netstat", "md5sum",
         "sha1sum", "sha256sum", "sha512sum", "cksum", "sort", "uniq", "cut", "tr", "diff", "cmp", "comm", "basename",
         "dirname", "realpath", "readlink", "tree", "journalctl", "dmesg", "last", "w", "who", "getent", "test", "[",
-        "true", "false", "column", "nl", "rev", "tac", "od", "hexdump", "xxd", "strings", "less", "more", "zcat",
-        "zgrep", "bzcat", "xzcat", "jq", "yq", "env", "locale", "arch", "lsb_release", "hostnamectl", "timedatectl",
+        "true", "false", "column", "nl", "rev", "tac", "od", "hexdump", "strings", "less", "more", "zcat",
+        "zgrep", "bzcat", "xzcat", "jq", "env", "locale", "arch", "lsb_release", "hostnamectl", "timedatectl",
         "ip", "systemctl", "git", "docker", "podman", "kubectl", "helm", "service", "crontab", "apt", "dpkg",
         "rpm", "dnf", "yum", "pip", "npm", "sleep",
     };
@@ -36,7 +36,9 @@ public sealed partial class ShellCommand
     {
         ["systemctl"] = ["status", "show", "list-units", "list-unit-files", "list-timers", "list-sockets", "is-active", "is-enabled", "is-failed", "cat", "--version"],
         ["service"] = ["--status-all"],
-        ["git"] = ["status", "log", "diff", "show", "rev-parse", "ls-files", "blame", "describe", "shortlog", "grep", "ls-tree", "cat-file", "reflog", "--version", "version"],
+        ["git"] = ["status", "log", "diff", "show", "rev-parse", "ls-files", "blame", "describe", "shortlog", "grep", "ls-tree", "cat-file", "--version", "version"],
+        ["hostnamectl"] = ["status", "show"],
+        ["timedatectl"] = ["status", "show", "list-timezones", "timesync-status", "show-timesync"],
         ["docker"] = ["ps", "images", "logs", "inspect", "version", "info", "stats", "top", "port", "history"],
         ["podman"] = ["ps", "images", "logs", "inspect", "version", "info", "stats", "top", "port", "history"],
         ["kubectl"] = ["get", "describe", "logs", "version", "top", "explain", "api-resources", "cluster-info"],
@@ -57,7 +59,15 @@ public sealed partial class ShellCommand
     // Of those, the ones that only read (or print help) without any argument.
     private static readonly HashSet<string> NoArgumentsReadOnly = new(StringComparer.Ordinal)
     {
-        "env", "ip", "git", "systemctl", "docker", "podman", "kubectl", "helm",
+        "env", "ip", "git", "systemctl", "docker", "podman", "kubectl", "helm", "hostnamectl", "timedatectl",
+    };
+
+    // Commands that write their last argument when given more than this many operands (uniq IN OUT, hostname NAME).
+    private static readonly Dictionary<string, int> MaxOperands = new(StringComparer.Ordinal)
+    {
+        ["uniq"] = 1,
+        ["hostname"] = 0,
+        ["date"] = 0, // date MMDDhhmm sets the clock
     };
 
     // Options that make a read-only command write or run something.
@@ -73,14 +83,19 @@ public sealed partial class ShellCommand
         ["date"] = ["-s", "--set"],
         ["hostname"] = ["-F", "--file"],
         ["tree"] = ["-o"],
-        ["xxd"] = ["-r"],
+        ["file"] = ["-C", "--compile"],
+        ["jq"] = ["--rawfile", "--slurpfile"], // reading other files than the ones named is fine, but keep it simple
     };
 
-    private ShellCommand(IReadOnlyList<IReadOnlyList<string>> commands, bool complex)
+    private ShellCommand(IReadOnlyList<IReadOnlyList<string>> commands, IReadOnlyList<IReadOnlyList<ShellWord>> parts, bool complex)
     {
         Commands = commands;
+        Parts = parts;
         IsComplex = complex;
     }
+
+    /// <summary>The words of each command with what the shell may still do to them (expand globs or variables).</summary>
+    public IReadOnlyList<IReadOnlyList<ShellWord>> Parts { get; }
 
     /// <summary>The simple commands, each as its words (quotes removed).</summary>
     public IReadOnlyList<IReadOnlyList<string>> Commands { get; }
@@ -95,23 +110,27 @@ public sealed partial class ShellCommand
     {
         ArgumentNullException.ThrowIfNull(line);
         var commands = new List<IReadOnlyList<string>>();
-        var words = new List<string>();
+        var parts = new List<IReadOnlyList<ShellWord>>();
+        var words = new List<ShellWord>();
         var word = new StringBuilder();
-        bool inWord = false, complex = false;
+        bool inWord = false, complex = false, glob = false, dynamic = false;
 
         void EndWord()
         {
             if (inWord)
-                words.Add(word.ToString());
+                words.Add(new ShellWord(word.ToString(), glob, dynamic));
             word.Clear();
-            inWord = false;
+            inWord = glob = dynamic = false;
         }
 
         void EndCommand()
         {
             EndWord();
             if (words.Count > 0)
-                commands.Add(words.ToArray());
+            {
+                commands.Add(words.Select(w => w.Text).ToArray());
+                parts.Add(words.ToArray());
+            }
             words.Clear();
         }
 
@@ -150,6 +169,8 @@ public sealed partial class ShellCommand
                         }
                         if (line[j] == '`' || (line[j] == '$' && j + 1 < line.Length && line[j + 1] == '('))
                             complex = true;
+                        else if (line[j] == '$')
+                            dynamic = true;
                         word.Append(line[j]);
                     }
                     if (j >= line.Length)
@@ -165,6 +186,16 @@ public sealed partial class ShellCommand
                     break;
                 case '$' when i + 1 < line.Length && line[i + 1] == '(':
                     complex = true;
+                    word.Append(c);
+                    inWord = true;
+                    break;
+                case '$':
+                    dynamic = true;
+                    word.Append(c);
+                    inWord = true;
+                    break;
+                case '*' or '?' or '[':
+                    glob = true;
                     word.Append(c);
                     inWord = true;
                     break;
@@ -226,7 +257,7 @@ public sealed partial class ShellCommand
             }
         }
         EndCommand();
-        return new ShellCommand(commands, complex);
+        return new ShellCommand(commands, parts, complex);
     }
 
     /// <summary>Every simple command is a built-in read-only one (and nothing complex is going on).</summary>
@@ -285,6 +316,8 @@ public sealed partial class ShellCommand
             if (!subcommands.Contains(first))
                 return false;
         }
+        if (MaxOperands.TryGetValue(name, out int maxOperands) && Operands(words, name) > maxOperands)
+            return false;
         if (UnsafeOptions.TryGetValue(name, out string[]? unsafeOptions))
         {
             foreach (string w in words.Skip(1))
@@ -296,6 +329,32 @@ public sealed partial class ShellCommand
         return true;
     }
 
+    // Operands of a command: words that are neither options nor the values of options that take one.
+    private static int Operands(IReadOnlyList<string> words, string name)
+    {
+        string[] withValue = name switch
+        {
+            "date" => ["-d", "--date", "-r", "--reference", "-f", "--file"],
+            "uniq" => ["-f", "--skip-fields", "-s", "--skip-chars", "-w", "--check-chars"],
+            _ => [],
+        };
+        int count = 0;
+        for (int i = 1; i < words.Count; i++)
+        {
+            string w = words[i];
+            if (Array.IndexOf(withValue, w) >= 0)
+                i++;
+            else if (!w.StartsWith('-') && !w.StartsWith('+'))
+                count++;
+        }
+        return count;
+    }
+
     [GeneratedRegex(@"\s+")]
     private static partial Regex WhiteSpace();
 }
+
+/// <summary>A word of a command line (quotes removed).</summary>
+/// <param name="Glob">Has an unquoted <c>*</c>, <c>?</c> or <c>[</c>: the shell expands it to matching paths.</param>
+/// <param name="Dynamic">Has a variable the shell expands (<c>$X</c>, outside single quotes).</param>
+public readonly record struct ShellWord(string Text, bool Glob, bool Dynamic);

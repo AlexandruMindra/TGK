@@ -51,6 +51,14 @@ public class ShellCommandTests
     [InlineData("diff <(ls a) <(ls b)")]
     [InlineData("echo 'unbalanced")]
     [InlineData("sudo cat /etc/shadow")]
+    [InlineData("uniq in.txt out.txt")]
+    [InlineData("hostname evil")]
+    [InlineData("date 010100002030")]
+    [InlineData("file -C -m magic")]
+    [InlineData("hostnamectl set-hostname x")]
+    [InlineData("git reflog expire --all")]
+    [InlineData("yq -i '.a = 1' f.yaml")]
+    [InlineData("xxd in out")]
     public void Commands_that_may_change_things_are_not_read_only(string line)
     {
         // "git" alone prints help, which is harmless; the rest must not pass.
@@ -139,6 +147,49 @@ public class AgentPolicyTests
         Assert.Equal(AgentVerdict.Ask, AgentPolicy.Read(full, "/etc/ssl/private/site.key", Home).Verdict);
         Assert.Equal(AgentVerdict.Ask, AgentPolicy.Run(full, "cp backup.tar /srv/secrets/", Home).Verdict);
         Assert.Equal(AgentVerdict.Allow, AgentPolicy.Read(full, "/srv/secretsauce.txt", Home).Verdict);
+    }
+
+    [Theory]
+    [InlineData("cat ~/.ss*/id*")]
+    [InlineData("cat /home/dev/.ssh/*")]
+    [InlineData("head /etc/ssh/*")]
+    [InlineData("cat $HOME/.ssh/authorized_keys")]
+    [InlineData("cat \"${HOME}/.ssh/config\"")]
+    [InlineData("cat $SOME_DIR/file")]
+    [InlineData("grep -r BEGIN /home/dev")]
+    [InlineData("grep -rn password ~")]
+    [InlineData("rg secret /etc")]
+    [InlineData("grep -R x")] // the working directory (home) holds ~/.ssh
+    [InlineData("cat ssh_host_ed25519_key", "/etc/ssh")]
+    [InlineData("cat .ssh/id_ed25519")]
+    [InlineData("tail --follow=name /etc/shadow")]
+    [InlineData("cat /etc/ssl/private/*")]
+    public void Commands_that_may_reach_protected_paths_are_caught(string command, string? cwd = null)
+    {
+        AgentRules ro = Rules(AgentAccess.ReadOnly);
+        Assert.Equal(AgentVerdict.Deny, AgentPolicy.Run(ro, command, Home, cwd).Verdict);
+        Assert.Equal(AgentVerdict.Ask, AgentPolicy.Run(Rules(AgentAccess.Full), command, Home, cwd).Verdict);
+    }
+
+    [Theory]
+    [InlineData("tail -n 50 /var/log/nginx/*.log")]
+    [InlineData("ls ~/projects")]
+    [InlineData("grep -rn listen /etc/nginx")]
+    [InlineData("rg TODO ~/projects/app")]
+    [InlineData("find /etc -name '*.conf'")]
+    [InlineData("echo $HOME")]
+    [InlineData("date -d yesterday +%F")]
+    [InlineData("sort data.txt | uniq -c")]
+    public void Ordinary_read_only_commands_still_run(string command) =>
+        Assert.Equal(AgentVerdict.Allow, AgentPolicy.Run(Rules(AgentAccess.ReadOnly), command, Home).Verdict);
+
+    [Fact]
+    public void Cd_in_the_command_line_moves_where_paths_are_resolved()
+    {
+        Assert.Equal(AgentVerdict.Ask, AgentPolicy.Run(Rules(AgentAccess.Full), "cd /etc/ssh && cat ssh_host_rsa_key", Home).Verdict);
+        Assert.Equal(AgentVerdict.Ask, AgentPolicy.Run(Rules(AgentAccess.Full), "cd ~ && cat .ssh/config", Home).Verdict);
+        Assert.Equal(AgentVerdict.Ask, AgentPolicy.Run(Rules(AgentAccess.Full), "cd \"$X\" && cat a/b", Home).Verdict);
+        Assert.Equal(AgentVerdict.Allow, AgentPolicy.Run(Rules(AgentAccess.Full), "cd /var/www && cat index.html", Home).Verdict);
     }
 
     [Fact]

@@ -259,7 +259,8 @@ public sealed class AgentToolbox : IDisposable
         }
         else
         {
-            await call.ApproveAsync(AgentPolicy.Run(call.Rules, command, home), "Run a command", call.Summary, null, $"run|{line}", ct).ConfigureAwait(false);
+            string wd = string.IsNullOrWhiteSpace(cwd) ? home : RemotePath.Resolve(home, cwd);
+            await call.ApproveAsync(AgentPolicy.Run(call.Rules, command, home, wd), "Run a command", call.Summary, null, $"run|{line}", ct).ConfigureAwait(false);
         }
 
         CommandResult result = sudo
@@ -442,10 +443,22 @@ public sealed class AgentToolbox : IDisposable
             hasRg = probe.Stdout.Trim() == "yes" ? "yes" : "no";
             _pool.SetFact(call.Host.Id, "rg", hasRg);
         }
+        // Protected paths below the search: the built-in ones are left out of it; the host's own need approval like
+        // reading them (refused in read-only mode).
+        if (AgentPolicy.ProtectedBelow(call.Rules, path, home, builtIn: false) is { } below)
+        {
+            var decision = call.Rules.Access == AgentAccess.ReadOnly
+                ? AgentDecision.Deny($"The search covers the protected path {RemotePath.Tilde(home, below)}; search below or beside it.")
+                : AgentDecision.Ask($"The search covers the protected path {RemotePath.Tilde(home, below)}.");
+            await call.ApproveAsync(decision, "Search a protected path", call.Display(path), null, $"read|{path}", ct).ConfigureAwait(false);
+        }
         string q = RemotePath.Quote(pattern), where = RemotePath.Quote(path);
+        string rgExcludes = string.Concat(AgentPolicy.SearchExcludedNames.Concat(AgentPolicy.SearchExcludedDirs).Select(n => $" -g {RemotePath.Quote("!" + n)}"));
+        string grepExcludes = string.Concat(AgentPolicy.SearchExcludedNames.Select(n => $" --exclude={RemotePath.Quote(n)}"))
+            + string.Concat(AgentPolicy.SearchExcludedDirs.Append(".git").Append("node_modules").Select(n => $" --exclude-dir={RemotePath.Quote(n)}"));
         string script = hasRg == "yes"
-            ? $"rg --line-number --no-heading --color never --max-columns 500 --max-columns-preview{(ignoreCase ? " -i" : "")}{(context > 0 ? $" -C {context}" : "")}{(glob is null ? "" : $" -g {RemotePath.Quote(glob)}")} -e {q} -- {where} 2>&1 | head -n {max + 1}"
-            : $"grep -rnIE{(ignoreCase ? "i" : "")}{(context > 0 ? $" -C {context}" : "")} --exclude-dir=.git --exclude-dir=.ssh --exclude-dir=node_modules{(glob is null ? "" : $" --include={RemotePath.Quote(glob)}")} -e {q} -- {where} 2>&1 | head -n {max + 1}";
+            ? $"rg --line-number --no-heading --color never --max-columns 500 --max-columns-preview{(ignoreCase ? " -i" : "")}{(context > 0 ? $" -C {context}" : "")}{(glob is null ? "" : $" -g {RemotePath.Quote(glob)}")}{rgExcludes} -e {q} -- {where} 2>&1 | head -n {max + 1}"
+            : $"grep -rnIE{(ignoreCase ? "i" : "")}{(context > 0 ? $" -C {context}" : "")}{grepExcludes}{(glob is null ? "" : $" --include={RemotePath.Quote(glob)}")} -e {q} -- {where} 2>&1 | head -n {max + 1}";
         CommandResult result = await lease.Connection.RunAsync(script, SearchTimeout, ct: ct).ConfigureAwait(false);
         string[] lines = result.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries);
         call.Detail = $"{Math.Min(lines.Length, max)} lines";
