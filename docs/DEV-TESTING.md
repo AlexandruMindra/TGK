@@ -42,12 +42,15 @@ in a PTY, honours `pty-req`/`window-change`, and accepts one test user by passwo
 host and tunnel tests also need it to allow port forwarding (`direct-tcpip` and `tcpip-forward`; jump tests reach the
 server through itself, also as `localhost`), and the environment test passes only when it accepts `env` requests
 (it is skipped otherwise).
-A small asyncssh script is enough (or any disposable OpenSSH server in a container or VM):
+`scripts/e2e-sshd.py` is such a server (asyncssh; any disposable OpenSSH server in a container or VM works too). It
+also offers exec commands and SFTP for the agent tests, and runs everything as the user who starts it, so never expose
+it:
 
 ```bash
 python3 -m venv .venv-ssh && .venv-ssh/bin/pip install asyncssh
-ssh-keygen -q -t ed25519 -N "" -f <keydir>/client_key     # authorize client_key.pub on the test server
-.venv-ssh/bin/python <path-to>/server.py                    # listens on 127.0.0.1:2222
+ssh-keygen -q -t ed25519 -N "" -f <keydir>/client_key
+.venv-ssh/bin/python scripts/e2e-sshd.py --user test --password test --authorized-key <keydir>/client_key.pub   # 127.0.0.1:2222
+.venv-ssh/bin/python scripts/e2e-sshd.py --port 2224 --no-sftp     # optional: for the agents' fallback without SFTP
 ```
 
 Run the tests against it:
@@ -57,10 +60,31 @@ export TGK_E2E_SSH='<user>:<password>@127.0.0.1:2222'
 export TGK_E2E_SSH_KEY=<keydir>/client_key                   # optional: enables the private-key test
 export TGK_E2E_SSH_LEGACY='<user>:<password>@127.0.0.1:2223'  # optional: a server offering only legacy key exchange
                                                              # (e.g. diffie-hellman-group14-sha1) for the "Legacy algorithms" test
+export TGK_E2E_SSH_NOSFTP='test:test@127.0.0.1:2224'         # optional: the server started with --no-sftp
 dotnet test tests/TGK.Core.Tests --filter Category=E2E
 ```
 
-Never point these variables at a real server or account.
+Never point these variables at a real server or account. Besides the terminal sessions (`SshEndToEndTests`) this
+runs the agent tests against it: `RemoteConnectionEndToEndTests` (commands, SFTP and the fallback through commands)
+and `AgentEndToEndTests`, which starts the real `tgk-mcp` from an MCP client and calls every tool through an
+`AgentEndpoint` (approvals, read-only access and hanging up are checked too; the tests that need no SSH server always
+run).
+
+## Agents with Claude Code
+
+To try agents against the test server: sign in to the mock vault (`--dev-login`), add a host for
+`test:test@127.0.0.1:2222` with Agent access set (or edit `dev-vault-demo.json` in the config directory while TGK is
+closed), turn on Settings → Agents, then register the built `tgk-mcp` in a scratch directory:
+
+```bash
+claude mcp add --scope local tgk -e XDG_CONFIG_HOME=<the config dir TGK runs with> -e DOTNET_ROOT=$HOME/.dotnet \
+  -- "$PWD/src/TGK.Client/bin/Debug/net10.0/tgk-mcp"
+claude mcp list        # tgk: ... ✓ Connected
+```
+
+Debug builds are framework-dependent, hence `DOTNET_ROOT` when .NET is not installed system-wide; published builds
+are self-contained. Scenes for the agent UI: `agents`, `host-editor-agents`, `agent-approval`, `agent-command`,
+`agent-activity`.
 
 ## GUI checks
 

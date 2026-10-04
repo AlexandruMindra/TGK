@@ -25,11 +25,12 @@ Clients look for updates on GitHub and install them in place ("Update now" in th
 the nightly) must keep publishing:
 
 - `TGK-linux-x64.tar.gz` and `TGK-win-x64.zip`, each holding one top-level `TGK/` folder with the self-contained
-  publish output (the executable `TGK` / `TGK.exe` and `TGK.dll` among it). The Windows installer installs the same
+  publish output (the executable `TGK` / `TGK.exe` and `TGK.dll` among it, and `tgk-mcp` / `tgk-mcp.exe`, the MCP
+  server agents run from that folder: users register its path, so it must stay next to `TGK`). The Windows installer installs the same
   folder (per user, so it stays writable) and those installs update from the zip;
 - `TGK-osx-arm64.tar.gz` and `TGK-osx-x64.tar.gz`, each holding one top-level `TGK.app/` bundle (the publish output in
   `Contents/MacOS/`);
-- `TGK-x86_64.AppImage`, which an AppImage replaces as a whole;
+- `TGK-x86_64.AppImage`, which an AppImage replaces as a whole (it runs `tgk-mcp` when started with `--mcp`);
 - a `TGK.dll` whose informational version equals the release (`X.Y.Z` for `vX.Y.Z`, the title's `X.Y.Z-nightly.N`
   for the nightly) — the client refuses an archive holding another version;
 - the release title of the nightly as `Nightly X.Y.Z-nightly.N`.

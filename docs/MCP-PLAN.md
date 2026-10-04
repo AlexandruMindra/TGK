@@ -105,8 +105,9 @@ Stored in the vault (synced), inherited like the other connection settings: host
 2. Writes (`edit_file`, `write_file`), policy model and evaluation, approvals, audit log.
 3. MCP server in the app, `tgk-mcp`, settings, status chip and activity, packaging on every platform, docs,
    changelog; a real Claude Code session against the test server.
-4. Extensions: `upload`/`download`; later: a headless mode for servers/CI, mirroring agent commands into a visible
-   tab, an AI chat pane, sudo with approval.
+4. Extensions: `upload`/`download`, mirroring agent calls into a visible tab (the Agent log), sudo with approval.
+   Not done yet: a headless mode for servers/CI (it needs a read-only way to use the vault from a second process
+   while the app may be running) and an AI chat pane inside TGK.
 
 ## Testing
 

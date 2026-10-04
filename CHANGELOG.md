@@ -10,6 +10,18 @@ shows the current Unreleased section.
 
 ## [Unreleased]
 
+### Added
+
+- **Agents (MCP)**: Claude Code and other MCP clients can work on your saved hosts through TGK: run commands, read,
+  search and edit files, copy files up and down. Turn it on in Settings → Agents (off by default) and register TGK
+  with Claude Code once (the tab gives the command); TGK must be running. Hosts stay closed to agents until you open
+  them, per host, per group or for all hosts, in the new Agents tab: Read only, Ask (you approve every change in TGK,
+  with the exact command or a diff of the file) or Full, plus commands that may run without asking and paths that
+  always need approval (keys and other secrets are protected out of the box). Commands as root (sudo) are always
+  approved by you, and TGK supplies the password. Agents never see passwords or keys; the status bar shows when they
+  are connected, and every call is listed in the activity view, mirrored in an "Agent log" tab and kept in an audit
+  log. See docs/AGENTS.md.
+
 ## [0.2.4] - 2026-10-04
 
 ### Added

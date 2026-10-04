@@ -39,6 +39,12 @@ entirely on one machine.
   - Font (bundled or any installed monospace font), font size, color scheme (TGK Dark, Solarized, Dracula, Nord,
     Gruvbox, One Dark), opt-in legacy algorithms for old devices.
 
+**Agents (MCP)**
+- Let Claude Code or any MCP client work on your saved hosts through TGK: run commands, read, search and edit files
+  (SFTP, with a fallback for servers without it). Off by default; per host or group you choose Read only, Ask (you
+  approve every change in TGK, with the exact command or a diff) or Full, plus allowed commands and protected paths.
+  The agent never sees passwords or keys; every call is shown live and kept in an audit log. See [docs/AGENTS.md](docs/AGENTS.md).
+
 **Vault**
 - **Server mode:** sign up from the app, Google Authenticator (TOTP) required, stay signed in per device, see and
   sign out your other devices, change password. Changes sync in the background and work offline.
@@ -59,6 +65,8 @@ entirely on one machine.
 - **A forgotten password (or master password) cannot be recovered** — nobody, including the server admin, can decrypt the vault.
 - On a device where you choose "stay signed in" / "keep unlocked", the session token and vault key are stored in the
   OS keyring (DPAPI on Windows, libsecret via `secret-tool` on Linux, otherwise a file readable only by you).
+- Agents (when you allow them) reach TGK through a local socket guarded by a token readable only by you; TGK keeps the
+  credentials and enforces each host's agent access (see [docs/AGENTS.md](docs/AGENTS.md)).
 
 ## Getting started
 
