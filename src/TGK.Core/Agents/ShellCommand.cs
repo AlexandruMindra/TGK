@@ -36,7 +36,8 @@ public sealed partial class ShellCommand
     {
         ["systemctl"] = ["status", "show", "list-units", "list-unit-files", "list-timers", "list-sockets", "is-active", "is-enabled", "is-failed", "cat", "--version"],
         ["service"] = ["--status-all"],
-        ["git"] = ["status", "log", "diff", "show", "rev-parse", "ls-files", "blame", "describe", "shortlog", "grep", "ls-tree", "cat-file", "--version", "version"],
+        // Not "grep": git grep -O<cmd> / --open-files-in-pager runs a command. The dedicated grep tool searches instead.
+        ["git"] = ["status", "log", "diff", "show", "rev-parse", "ls-files", "blame", "describe", "shortlog", "ls-tree", "cat-file", "--version", "version"],
         ["hostnamectl"] = ["status", "show"],
         ["timedatectl"] = ["status", "show", "list-timezones", "timesync-status", "show-timesync"],
         ["docker"] = ["ps", "images", "logs", "inspect", "version", "info", "stats", "top", "port", "history"],
@@ -74,6 +75,10 @@ public sealed partial class ShellCommand
     private static readonly Dictionary<string, string[]> UnsafeOptions = new(StringComparer.Ordinal)
     {
         ["find"] = ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"],
+        // Pagers and external programs run code even without a terminal.
+        ["git"] = ["-O", "--open-files-in-pager", "-c", "-C", "--exec-path", "--upload-pack", "--receive-pack"],
+        ["less"] = ["+", "-c"],
+        ["more"] = ["+", "-c"],
         ["rg"] = ["--pre"],
         ["sort"] = ["-o", "--output"],
         ["dmesg"] = ["-c", "-C", "--clear", "--read-clear"],
@@ -322,11 +327,24 @@ public sealed partial class ShellCommand
         {
             foreach (string w in words.Skip(1))
             {
-                if (unsafeOptions.Any(o => w == o || (o.StartsWith("--", StringComparison.Ordinal) && w.StartsWith(o + "=", StringComparison.Ordinal))))
+                if (unsafeOptions.Any(o => MatchesOption(w, o)))
                     return false;
             }
         }
         return true;
+    }
+
+    // Whether word <paramref name="w"/> is the unsafe option <paramref name="option"/>: exact, --opt=value, or a
+    // short option with its value attached (-O, -Osh). Short bundles like -rn are handled by UnsafeOptions separately.
+    private static bool MatchesOption(string w, string option)
+    {
+        if (w == option)
+            return true;
+        if (option.StartsWith("--", StringComparison.Ordinal))
+            return w.StartsWith(option + "=", StringComparison.Ordinal);
+        if (option == "+") // less/more +command (e.g. +!sh runs a shell)
+            return w.StartsWith('+');
+        return option.Length == 2 && option[0] == '-' && option[1] != '-' && w.StartsWith(option, StringComparison.Ordinal);
     }
 
     // Operands of a command: words that are neither options nor the values of options that take one.

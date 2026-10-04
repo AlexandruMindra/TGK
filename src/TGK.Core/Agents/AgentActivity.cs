@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 
 namespace TGK.Core.Agents;
@@ -25,7 +26,7 @@ public sealed record AgentActivityEntry(
 /// The record of what agents did: the most recent calls in memory (for the activity list) and an append-only JSON
 /// lines file (the audit log, rotated at <see cref="MaxLogBytes"/> to one previous file).
 /// </summary>
-public sealed class AgentActivity
+public sealed partial class AgentActivity
 {
     public const int MaxRecent = 300;
     public const long MaxLogBytes = 2 * 1024 * 1024;
@@ -75,6 +76,22 @@ public sealed class AgentActivity
         lock (_gate)
             _recent.Clear();
     }
+
+    /// <summary>
+    /// Hides obvious secrets passed on a command line before a command is logged or shown: a password or token option,
+    /// and credentials in a URL. Best effort — it is not a reason to log less carefully elsewhere.
+    /// </summary>
+    public static string Redact(string text)
+    {
+        text = SecretOption().Replace(text, m => m.Groups[1].Value + "***");
+        return UrlCredentials().Replace(text, "$1***@");
+    }
+
+    [GeneratedRegex(@"(--?(?:password|passwd|pass|token|secret|api[-_]?key|auth)[= ]|--?p(?=\S)|-u )\S+", RegexOptions.IgnoreCase)]
+    private static partial Regex SecretOption();
+
+    [GeneratedRegex(@"([a-zA-Z][a-zA-Z0-9+.-]*://[^/\s:@]+:)[^/\s@]+@")]
+    private static partial Regex UrlCredentials();
 
     // Under the lock: one writer at a time.
     private void Write(AgentActivityEntry entry)

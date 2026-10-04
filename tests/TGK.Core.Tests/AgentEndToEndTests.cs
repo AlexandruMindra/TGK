@@ -211,9 +211,23 @@ public sealed class AgentEndToEndTests : IAsyncLifetime
             (text, error) = await CallAsync(AgentTools.RunCommand, new() { ["host"] = "lab", ["command"] = "sleep 5", ["timeout_seconds"] = 1 });
             Assert.True(error);
             Assert.StartsWith("Stopped after 1 s", text);
+            // The connection still works after a timeout (streams were not left stuck).
+            Assert.Equal("exit code: 0\n--- stdout ---\nalive\n", (await CallAsync(AgentTools.RunCommand, new() { ["host"] = "lab", ["command"] = "echo alive" })).Text);
+
+            // A symlink to a protected file is caught by its target, not its (innocent) name. The setup touches a
+            // protected name (id_ed25519), so on this Full host it is approved once.
+            _host.Answers.Enqueue(ApprovalAnswer.AllowOnce);
+            (text, error) = await CallAsync(AgentTools.RunCommand, new() { ["host"] = "lab", ["command"] = $"mkdir -p {_remoteDir}/fh/keys && printf SECRETKEY > {_remoteDir}/fh/keys/id_ed25519 && ln -sf {_remoteDir}/fh/keys/id_ed25519 {_remoteDir}/report && echo done" });
+            Assert.False(error, text);
+            _host.Answers.Enqueue(ApprovalAnswer.Deny);
+            (text, error) = await CallAsync(AgentTools.ReadFile, new() { ["host"] = "lab", ["path"] = $"{_remoteDir}/report" });
+            Assert.True(error);
+            Assert.Contains("points to", _host.Requests.Last().Reason);
+            Assert.DoesNotContain("SECRETKEY", text);
         }
         finally
         {
+            _host.Answers.Enqueue(ApprovalAnswer.AllowOnce); // the dir now holds a protected name
             await CallAsync(AgentTools.RunCommand, new() { ["host"] = "lab", ["command"] = $"rm -rf {_remoteDir}" });
         }
     }

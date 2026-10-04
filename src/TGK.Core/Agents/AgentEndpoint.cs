@@ -200,7 +200,7 @@ public sealed class AgentEndpoint : IAsyncDisposable
         {
             await using var stream = new NetworkStream(connection.Socket, ownsSocket: true);
             string? hello = await ReadLineAsync(stream, connection.Token).ConfigureAwait(false);
-            if (hello != $"{Hello} {_token}")
+            if (!TokenMatches(hello))
             {
                 await stream.WriteAsync("ERR The TGK agent token is wrong or missing (TGK restarted? run tgk-mcp again).\n"u8.ToArray()).ConfigureAwait(false);
                 return;
@@ -229,6 +229,14 @@ public sealed class AgentEndpoint : IAsyncDisposable
             if (announced)
                 SessionsChanged?.Invoke();
         }
+    }
+
+    // Constant-time, so the reply time does not reveal how much of the token was right.
+    private bool TokenMatches(string? hello)
+    {
+        string expected = $"{Hello} {_token}";
+        return hello is not null && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+            System.Text.Encoding.UTF8.GetBytes(hello), System.Text.Encoding.UTF8.GetBytes(expected));
     }
 
     private static async Task<string?> ReadLineAsync(Stream stream, CancellationToken ct)

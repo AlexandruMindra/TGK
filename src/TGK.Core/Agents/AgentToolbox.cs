@@ -323,7 +323,7 @@ public sealed class AgentToolbox : IDisposable
         string path = await call.PathAsync(lease.Files, "path", ct).ConfigureAwait(false);
         int offset = Math.Max(1, call.Int("offset") ?? 1);
         int limit = Math.Clamp(call.Int("limit") ?? MaxReadLines, 1, MaxReadLines);
-        await call.ApproveReadAsync(path, ct).ConfigureAwait(false);
+        await call.ApproveReadAsync(lease.Files, path, ct).ConfigureAwait(false);
 
         byte[] bytes = await lease.Files.ReadAsync(path, MaxFileBytes, ct).ConfigureAwait(false);
         string hash = TextContent.Hash(bytes);
@@ -352,7 +352,7 @@ public sealed class AgentToolbox : IDisposable
     {
         using ConnectionPool.Lease lease = await call.ConnectAsync(ct).ConfigureAwait(false);
         string path = await call.PathAsync(lease.Files, "path", ct, optional: true).ConfigureAwait(false);
-        await call.ApproveReadAsync(path, ct).ConfigureAwait(false);
+        await call.ApproveReadAsync(lease.Files, path, ct).ConfigureAwait(false);
         (IReadOnlyList<RemoteEntry> entries, bool more) = await lease.Files.ListAsync(path, MaxListEntries, ct).ConfigureAwait(false);
         if (entries.Count == 0)
             return ToolOutcome.Ok($"{call.Display(path)} is empty.");
@@ -369,7 +369,7 @@ public sealed class AgentToolbox : IDisposable
     {
         using ConnectionPool.Lease lease = await call.ConnectAsync(ct).ConfigureAwait(false);
         string path = await call.PathAsync(lease.Files, "path", ct).ConfigureAwait(false);
-        await call.ApproveReadAsync(path, ct).ConfigureAwait(false);
+        await call.ApproveReadAsync(lease.Files, path, ct).ConfigureAwait(false);
         RemoteEntry? entry = await lease.Files.StatAsync(path, ct).ConfigureAwait(false);
         if (entry is null)
             return ToolOutcome.Ok($"{call.Display(path)} does not exist.");
@@ -399,12 +399,21 @@ public sealed class AgentToolbox : IDisposable
             pattern = absolute[(root.TrimEnd('/').Length + 1)..];
         }
         call.Summary = $"{pattern}   (in {RemotePath.Tilde(home, root)})";
-        await call.ApproveReadAsync(root, ct).ConfigureAwait(false);
+        await call.ApproveReadAsync(lease.Files, root, ct).ConfigureAwait(false);
+        // Like grep: a host's own protected paths below the search need approval; the built-in ones are skipped by find.
+        if (AgentPolicy.ProtectedBelow(call.Rules, root, home, builtIn: false) is { } guarded)
+        {
+            var decision = call.Rules.Access == AgentAccess.ReadOnly
+                ? AgentDecision.Deny($"The search covers the protected path {RemotePath.Tilde(home, guarded)}; search below or beside it.")
+                : AgentDecision.Ask($"The search covers the protected path {RemotePath.Tilde(home, guarded)}.");
+            await call.ApproveAsync(decision, "Search a protected path", call.Display(root), null, $"read|{root}", ct).ConfigureAwait(false);
+        }
 
         string full = root.TrimEnd('/') + "/" + pattern;
         // find's -path lets * cross slashes, so it over-matches; the exact match is checked here.
         string findPattern = full.Replace("**/", "*").Replace("**", "*");
-        string script = $"find {RemotePath.Quote(root)} \\( -name .git -o -name node_modules \\) -prune -o -path {RemotePath.Quote(findPattern)} -print 2>/dev/null | head -n 20000";
+        string pruneNames = string.Join(" -o ", AgentPolicy.SearchExcludedDirs.Append(".git").Append("node_modules").Select(n => $"-name {RemotePath.Quote(n)}"));
+        string script = $"find {RemotePath.Quote(root)} \\( {pruneNames} \\) -prune -o -path {RemotePath.Quote(findPattern)} ! -name {RemotePath.Quote("*.pem")} ! -name {RemotePath.Quote("*.key")} ! -name {RemotePath.Quote("id_*")} -print 2>/dev/null | head -n 20000";
         CommandResult result = await lease.Connection.RunAsync(script, SearchTimeout, maxOutput: 4 * 1024 * 1024, ct: ct).ConfigureAwait(false);
         string[] matches = result.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Where(p => RemotePath.Matches(full, p, home))
@@ -434,7 +443,7 @@ public sealed class AgentToolbox : IDisposable
         string home = await lease.Files.HomeAsync(ct).ConfigureAwait(false);
         string path = await call.PathAsync(lease.Files, "path", ct, optional: true).ConfigureAwait(false);
         call.Summary = $"{pattern}   (in {RemotePath.Tilde(home, path)}{(glob is null ? "" : $", {glob}")})";
-        await call.ApproveReadAsync(path, ct).ConfigureAwait(false);
+        await call.ApproveReadAsync(lease.Files, path, ct).ConfigureAwait(false);
 
         string? hasRg = _pool.GetFact(call.Host!.Id, "rg");
         if (hasRg is null)
@@ -483,7 +492,7 @@ public sealed class AgentToolbox : IDisposable
         string path = await call.PathAsync(lease.Files, "path", ct).ConfigureAwait(false);
         string home = await lease.Files.HomeAsync(ct).ConfigureAwait(false);
 
-        AgentDecision decision = AgentPolicy.Write(call.Rules, path, home);
+        AgentDecision decision = await call.AccessDecisionAsync(lease.Files, path, write: true, ct).ConfigureAwait(false);
         if (decision.Verdict == AgentVerdict.Deny)
             throw new ToolException(decision.Reason, denied: true);
         byte[] current = await ReadForChangeAsync(call, lease.Files, path, mustExist: true, ct).ConfigureAwait(false) ?? [];
@@ -508,7 +517,7 @@ public sealed class AgentToolbox : IDisposable
         using ConnectionPool.Lease lease = await call.ConnectAsync(ct).ConfigureAwait(false);
         string path = await call.PathAsync(lease.Files, "path", ct).ConfigureAwait(false);
         string home = await lease.Files.HomeAsync(ct).ConfigureAwait(false);
-        AgentDecision decision = AgentPolicy.Write(call.Rules, path, home);
+        AgentDecision decision = await call.AccessDecisionAsync(lease.Files, path, write: true, ct).ConfigureAwait(false);
         if (decision.Verdict == AgentVerdict.Deny)
             throw new ToolException(decision.Reason, denied: true);
 
@@ -543,7 +552,7 @@ public sealed class AgentToolbox : IDisposable
             throw new ToolException($"{local} does not exist on this computer.");
         if (info.Length > MaxTransferBytes)
             throw new ToolException($"{local} is larger than {MaxTransferBytes / (1024 * 1024)} MB.");
-        AgentDecision decision = AgentPolicy.Write(call.Rules, path, home);
+        AgentDecision decision = await call.AccessDecisionAsync(lease.Files, path, write: true, ct).ConfigureAwait(false);
         if (decision.Verdict == AgentVerdict.Deny)
             throw new ToolException(decision.Reason, denied: true);
         RemoteEntry? existing = await lease.Files.StatAsync(path, ct).ConfigureAwait(false);
@@ -569,7 +578,7 @@ public sealed class AgentToolbox : IDisposable
             throw new ToolException($"{local} already exists on this computer; pass overwrite to replace it.");
         if (Directory.Exists(local))
             throw new ToolException($"{local} is a directory; give the file's full path.");
-        await call.ApproveReadAsync(path, ct).ConfigureAwait(false);
+        await call.ApproveReadAsync(lease.Files, path, ct).ConfigureAwait(false);
         byte[] bytes = await lease.Files.ReadAsync(path, MaxTransferBytes, ct).ConfigureAwait(false);
         Directory.CreateDirectory(Path.GetDirectoryName(local)!);
         await File.WriteAllBytesAsync(local, bytes, ct).ConfigureAwait(false);
@@ -742,11 +751,30 @@ public sealed class AgentToolbox : IDisposable
             }
         }
 
-        public async Task ApproveReadAsync(string path, CancellationToken ct)
+        public async Task ApproveReadAsync(RemoteFiles files, string path, CancellationToken ct)
         {
-            AgentDecision decision = AgentPolicy.Read(Rules, path, _home);
+            AgentDecision decision = await AccessDecisionAsync(files, path, write: false, ct).ConfigureAwait(false);
             await ApproveAsync(decision, "Read a protected path", Display(path), null, $"read|{path}", ct).ConfigureAwait(false);
         }
+
+        /// <summary>
+        /// The protected-path decision for reading or writing <paramref name="path"/>, checking the target a symbolic
+        /// link resolves to as well: a benign-looking link (or a link in a parent directory) must not give an agent
+        /// access to a protected file the link points at.
+        /// </summary>
+        public async Task<AgentDecision> AccessDecisionAsync(RemoteFiles files, string path, bool write, CancellationToken ct)
+        {
+            AgentDecision onPath = write ? AgentPolicy.Write(Rules, path, _home) : AgentPolicy.Read(Rules, path, _home);
+            string? real = await files.RealPathAsync(path, ct).ConfigureAwait(false);
+            if (real is null || real == path)
+                return onPath;
+            AgentDecision onReal = write ? AgentPolicy.Write(Rules, real, _home) : AgentPolicy.Read(Rules, real, _home);
+            if (Rank(onReal.Verdict) <= Rank(onPath.Verdict))
+                return onPath;
+            return onReal with { Reason = $"{Display(path)} points to {RemotePath.Tilde(_home, real)}, which {char.ToLowerInvariant(onReal.Reason[0])}{onReal.Reason[1..]}" };
+        }
+
+        private static int Rank(AgentVerdict verdict) => verdict switch { AgentVerdict.Deny => 2, AgentVerdict.Ask => 1, _ => 0 };
 
         /// <summary>Goes on when the decision allows it or the user approves; throws a refusal otherwise.</summary>
         public async Task ApproveAsync(AgentDecision decision, string action, string subject, string? detail, string key, CancellationToken ct)
@@ -790,7 +818,8 @@ public sealed class AgentToolbox : IDisposable
             AgentOutcome result = kind ?? (outcome.IsError ? AgentOutcome.Failed : AgentOutcome.Ok);
             string? detail = result == AgentOutcome.Ok ? Detail : OneLine(outcome.Text, 300);
             var entry = new AgentActivityEntry(DateTimeOffset.UtcNow, Session.Client, Host?.DisplayName, tool,
-                Summary.Length > 0 ? Summary : SummaryFromArgs(), result, detail, Stopwatch.GetElapsedTime(_started),
+                AgentActivity.Redact(Summary.Length > 0 ? Summary : SummaryFromArgs()), result,
+                detail is null ? null : AgentActivity.Redact(detail), Stopwatch.GetElapsedTime(_started),
                 result == AgentOutcome.Ok ? _approvedBy : null);
             toolbox.Activity.Add(entry);
             toolbox.CallFinished?.Invoke(entry, outcome.Text);

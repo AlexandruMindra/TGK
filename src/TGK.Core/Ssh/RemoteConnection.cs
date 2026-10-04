@@ -239,14 +239,21 @@ public sealed class RemoteConnection : IDisposable
             {
                 throw Lost(ex);
             }
-            // The streams end with the channel; a server that never closes them must not hang the call.
-            Captured output = await stdout.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None).ConfigureAwait(false);
-            Captured errors = await stderr.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None).ConfigureAwait(false);
+            // The streams end with the channel. A timed-out command often leaves them open, so wait only briefly and
+            // keep what arrived; disposing the command (end of the using) closes the channel and unblocks the readers.
+            Captured output = await Collect(stdout).ConfigureAwait(false);
+            Captured errors = await Collect(stderr).ConfigureAwait(false);
             return new CommandResult(timedOut ? null : cmd.ExitStatus, cmd.ExitSignal, Decode(output.Bytes), Decode(errors.Bytes), timedOut,
                 output.Truncated || errors.Truncated, DateTime.UtcNow - started)
             {
                 StdoutBytes = keepBytes ? output.Bytes : null,
             };
+        }
+
+        static async Task<Captured> Collect(Task<Captured> capture)
+        {
+            await Task.WhenAny(capture, Task.Delay(TimeSpan.FromSeconds(5))).ConfigureAwait(false);
+            return capture.IsCompletedSuccessfully ? capture.Result : new Captured([], Truncated: true);
         }
     }
 

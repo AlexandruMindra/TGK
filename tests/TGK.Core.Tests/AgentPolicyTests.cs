@@ -59,6 +59,11 @@ public class ShellCommandTests
     [InlineData("git reflog expire --all")]
     [InlineData("yq -i '.a = 1' f.yaml")]
     [InlineData("xxd in out")]
+    [InlineData("git grep -Osh pattern")]
+    [InlineData("git grep --open-files-in-pager=sh x")]
+    [InlineData("git grep foo")]
+    [InlineData("git -c core.pager=sh log")]
+    [InlineData("less +!sh file")]
     public void Commands_that_may_change_things_are_not_read_only(string line)
     {
         // "git" alone prints help, which is harmless; the rest must not pass.
@@ -68,6 +73,16 @@ public class ShellCommandTests
             return;
         }
         Assert.False(ShellCommand.Parse(line).IsReadOnly, line);
+    }
+
+    [Fact]
+    public void Redacts_secrets_from_the_record()
+    {
+        Assert.Equal("mysql -u *** -p*** db", TGK.Core.Agents.AgentActivity.Redact("mysql -u root -phunter2 db")); // the username is hidden too, which is fine for a log
+        Assert.Equal("psql -h db -p 5432", TGK.Core.Agents.AgentActivity.Redact("psql -h db -p 5432")); // -p with a space is a port, not a password
+        Assert.Equal("curl --token ***", TGK.Core.Agents.AgentActivity.Redact("curl --token abc123"));
+        Assert.Equal("git clone https://user:***@example.com/r.git", TGK.Core.Agents.AgentActivity.Redact("git clone https://user:pw@example.com/r.git"));
+        Assert.Equal("ls -la /srv", TGK.Core.Agents.AgentActivity.Redact("ls -la /srv"));
     }
 
     [Fact]
