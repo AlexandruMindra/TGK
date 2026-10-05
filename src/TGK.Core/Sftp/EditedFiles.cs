@@ -30,12 +30,32 @@ public sealed class EditedFiles : IDisposable
     /// </param>
     public EditedFiles(string? root = null)
     {
-        _root = Path.Combine(root ?? DefaultRoot, Guid.NewGuid().ToString("N")[..12]);
+        string parent = root ?? DefaultRoot;
+        _root = Path.Combine(parent, Guid.NewGuid().ToString("N")[..12]);
+        RemoveStale(parent);
+    }
+
+    // Copies left behind when TGK did not close normally: removed once they are a few days old.
+    private static void RemoveStale(string parent)
+    {
+        try
+        {
+            if (!Directory.Exists(parent))
+                return;
+            foreach (DirectoryInfo old in new DirectoryInfo(parent).GetDirectories()
+                .Where(d => d.LastWriteTimeUtc < DateTime.UtcNow.AddDays(-3) && d.LinkTarget is null))
+                old.Delete(recursive: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            CoreLog.Warn($"Could not remove old edited copies in {parent}: {ex.Message}");
+        }
     }
 
     /// <summary>
     /// A per-user place for the copies: the temporary folder on Windows and macOS (per user there), on Linux the
-    /// runtime folder (<c>$XDG_RUNTIME_DIR</c>) or else the config directory, never the shared <c>/tmp</c>.
+    /// cache folder (<c>$XDG_CACHE_HOME</c>, default <c>~/.cache</c>): never the shared <c>/tmp</c>, nor the runtime
+    /// folder, which is a small RAM disk.
     /// </summary>
     public static string DefaultRoot
     {
@@ -43,10 +63,11 @@ public sealed class EditedFiles : IDisposable
         {
             if (!OperatingSystem.IsLinux())
                 return Path.Combine(Path.GetTempPath(), "tgk-edit");
-            string? runtime = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR");
-            return !string.IsNullOrWhiteSpace(runtime) && Path.IsPathRooted(runtime) && Directory.Exists(runtime)
-                ? Path.Combine(runtime, "tgk-edit")
-                : Path.Combine(AppPaths.ConfigDirectory, "edit");
+            string? cache = Environment.GetEnvironmentVariable("XDG_CACHE_HOME");
+            string root = !string.IsNullOrWhiteSpace(cache) && Path.IsPathRooted(cache)
+                ? cache
+                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache");
+            return Path.Combine(root, "tgk", "edit");
         }
     }
 
@@ -98,6 +119,13 @@ public sealed class EditedFiles : IDisposable
             watcher.EnableRaisingEvents = true;
             _files[localPath] = edited;
         }
+    }
+
+    /// <summary>The local copy of <paramref name="remotePath"/> when it is already opened (and watched), else null.</summary>
+    public string? LocalCopyOf(string remotePath)
+    {
+        lock (_gate)
+            return _files.Values.FirstOrDefault(f => f.Remote == remotePath)?.Local;
     }
 
     /// <summary>The remote paths currently opened.</summary>

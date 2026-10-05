@@ -22,8 +22,15 @@ internal static class SftpRaw
 
     /// <summary>The exact-path requests can be made on <paramref name="client"/>.</summary>
     public static bool IsAvailable(SftpClient client) =>
-        Session(client) is { } session && Find(session, "RequestRemove", typeof(string)) is not null
-        && Find(session, "RequestRename", typeof(string), typeof(string)) is not null;
+        Session(client) is { } session
+        && Find(session, "RequestRemove", typeof(string)) is not null
+        && Find(session, "RequestRmDir", typeof(string)) is not null
+        && Find(session, "RequestRename", typeof(string), typeof(string)) is not null
+        && Find(session, "RequestPosixRename", typeof(string), typeof(string)) is not null
+        && Find(session, "RequestLStat", typeof(string)) is not null
+        && Find(session, "RequestStat", typeof(string)) is not null
+        && Find(session, "RequestReadLink", typeof(string), typeof(bool)) is not null
+        && Find(session, "RequestRealPath", typeof(string), typeof(bool)) is not null;
 
     /// <summary>Removes a file or symbolic link (never its target).</summary>
     public static void Remove(SftpClient client, string path) => Invoke(client, "RequestRemove", [typeof(string)], path);
@@ -51,6 +58,12 @@ internal static class SftpRaw
     /// <summary>What a symbolic link contains; null when the server can't tell.</summary>
     public static string? ReadLink(SftpClient client, string path) =>
         Invoke(client, "RequestReadLink", [typeof(string), typeof(bool)], path, true) is KeyValuePair<string, SftpFileAttributes>[] { Length: > 0 } names
+            ? names[0].Key
+            : null;
+
+    /// <summary>The absolute path with every link resolved (the server's realpath); null when the server can't tell.</summary>
+    public static string? RealPath(SftpClient client, string path) =>
+        Invoke(client, "RequestRealPath", [typeof(string), typeof(bool)], path, true) is KeyValuePair<string, SftpFileAttributes>[] { Length: > 0 } names
             ? names[0].Key
             : null;
 

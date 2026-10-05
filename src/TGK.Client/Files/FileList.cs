@@ -178,7 +178,8 @@ public sealed class FileList : Control, IKeyInput
     private void Rebuild(string? focusedPath = null)
     {
         _rows = FileFormat.Sort(_entries.Where(e => FileFormat.Shows(e, _filter, _showHidden)), _sortColumn, _descending);
-        _selected.RemoveWhere(p => !_rows.Any(r => r.Path == p));
+        var shown = new HashSet<string>(_rows.Select(r => r.Path), StringComparer.Ordinal);
+        _selected.RemoveWhere(p => !shown.Contains(p));
         _cursor = focusedPath is null ? -1 : _rows.FindIndex(r => r.Path == focusedPath);
         if (_cursor < 0 && _rows.Count > 0)
             _cursor = _selected.Count > 0 ? _rows.FindIndex(r => _selected.Contains(r.Path)) : 0;

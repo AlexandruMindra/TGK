@@ -155,9 +155,29 @@ public sealed class FilesTabContent : TabContent, IKeyInput
         UiClock.Tick -= OnTick;
         CancelAttempt();
         _listing?.Cancel();
-        _queue?.Dispose();
-        _connection?.Dispose();
+        CloseConnection();
         _edits.Dispose();
+    }
+
+    // Cancels the transfers, lets the running one remove its partial file, then closes the connection (in the
+    // background). The tab forgets both at once.
+    private void CloseConnection()
+    {
+        SftpTransferQueue? queue = _queue;
+        SftpConnection? connection = _connection;
+        _queue = null;
+        _connection = null;
+        _files = null;
+        if (queue is null)
+        {
+            connection?.Dispose();
+            return;
+        }
+        _ = Task.Run(async () =>
+        {
+            await queue.CloseAsync(TimeSpan.FromSeconds(5));
+            connection?.Dispose();
+        });
     }
 
     protected override void LayoutChildren()
@@ -211,11 +231,7 @@ public sealed class FilesTabContent : TabContent, IKeyInput
             return;
         CancelAttempt();
         _listing?.Cancel();
-        _queue?.Dispose();
-        _queue = null;
-        _connection?.Dispose();
-        _connection = null;
-        _files = null;
+        CloseConnection();
         int generation = ++_generation;
         _attempt = new CancellationTokenSource();
         CancellationToken ct = _attempt.Token;
@@ -462,11 +478,7 @@ public sealed class FilesTabContent : TabContent, IKeyInput
     private void Disconnect()
     {
         _listing?.Cancel();
-        _queue?.Dispose();
-        _queue = null;
-        _connection?.Dispose();
-        _connection = null;
-        _files = null;
+        CloseConnection();
         SetStatus(TabStatus.Closed, $"{_address} · Disconnected");
         _overlay.ShowEnded("Disconnected — press Enter or click Reconnect.", false);
         OnTransfersChanged();
@@ -479,7 +491,7 @@ public sealed class FilesTabContent : TabContent, IKeyInput
     /// <summary>Opens a folder typed or picked: absolute, <c>~</c>-relative or relative to the current one.</summary>
     public void Navigate(string path)
     {
-        if (_files is null || string.IsNullOrWhiteSpace(path))
+        if (!Connected || _files is null || string.IsNullOrWhiteSpace(path))
             return;
         string target;
         try
@@ -492,6 +504,10 @@ public sealed class FilesTabContent : TabContent, IKeyInput
         {
             Host.ShowToast(ex.Message, ToastKind.Error);
             return;
+        }
+        catch (SshSessionException)
+        {
+            return; // lost meanwhile: the banner says it
         }
         if (target == _path)
         {
@@ -507,6 +523,8 @@ public sealed class FilesTabContent : TabContent, IKeyInput
 
     private void Open(SftpEntry entry)
     {
+        if (!Connected)
+            return;
         if (entry.IsDirectory)
             Navigate(entry.Path);
         else if (entry.IsBrokenLink)
@@ -617,6 +635,13 @@ public sealed class FilesTabContent : TabContent, IKeyInput
             {
                 Host.ShowToast(ex.Message, ToastKind.Error);
             }
+        }
+        catch (Exception ex)
+        {
+            // Never out of this async void: an unexpected failure is logged and shown.
+            Log.Error($"Listing {path} failed: {ex}");
+            if (!cts.IsCancellationRequested && !_closing)
+                Host.ShowToast($"Couldn't list {FileFormat.Printable(path)}: {ex.Message}", ToastKind.Error);
         }
         finally
         {
@@ -900,6 +925,10 @@ public sealed class FilesTabContent : TabContent, IKeyInput
                 error = ex.Message;
                 continue;
             }
+            catch (SshSessionException)
+            {
+                return;
+            }
             if (target == dir)
                 return;
             if (entries.Any(e => e.Kind == SftpEntryKind.Directory && (target == e.Path || target.StartsWith(e.Path + "/", StringComparison.Ordinal))))
@@ -1135,6 +1164,13 @@ public sealed class FilesTabContent : TabContent, IKeyInput
     {
         if (_queue is not { } queue)
             return;
+        if (_edits.LocalCopyOf(entry.Path) is { } open && File.Exists(open))
+        {
+            // Already opened from here: its copy may hold edits not uploaded yet, so it is opened again as it is.
+            if (!ExternalLink.OpenFile(open, asText))
+                Host.ShowToast($"No program could open {FileFormat.Printable(entry.Name)}.", ToastKind.Error);
+            return;
+        }
         if (entry.Size > LargeFileBytes && !await ConfirmDialog.ShowAsync(Host, "Open a large file?",
                 $"{FileFormat.Printable(entry.Name)} is {FileFormat.Size(entry.Size)}; it is downloaded before it opens.", "Download and open"))
             return;
@@ -1175,7 +1211,7 @@ public sealed class FilesTabContent : TabContent, IKeyInput
         if (ExternalLink.OpenFile(local, asText))
             Host.ShowToast($"Opened {FileFormat.Printable(entry.Name)}. Each save is uploaded back while this tab is open.", ToastKind.Info);
         else
-            Host.ShowToast($"No program could open {FileFormat.Printable(entry.Name)}. Try “Edit as text”.", ToastKind.Error);
+            Host.ShowToast($"No program could open {FileFormat.Printable(entry.Name)}. Download it instead.", ToastKind.Error);
     }
 
     private async void UploadSaved(string remote, string local)

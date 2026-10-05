@@ -64,9 +64,13 @@ entirely on one machine.
 - Move between modes at any time (upload a local vault to an account, save an offline copy of an account),
   plus encrypted `.tgkbackup` export/import.
 
-| Terminal | Per-host options | Local vault |
-|---|---|---|
-| ![Terminal](docs/images/terminal.png) | ![Host options](docs/images/host-options.png) | ![Local vault](docs/images/local-vault.png) |
+| Terminal | Files (SFTP) |
+|---|---|
+| ![Terminal](docs/images/terminal.png) | ![Files](docs/images/files.png) |
+
+| Per-host options | Local vault |
+|---|---|
+| ![Host options](docs/images/host-options.png) | ![Local vault](docs/images/local-vault.png) |
 
 ## Security model
 

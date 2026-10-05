@@ -285,7 +285,10 @@ public static class FilePicker
         IntPtr buffer = Marshal.AllocHGlobal(MaxChars * sizeof(char));
         try
         {
-            Marshal.WriteInt16(buffer, 0);
+            unsafe
+            {
+                NativeMemory.Clear((void*)buffer, MaxChars * sizeof(char)); // the result list ends with two NULs
+            }
             var ofn = new OpenFileName
             {
                 lStructSize = Marshal.SizeOf<OpenFileName>(),

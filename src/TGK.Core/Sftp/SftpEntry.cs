@@ -11,7 +11,10 @@ public enum SftpEntryKind
     Other,
 }
 
-/// <summary>One entry of a remote directory, as the server lists it (a symbolic link is not followed).</summary>
+/// <summary>
+/// One entry of a remote directory, as the server lists it. A symbolic link stays a link (<see cref="Kind"/>), but
+/// carries its target's permissions, owner, size and time (a link's own are meaningless); a broken link keeps its own.
+/// </summary>
 /// <param name="Path">Absolute, normalized.</param>
 /// <param name="Mode">The permission bits including setuid, setgid and sticky (e.g. 0755).</param>
 public sealed record SftpEntry(string Path, string Name, SftpEntryKind Kind, long Size, DateTimeOffset Modified, int Mode, long Uid, long Gid)

@@ -25,6 +25,8 @@ namespace TGK.Core.Sftp;
 /// </remarks>
 public sealed class SftpFileSystem
 {
+    private const int MaxLinkLookups = 8;
+
     private readonly SftpConnection _connection;
 
     public SftpFileSystem(SftpConnection connection) => _connection = connection ?? throw new ArgumentNullException(nameof(connection));
@@ -51,13 +53,29 @@ public sealed class SftpFileSystem
             }
         }).ConfigureAwait(false);
 
-        // Where links lead decides whether they open like folders: ask for all of them at once.
+        // Where links lead decides whether they open like folders: ask for a few at a time (a folder such as
+        // /etc/alternatives holds thousands).
         int[] links = Enumerable.Range(0, entries.Count).Where(i => entries[i].Kind == SftpEntryKind.Symlink).ToArray();
         if (links.Length > 0)
         {
-            SftpEntry[] resolved = await Task.WhenAll(links.Select(i => ResolveLinkAsync(client, entries[i], ct))).ConfigureAwait(false);
-            for (int i = 0; i < links.Length; i++)
-                entries[links[i]] = resolved[i];
+            using var slots = new SemaphoreSlim(MaxLinkLookups);
+            await Run(directory, "list", async () =>
+            {
+                SftpEntry[] resolved = await Task.WhenAll(links.Select(async i =>
+                {
+                    await slots.WaitAsync(ct).ConfigureAwait(false);
+                    try
+                    {
+                        return await ResolveLinkAsync(client, entries[i], ct).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        slots.Release();
+                    }
+                })).ConfigureAwait(false);
+                for (int i = 0; i < links.Length; i++)
+                    entries[links[i]] = resolved[i];
+            }).ConfigureAwait(false);
         }
         return entries;
     }
@@ -193,6 +211,20 @@ public sealed class SftpFileSystem
         }).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Where <paramref name="path"/> really is once every link on the way (and at its end) is followed, as the
+    /// server resolves it; <paramref name="path"/> itself when the server can't tell.
+    /// </summary>
+    internal async Task<string> RealPathAsync(string path, CancellationToken ct)
+    {
+        SftpClient client = Client;
+        if (!SftpRaw.IsAvailable(client))
+            return path;
+        string? real = null;
+        await Run(path, "read", async () => real = await Task.Run(() => SftpRaw.RealPath(client, path), ct).ConfigureAwait(false)).ConfigureAwait(false);
+        return real is { Length: > 0 } && real.StartsWith('/') ? RemotePath.Normalize(real) : path;
+    }
+
     /// <summary>Removes a leftover file, ignoring every error (e.g. a partial upload after a failure).</summary>
     internal async Task DeleteQuietlyAsync(string path)
     {
@@ -286,9 +318,20 @@ public sealed class SftpFileSystem
         {
             if (SftpRaw.IsAvailable(client))
                 target = await Task.Run(() => SftpRaw.ReadLink(client, link.Path), ct).ConfigureAwait(false);
-            // GetAttributes asks for the canonical path first, which follows the link.
+            // GetAttributes asks for the canonical path first, which follows the link. A link's own mode is always
+            // 0777 and says nothing: the entry carries its target's permissions, owner, size and time.
             SftpFileAttributes attributes = await client.GetAttributesAsync(link.Path, ct).ConfigureAwait(false);
-            return link with { LinkTarget = target, LinksToDirectory = attributes.IsDirectory, Size = attributes.IsRegularFile ? attributes.Size : link.Size };
+            SftpEntry resolved = FromAttributes(link.Path, attributes);
+            return link with
+            {
+                LinkTarget = target,
+                LinksToDirectory = attributes.IsDirectory,
+                Size = attributes.IsRegularFile ? attributes.Size : link.Size,
+                Mode = resolved.Mode,
+                Uid = resolved.Uid,
+                Gid = resolved.Gid,
+                Modified = resolved.Modified,
+            };
         }
         catch (Exception ex) when (ex is SshException and not SshConnectionException || ex is NotSupportedException)
         {

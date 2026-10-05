@@ -120,6 +120,56 @@ public sealed class SftpEndToEndTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Links_CarryTheirTargetsPermissions_AndUploadsGoWhereTheServerResolvesThem()
+    {
+        RequireServer();
+        await _files.CreateDirectoryAsync($"{_dir}/real", Ct);
+        await _files.CreateDirectoryAsync($"{_dir}/real/a", Ct);
+        await _files.CreateFileAsync($"{_dir}/real/shared.txt", Ct);
+        await _files.SetPermissionsAsync($"{_dir}/real/shared.txt", 0x180, Ct); // 0600
+        // alias -> real/a, and real/a/cfg -> ../shared.txt: through alias, "cfg" leads to real/shared.txt.
+        await ShellAsync($"ln -s real/a {_dir}/alias && ln -s ../shared.txt {_dir}/real/a/cfg");
+
+        SftpEntry cfg = (await _files.StatAsync($"{_dir}/alias/cfg", Ct))!;
+        Assert.Equal(SftpEntryKind.Symlink, cfg.Kind);
+        Assert.Equal("600", cfg.OctalMode); // the target's, not the link's own 0777
+
+        string local = Path.Combine(_local.Path, "cfg");
+        File.WriteAllText(local, "through links");
+        using var queue = new SftpTransferQueue(_files);
+        await queue.Upload([local], $"{_dir}/alias", _ => Task.FromResult(ConflictChoice.Replace)).Completion.WaitAsync(Timeout, Ct);
+
+        Assert.Equal("through links", await ReadRemoteAsync($"{_dir}/real/shared.txt"));
+        Assert.Equal("600", (await _files.StatAsync($"{_dir}/real/shared.txt", Ct))!.OctalMode);
+        Assert.Equal(SftpEntryKind.Symlink, (await _files.StatAsync($"{_dir}/real/a/cfg", Ct))!.Kind); // still a link
+        Assert.Null(await _files.StatAsync($"{_dir}/shared.txt", Ct)); // nothing written where the text alone points
+
+        string back = Path.Combine(_local.Path, "back");
+        await queue.Download([(await _files.StatAsync($"{_dir}/alias/cfg", Ct))!], back).Completion.WaitAsync(Timeout, Ct);
+        Assert.Equal("through links", File.ReadAllText(Path.Combine(back, "cfg")));
+        if (!OperatingSystem.IsWindows())
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(Path.Combine(back, "cfg")));
+    }
+
+    [Fact]
+    public async Task ClosingTheQueue_LetsTheRunningUploadRemoveItsPartialFile()
+    {
+        RequireServer();
+        string big = Path.Combine(_local.Path, "big.bin");
+        File.WriteAllBytes(big, new byte[64 * 1024 * 1024]);
+        var queue = new SftpTransferQueue(_files);
+        SftpTransfer upload = queue.Upload([big], _dir);
+        while (upload.Snapshot() is { State: not TransferState.Running } p && !p.IsFinished)
+            await Task.Delay(20, Ct);
+        await Task.Delay(100, Ct);
+
+        await queue.CloseAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(upload.Snapshot().IsFinished);
+        Assert.DoesNotContain(await _files.ListAsync(_dir, Ct), e => e.Name.Contains("tgk-part") || e.Name == "big.bin" && upload.Snapshot().State != TransferState.Done);
+    }
+
+    [Fact]
     public async Task Permissions_AreSetAndRead()
     {
         RequireServer();

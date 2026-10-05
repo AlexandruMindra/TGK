@@ -180,6 +180,7 @@ public sealed class SftpTransfer
 public sealed class SftpTransferQueue : IDisposable
 {
     private const string PartSuffix = ".tgk-part";
+    private const int MaxDepth = 128;
 
     private readonly SftpFileSystem _files;
     private readonly Lock _gate = new();
@@ -269,6 +270,22 @@ public sealed class SftpTransferQueue : IDisposable
         lock (_gate)
             _disposed = true;
         CancelAll();
+    }
+
+    /// <summary>
+    /// Cancels everything and waits (at most <paramref name="timeout"/>) until the running transfer has cleaned up
+    /// after itself (removed its partial file). Call before closing the connection.
+    /// </summary>
+    public async Task CloseAsync(TimeSpan timeout)
+    {
+        Task tail;
+        lock (_gate)
+        {
+            _disposed = true;
+            tail = _tail;
+        }
+        CancelAll();
+        await Task.WhenAny(tail, Task.Delay(timeout)).ConfigureAwait(false);
     }
 
     private SftpTransfer Add(SftpTransfer transfer)
@@ -428,9 +445,9 @@ public sealed class SftpTransferQueue : IDisposable
         SftpEntry? existing = await _files.StatAsync(item.Remote, ct).ConfigureAwait(false);
         if (existing is { IsDirectory: true })
             throw new SftpOperationException($"Can't replace the folder {item.Remote} with a file.");
-        // A link is replaced by writing through it: its target gets the new content.
-        string target = existing is { Kind: SftpEntryKind.Symlink, LinkTarget: { } link }
-            ? RemotePath.Resolve(RemotePath.Directory(item.Remote), link)
+        // A link is replaced by writing through it: its target (where the server resolves it) gets the new content.
+        string target = existing is { Kind: SftpEntryKind.Symlink, IsBrokenLink: false }
+            ? await _files.RealPathAsync(item.Remote, ct).ConfigureAwait(false)
             : item.Remote;
         string temp = SftpFileSystem.Join(RemotePath.Directory(target), $".{RemotePath.FileName(target)}.{Guid.NewGuid().ToString("N")[..8]}{PartSuffix}");
         SftpClient client = _files.OpenClient();
@@ -439,7 +456,15 @@ public sealed class SftpTransferQueue : IDisposable
         {
             try
             {
-                await SendAsync(temp, canOverride: false).ConfigureAwait(false);
+                // The partial copy is private until it is complete and gets its final permissions.
+                await _files.Run(item.Remote, "upload", async () =>
+                {
+                    await using (await client.OpenAsync(temp, FileMode.CreateNew, FileAccess.Write, ct).ConfigureAwait(false))
+                    {
+                    }
+                }).ConfigureAwait(false);
+                await TryAsync(() => Task.Run(() => client.ChangePermissions(temp, 600), ct)).ConfigureAwait(false);
+                await SendAsync(temp, canOverride: true).ConfigureAwait(false);
             }
             catch (SftpOperationException ex) when (existing is not null && ex.InnerException is SftpPermissionDeniedException)
             {
@@ -453,8 +478,10 @@ public sealed class SftpTransferQueue : IDisposable
             }
             ct.ThrowIfCancellationRequested();
 
-            int mode = existing is { Kind: not SftpEntryKind.Symlink } ? existing.Mode : LocalMode(item.Local);
-            await _files.Run(item.Remote, "upload", async () =>
+            // An existing file (or a link's target) keeps its permissions; a new one gets the local file's. Servers
+            // that refuse to set them (or the time) still get the content.
+            int mode = existing is { IsBrokenLink: false } ? existing.Mode : LocalMode(item.Local);
+            await TryAsync(async () =>
             {
                 SftpFileAttributes attributes = await client.GetAttributesAsync(temp, ct).ConfigureAwait(false);
                 attributes.LastWriteTimeUtc = item.Modified;
@@ -479,6 +506,20 @@ public sealed class SftpTransferQueue : IDisposable
             var progress = new SyncProgress<UploadFileProgressReport>(r => t.FileProgress((long)r.TotalBytesUploaded));
             await client.UploadFileAsync(source, path, canOverride, progress, ct).ConfigureAwait(false);
         });
+    }
+
+    // Optional steps (permissions, times): a refusal is logged, not a failed transfer. Cancellation and a lost
+    // connection still end it.
+    private static async Task TryAsync(Func<Task> step)
+    {
+        try
+        {
+            await step().ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is SshException and not SshConnectionException)
+        {
+            CoreLog.Warn($"Transfer: an optional step failed: {ex.Message}");
+        }
     }
 
     /// <summary>The local file's permissions for its new remote copy: its own on Unix, 0644 (0755 for scripts) on Windows.</summary>
@@ -529,7 +570,7 @@ public sealed class SftpTransferQueue : IDisposable
 
         var items = new List<RemoteItem>();
         foreach (SftpEntry root in roots)
-            await WalkRemoteAsync(t, root, Path.Combine(localDirectory, LocalNames.ToLocal(root.Name)), items, top: true, ct).ConfigureAwait(false);
+            await WalkRemoteAsync(t, root, Path.Combine(localDirectory, LocalNames.ToLocal(root.Name)), items, depth: 0, ct).ConfigureAwait(false);
         t.SetTotals(items.Where(i => !i.IsDirectory).Sum(i => i.Size), items.Count(i => !i.IsDirectory));
         t.SetState(TransferState.Running);
 
@@ -550,9 +591,12 @@ public sealed class SftpTransferQueue : IDisposable
     }
 
     // A selected link to a folder is copied as that folder; links met inside folders are skipped.
-    private async Task WalkRemoteAsync(SftpTransfer t, SftpEntry entry, string local, List<RemoteItem> items, bool top, CancellationToken ct)
+    private async Task WalkRemoteAsync(SftpTransfer t, SftpEntry entry, string local, List<RemoteItem> items, int depth, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
+        bool top = depth == 0;
+        if (depth > MaxDepth)
+            throw new SftpOperationException($"{entry.Path} is nested more than {MaxDepth} folders deep; download a folder further down instead.");
         if (entry.Kind == SftpEntryKind.Symlink && (!top || entry.IsBrokenLink))
         {
             t.Skipped++;
@@ -571,7 +615,7 @@ public sealed class SftpTransferQueue : IDisposable
         items.Add(new RemoteItem(entry.Path, local, true, 0, default, entry.Mode));
         IReadOnlyList<SftpEntry> children = await _files.ListAsync(entry.Path, ct).ConfigureAwait(false);
         foreach (SftpEntry child in children.OrderBy(c => c.Name, StringComparer.Ordinal))
-            await WalkRemoteAsync(t, child, Path.Combine(local, LocalNames.ToLocal(child.Name)), items, top: false, ct).ConfigureAwait(false);
+            await WalkRemoteAsync(t, child, Path.Combine(local, LocalNames.ToLocal(child.Name)), items, depth + 1, ct).ConfigureAwait(false);
     }
 
     private async Task DownloadOneAsync(SftpTransfer t, RemoteItem item, CancellationToken ct)
@@ -588,7 +632,13 @@ public sealed class SftpTransferQueue : IDisposable
         {
             await _files.Run(item.Remote, "download", async () =>
             {
-                await using var target = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024, useAsync: true);
+                var options = new FileStreamOptions
+                {
+                    Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None, BufferSize = 64 * 1024, Options = FileOptions.Asynchronous,
+                };
+                if (!OperatingSystem.IsWindows())
+                    options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite; // private until it is complete
+                await using var target = new FileStream(temp, options);
                 var progress = new SyncProgress<DownloadFileProgressReport>(r => t.FileProgress((long)r.TotalBytesDownloaded));
                 await client.DownloadFileAsync(item.Remote, target, progress, ct).ConfigureAwait(false);
             }).ConfigureAwait(false);
