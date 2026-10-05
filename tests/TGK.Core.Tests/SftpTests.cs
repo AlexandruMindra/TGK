@@ -197,13 +197,15 @@ public sealed class SftpTests
         Assert.Contains("StrictHostKeyChecking=yes", script);
         Assert.Contains("cd -- '/srv/it'\\''s'", script);
         Assert.Contains("tar -cf - -- 'a b' 'c'", script);
-        string input = System.Text.Encoding.ASCII.GetString(DirectCopy.Input(target));
+        string input = System.Text.Encoding.ASCII.GetString(DirectCopy.Input(target, null));
         Assert.DoesNotContain("s3cret-pw", input); // base64 on the command's input, never in its arguments
         Assert.Contains(Convert.ToBase64String("s3cret-pw"u8.ToArray()), input);
 
         Assert.Null(target.Validate());
         Assert.NotNull((target with { Password = null }).Validate());
-        Assert.NotNull((target with { Password = null, PrivateKey = "PuTTY-User-Key-File-3: ssh-ed25519" }).Validate());
+        // Any key SSH.NET reads goes to host A converted to OpenSSH's format (PuTTY ones included).
+        Assert.Null((target with { Password = null, PrivateKey = "PuTTY-User-Key-File-3: ssh-ed25519" }).Validate());
+        Assert.Throws<FileOperationException>(() => DirectCopy.KeyFor(target with { PrivateKey = "not a key" }));
         Assert.NotNull((target with { Host = "a b" }).Validate());
     }
 }

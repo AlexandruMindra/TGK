@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 using System.Security.Cryptography;
 using System.Text;
 using Renci.SshNet;
@@ -56,6 +57,76 @@ public static class KeyInspector
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// The key in OpenSSH's own format, unencrypted (<c>-----BEGIN OPENSSH PRIVATE KEY-----</c>, as <c>ssh-keygen</c>
+    /// writes it), whatever format it came in (PuTTY, PEM, PKCS#8, encrypted or not): what <c>ssh</c> on another host
+    /// can load without a passphrase. Ed25519, ECDSA and RSA keys.
+    /// </summary>
+    /// <exception cref="SshSessionException">The key can't be read (<see cref="SshErrorKind.KeyError"/>, with the reason).</exception>
+    public static string ToOpenSsh(string privateKeyText, string? passphrase)
+    {
+        using PrivateKeyFile keyFile = Load(privateKeyText, passphrase);
+        byte[] publicBlob = keyFile.HostKeyAlgorithms.OfType<KeyHostAlgorithm>().First().Data;
+        string type = keyFile.Key.ToString() ?? "";
+        byte[] fields;
+        switch (keyFile.Key)
+        {
+            case RsaKey rsa:
+                // OpenSSH order: n, e, d, iqmp (q^-1 mod p, computed here: p is prime), p, q.
+                BigInteger iqmp = BigInteger.ModPow(rsa.Q, rsa.P - 2, rsa.P);
+                fields = KeyGenerator.Wire(w =>
+                {
+                    w.MPInt(Unsigned(rsa.Modulus));
+                    w.MPInt(Unsigned(rsa.Exponent));
+                    w.MPInt(Unsigned(rsa.D));
+                    w.MPInt(Unsigned(iqmp));
+                    w.MPInt(Unsigned(rsa.P));
+                    w.MPInt(Unsigned(rsa.Q));
+                });
+                type = "ssh-rsa";
+                break;
+            case ED25519Key ed:
+                byte[] pub = ed.PublicKey, seed = ed.PrivateKey.AsSpan(0, 32).ToArray();
+                // OpenSSH stores the 64-byte "secret key" (seed || public key).
+                fields = KeyGenerator.Wire(w => { w.String(pub); w.String([.. seed, .. pub]); });
+                CryptographicOperations.ZeroMemory(seed);
+                type = "ssh-ed25519";
+                break;
+            case EcdsaKey ec:
+                // The public blob is: type, curve name, point; the private part adds the scalar.
+                (string curve, byte[] point) = EcdsaPublic(publicBlob);
+                byte[] d = ec.PrivateKey ?? throw KeyError("The ECDSA key has no private part.");
+                fields = KeyGenerator.Wire(w => { w.String(curve); w.String(point); w.MPInt(d); });
+                break;
+            default:
+                throw KeyError($"{type} keys can't be converted; use an Ed25519, ECDSA or RSA key.");
+        }
+        try
+        {
+            return KeyGenerator.OpenSshPrivateKey(type, publicBlob, fields, "");
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(fields);
+        }
+    }
+
+    private static byte[] Unsigned(BigInteger value) => value.ToByteArray(isUnsigned: true, isBigEndian: true);
+
+    private static (string Curve, byte[] Point) EcdsaPublic(byte[] blob)
+    {
+        int offset = 0;
+        byte[] Next()
+        {
+            int length = (int)System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(blob.AsSpan(offset));
+            byte[] value = blob.AsSpan(offset + 4, length).ToArray();
+            offset += 4 + length;
+            return value;
+        }
+        _ = Next(); // the key type
+        return (Encoding.ASCII.GetString(Next()), Next());
     }
 
     /// <summary>True when the key is encrypted and cannot be loaded without a passphrase.</summary>

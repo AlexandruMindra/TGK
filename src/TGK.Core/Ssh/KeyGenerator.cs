@@ -65,7 +65,7 @@ public static class KeyGenerator
     }
 
     /// <summary>The unencrypted <c>openssh-key-v1</c> container (see OpenSSH's PROTOCOL.key).</summary>
-    private static string OpenSshPrivateKey(string type, byte[] publicBlob, byte[] privateFields, string comment)
+    internal static string OpenSshPrivateKey(string type, byte[] publicBlob, byte[] privateFields, string comment)
     {
         uint check = BitConverter.ToUInt32(RandomNumberGenerator.GetBytes(4));
         byte[] section = Wire(w =>
@@ -96,7 +96,7 @@ public static class KeyGenerator
         return text.Append("-----END OPENSSH PRIVATE KEY-----\n").ToString();
     }
 
-    private static byte[] Wire(Action<SshWriter> write)
+    internal static byte[] Wire(Action<SshWriter> write)
     {
         var writer = new SshWriter();
         write(writer);
@@ -104,7 +104,7 @@ public static class KeyGenerator
     }
 
     /// <summary>SSH wire encoding (RFC 4251 §5): big-endian uint32, length-prefixed strings, mpints.</summary>
-    private sealed class SshWriter
+    internal sealed class SshWriter
     {
         private readonly MemoryStream _stream = new();
 

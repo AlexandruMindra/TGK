@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -401,6 +402,22 @@ public sealed class SftpEndToEndTests : IAsyncLifetime
         var badPassword = await Assert.ThrowsAsync<FileOperationException>(() =>
             DirectCopy.RunAsync(a, $"{_dir}/src", ["sub"], target with { Password = "wrong" }, $"{_dir}/dst/denied", Ct));
         Assert.Contains("refused the sign-in", badPassword.Message);
+
+        // B signs in with a key that has a passphrase (PKCS#8 where ssh-keygen writes it): A gets it converted.
+        string? keyPath = Environment.GetEnvironmentVariable("TGK_E2E_SSH_KEY");
+        if (string.IsNullOrEmpty(keyPath) || !SshKeygen.IsAvailable)
+            return;
+        using var keys = new TempDirectory();
+        string pkcs8 = Path.Combine(keys.Path, "key");
+        File.Copy(keyPath, pkcs8);
+        File.SetUnixFileMode(pkcs8, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        using (Process keygen = Process.Start("ssh-keygen", ["-q", "-p", "-m", "PKCS8", "-P", "", "-N", "pass phrase", "-f", pkcs8])!)
+            await keygen.WaitForExitAsync(Ct);
+        string keyText = File.ReadAllText(pkcs8);
+        Assert.True(KeyInspector.NeedsPassphrase(keyText));
+        await DirectCopy.RunAsync(a, $"{_dir}/src", ["sub"], target with { Password = null, PrivateKey = keyText, Passphrase = "pass phrase" },
+            $"{_dir}/dst/with key", Ct);
+        Assert.Equal("one ✓", await ReadRemoteAsync($"{_dir}/dst/with key/sub/one.txt"));
     }
 
     [Fact]

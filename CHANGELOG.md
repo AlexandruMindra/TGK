@@ -35,7 +35,8 @@ shows the current Unreleased section.
   menu, after a confirmation. Within one host a move is a rename. Between two hosts you choose the route: *Through
   this computer* (each file goes through a private local buffer, the hosts never connect to each other) or *Directly
   between the hosts* (host A copies to host B over SSH with B's vault credentials, checked against B's trusted host
-  key, nothing left on A). Panes refresh when a transfer into them finishes; local panes are reopened too.
+  key, nothing left on A; B's key works in any format the vault takes — PuTTY, PEM, PKCS#8, with a passphrase — as it
+  is converted for ssh on host A). Panes refresh when a transfer into them finishes; local panes are reopened too.
 
 ### Fixed
 

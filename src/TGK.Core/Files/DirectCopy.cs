@@ -28,10 +28,16 @@ public sealed record DirectTarget(string Host, int Port, string Username, string
             return "Host B has no usable username.";
         if (string.IsNullOrWhiteSpace(PrivateKey) && string.IsNullOrEmpty(Password))
             return "Host B has neither a password nor a key: a direct copy has nothing to sign in with.";
-        if (PrivateKey is { } key && key.Contains("PuTTY-User-Key-File", StringComparison.Ordinal))
-            return "Host B's key is in PuTTY format, which ssh on host A can't read. Copy through this computer instead.";
         if (HostKey.Length < 8)
             return "Host B's key is not known yet: open its files here once first.";
+        try
+        {
+            _ = DirectCopy.KeyType(HostKey);
+        }
+        catch (ArgumentException)
+        {
+            return "Host B's host key is in a form ssh can't check: copy through this computer instead.";
+        }
         return null;
     }
 }
@@ -106,14 +112,37 @@ public static class DirectCopy
         return sb.ToString();
     }
 
-    /// <summary>The script's input: B's known_hosts line, key and password (or passphrase), each base64 on its own line.</summary>
-    internal static byte[] Input(DirectTarget target)
+    /// <summary>
+    /// The script's input: B's known_hosts line, key and password, each base64 on its own line. The key is
+    /// <paramref name="openSshKey"/>: B's key converted to OpenSSH's format, unencrypted (see <see cref="KeyFor"/>).
+    /// </summary>
+    internal static byte[] Input(DirectTarget target, string? openSshKey)
     {
         bool key = !string.IsNullOrWhiteSpace(target.PrivateKey);
-        string keyText = key ? target.PrivateKey!.Replace("\r\n", "\n").TrimEnd() + "\n" : "";
-        string secret = key ? target.Passphrase ?? "" : target.Password ?? "";
+        string keyText = key ? openSshKey ?? throw new ArgumentNullException(nameof(openSshKey)) : "";
+        string secret = key ? "" : target.Password ?? "";
         static string B64(string text) => Convert.ToBase64String(Encoding.UTF8.GetBytes(text));
         return Encoding.ASCII.GetBytes($"{B64(KnownHostsLine(target.HostKey) + "\n")}\n{B64(keyText)}\n{B64(secret)}\n");
+    }
+
+    /// <summary>
+    /// B's key as <c>ssh</c> on host A can load it whatever its format in the vault (PuTTY, PEM, PKCS#8, with a
+    /// passphrase): OpenSSH's own format, unencrypted (it lives only in the copy's private folder on A). Null without
+    /// a key. Slow for keys with a passphrase (their KDF): not on the UI thread.
+    /// </summary>
+    /// <exception cref="FileOperationException">The key can't be read.</exception>
+    internal static string? KeyFor(DirectTarget target)
+    {
+        if (string.IsNullOrWhiteSpace(target.PrivateKey))
+            return null;
+        try
+        {
+            return KeyInspector.ToOpenSsh(target.PrivateKey, target.Passphrase);
+        }
+        catch (SshSessionException ex)
+        {
+            throw new FileOperationException($"Host B's key can't be used for a direct copy: {ex.Message}", ex);
+        }
     }
 
     /// <summary>
@@ -180,12 +209,13 @@ public static class DirectCopy
             throw new FileOperationException(problem);
         if (names.Count == 0)
             return;
+        string? key = await Task.Run(() => KeyFor(target), ct).ConfigureAwait(false);
         string runId = $"tgk-direct-{Guid.NewGuid():N}";
         CommandResult result;
         try
         {
             result = await source.RunAsync(Script(runId, sourceDirectory, names, target, targetDirectory), TimeSpan.FromDays(1),
-                input: Input(target), ct: ct).ConfigureAwait(false);
+                input: Input(target, key), ct: ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -225,6 +255,9 @@ public static class DirectCopy
             return "The direct copy took longer than a day and was stopped.";
         if (error.Contains("Host key verification failed", StringComparison.Ordinal) || error.Contains("REMOTE HOST IDENTIFICATION HAS CHANGED", StringComparison.Ordinal))
             return $"Host A reached {b}, but the key there is not the one trusted for host B: nothing was copied. (Is {b} really host B, as seen from A?)";
+        if (error.Contains("Load key", StringComparison.Ordinal) || error.Contains("invalid format", StringComparison.Ordinal)
+            || error.Contains("libcrypto", StringComparison.Ordinal))
+            return $"ssh on host A could not load host B's key (its OpenSSH may be too old for this key type): {error}";
         if (error.Contains("Permission denied", StringComparison.Ordinal) || error.Contains("Too many authentication failures", StringComparison.Ordinal))
             return $"Host B ({b}) refused the sign-in from host A: {error}";
         if (error.Contains("Could not resolve", StringComparison.Ordinal) || error.Contains("Connection refused", StringComparison.Ordinal)
