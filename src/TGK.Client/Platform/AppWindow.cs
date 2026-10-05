@@ -25,7 +25,7 @@ public static class AppWindow
 
     /// <summary>
     /// Subscribes to the window's resize event (raised after Blossom's own handler, so view sizes are current) and, on
-    /// Windows and macOS, keeps the content painting while the user drags the window's edge.
+    /// macOS, keeps the content painting while the user drags the window's edge.
     /// </summary>
     public static void HookResize(Application app)
     {
@@ -34,17 +34,18 @@ public static class AppWindow
         _hooked = true;
         _app = app;
         Shell.ClientResized += (_, _) => Resized?.Invoke();
-        if (!OperatingSystem.IsLinux())
+        if (OperatingSystem.IsMacOS())
             HookLiveResize();
     }
 
     /// <summary>
-    /// While the user drags the window's edge, Windows and macOS run a modal loop of their own: GLFW's event call does
+    /// While the user drags the window's edge, macOS (like Windows) runs a modal loop of its own: GLFW's event call does
     /// not return until the mouse button is released, so Blossom's main loop neither ticks nor renders and the content
-    /// only catches up on release (the window grows over a stale frame). GLFW still calls the window refresh callback
-    /// from inside that loop, on every size step; Silk's handler for it does nothing under Blossom (its frame callback
-    /// is only set by Silk's own run loop, which Blossom never enters), so this chains one that runs a loop tick and
-    /// renders a frame, as the main loop would. Linux has no such loop; resizing already paints there.
+    /// only catches up on release (the window grows over a stale frame). Blossom renders from its resize handler on
+    /// Windows only (since 0.1.4). GLFW still calls the window refresh callback from inside that loop, on every size
+    /// step; Silk's handler for it does nothing under Blossom (its frame callback is only set by Silk's own run loop,
+    /// which Blossom never enters), so this chains one that runs a loop tick and renders a frame, as the main loop
+    /// would. Linux has no such loop; resizing already paints there.
     /// </summary>
     private static unsafe void HookLiveResize()
     {
