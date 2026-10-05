@@ -194,7 +194,7 @@ public sealed class SftpEndToEndTests : IAsyncLifetime
             return Task.FromResult(ConflictChoice.Skip);
         });
         await skip.Completion.WaitAsync(Timeout, Ct);
-        Assert.Equal(["a.txt"], asked);
+        Assert.Equal(["a.txt"], asked!);
         Assert.Equal(1, skip.Skipped);
         Assert.Equal("new a", await ReadRemoteAsync($"{_dir}/a.txt"));
         Assert.Equal("new b", await ReadRemoteAsync($"{_dir}/b.txt"));

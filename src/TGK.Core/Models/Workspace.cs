@@ -15,6 +15,10 @@ public sealed class Workspace
 {
     public const int MaxTabs = 200;
     public const int MaxAddressLength = 255;
+
+    /// <summary>Longest remote folder a files tab may save.</summary>
+    public const int MaxPathLength = 4096;
+
     internal const int MaxDepth = 16;
 
     /// <summary>The preference: reopen the saved tabs when the client starts. While off, no tabs are kept.</summary>
@@ -65,6 +69,8 @@ public sealed class Workspace
                 return "A tab is either a saved host or an address.";
             if (tab.Host is { } host && (host.Length is 0 or > MaxAddressLength || (tab.Username?.Length ?? 0) > MaxAddressLength || tab.Port is < 1 or > 65535))
                 return "Invalid tab address.";
+            if (tab.Path is { } path && (path.Length is 0 or > MaxPathLength || path[0] != '/' || path.AsSpan().IndexOfAny('\0', '\n', '\r') >= 0))
+                return "Invalid folder of a files tab.";
         }
         if ((SavedOn?.Length ?? 0) > MaxAddressLength)
             return "Device name too long.";
@@ -85,9 +91,15 @@ public sealed class Workspace
     }
 }
 
-/// <summary>A saved tab: a saved host (<see cref="HostId"/>), an unsaved host by address, or (neither) a new-tab page.</summary>
+/// <summary>
+/// A saved tab: a saved host (<see cref="HostId"/>), an unsaved host by address, or (neither) a new-tab page. A host's
+/// tab is a terminal, or with <see cref="Kind"/> <see cref="FilesKind"/> its files (at <see cref="Path"/>).
+/// </summary>
 public sealed class WorkspaceTab
 {
+    /// <summary>The <see cref="Kind"/> of a file browser tab.</summary>
+    public const string FilesKind = "files";
+
     public Guid? HostId { get; set; }
 
     /// <summary>Host name or address of an unsaved (quick-connect) host.</summary>
@@ -97,8 +109,20 @@ public sealed class WorkspaceTab
 
     public string? Username { get; set; }
 
+    /// <summary>
+    /// Null for a terminal; <see cref="FilesKind"/> for a file browser. An unknown kind (from a newer version) opens a
+    /// terminal, as versions before 0.3.0 do with every kind.
+    /// </summary>
+    public string? Kind { get; set; }
+
+    /// <summary>The remote folder a file browser tab shows (absolute); null for its home folder.</summary>
+    public string? Path { get; set; }
+
     [JsonIgnore]
     public bool IsNewTabPage => HostId is null && Host is null;
+
+    [JsonIgnore]
+    public bool IsFiles => Kind == FilesKind;
 
     public WorkspaceTab Clone() => (WorkspaceTab)MemberwiseClone();
 }

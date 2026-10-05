@@ -4,6 +4,7 @@ using System.Linq;
 using Blossom.Core.Input;
 using SkiaSharp;
 using TGK.Client.Controls;
+using TGK.Client.Files;
 using TGK.Client.Main;
 
 namespace TGK.Client.Views;
@@ -510,6 +511,11 @@ public sealed partial class MainView
             items.Add(new MenuItem { Text = "Show beside the current tab", Icon = "layout-columns", Action = () => ShowBeside(tab) });
             items.Add(MenuItem.Separator);
         }
+        if (tab is SessionTabContent session)
+        {
+            items.Add(new MenuItem { Text = "Browse files", Icon = "folder", Action = session.BrowseFiles });
+            items.Add(MenuItem.Separator);
+        }
         items.AddRange(PaneMenuItems(tab));
         items.Add(MenuItem.Separator);
         items.Add(new MenuItem { Text = "New tab", Icon = "plus", Hint = "Ctrl+Shift+T", Action = NewTab });
@@ -554,7 +560,7 @@ public sealed partial class MainView
             items.Add(new MenuItem
             {
                 Text = tab.Split is null ? tab.Title : $"{tab.Title}  ·  split view",
-                Icon = tab is HomeTabContent ? "plus" : "terminal",
+                Icon = tab switch { HomeTabContent => "plus", FilesTabContent => "folder", _ => "terminal" },
                 Hint = tab.Status switch
                 {
                     TabStatus.Connected => "Connected",

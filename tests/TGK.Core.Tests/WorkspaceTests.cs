@@ -11,7 +11,10 @@ public sealed class WorkspaceTests
 {
     private static readonly Guid SavedHost = Guid.NewGuid();
 
-    /// <summary>A saved host, a quick-connect address and a new-tab page; tabs 1 and 2 side by side, 2 maximized.</summary>
+    /// <summary>
+    /// A saved host, a quick-connect address, a new-tab page and the saved host's files; tabs 1 and 2 side by side, 2
+    /// maximized.
+    /// </summary>
     internal static Workspace Sample() => new()
     {
         RestoreTabs = true,
@@ -20,6 +23,7 @@ public sealed class WorkspaceTests
             new WorkspaceTab { HostId = SavedHost },
             new WorkspaceTab { Host = "10.0.0.5", Port = 2222, Username = "root" },
             new WorkspaceTab(),
+            new WorkspaceTab { HostId = SavedHost, Kind = WorkspaceTab.FilesKind, Path = "/var/log" },
         ],
         ActiveTab = 2,
         Splits =
@@ -58,7 +62,7 @@ public sealed class WorkspaceTests
 
     public static IEnumerable<TheoryDataRow<string, Action<Workspace>>> Invalid() =>
     [
-        new("active out of range", w => w.ActiveTab = 3),
+        new("active out of range", w => w.ActiveTab = 4),
         new("host and address", w => w.Tabs[0].Host = "x"),
         new("bad port", w => w.Tabs[1].Port = 0),
         new("long address", w => w.Tabs[1].Host = new string('a', Workspace.MaxAddressLength + 1)),
@@ -72,6 +76,9 @@ public sealed class WorkspaceTests
         new("tab in two splits", w => w.Splits.Add(new WorkspaceSplit { Root = Split(Pane(0), Pane(1)) })),
         new("zoomed elsewhere", w => w.Splits[0].Zoomed = 0),
         new("null split", w => w.Splits.Add(null!)),
+        new("relative folder", w => w.Tabs[3].Path = "var/log"),
+        new("folder with a line break", w => w.Tabs[3].Path = "/var/\nlog"),
+        new("long folder", w => w.Tabs[3].Path = "/" + new string('a', Workspace.MaxPathLength)),
     ];
 
     [Theory]
@@ -82,6 +89,23 @@ public sealed class WorkspaceTests
         damage(workspace);
         Assert.True(workspace.Validate() is not null, name);
         Assert.Throws<ArgumentException>(() => VaultEdits.SaveWorkspace(workspace));
+    }
+
+    [Fact]
+    public void FilesTabs_KeepTheirKindAndFolder_AndUnknownKindsAreAccepted()
+    {
+        Workspace workspace = Sample();
+        Assert.True(workspace.Tabs[3].IsFiles);
+        Assert.False(workspace.Tabs[0].IsFiles);
+        Assert.Equal("/var/log", workspace.Clone().Tabs[3].Path);
+
+        string json = System.Text.Json.JsonSerializer.Serialize(workspace, TgkJson.Options);
+        Workspace back = System.Text.Json.JsonSerializer.Deserialize<Workspace>(json, TgkJson.Options)!;
+        Assert.Equal(WorkspaceTab.FilesKind, back.Tabs[3].Kind);
+        Assert.Equal("/var/log", back.Tabs[3].Path);
+
+        workspace.Tabs[3].Kind = "something-newer"; // a later version's kind: reopened as a terminal, not rejected
+        Assert.Null(workspace.Validate());
     }
 
     [Fact]

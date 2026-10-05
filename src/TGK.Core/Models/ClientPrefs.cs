@@ -46,6 +46,12 @@ public sealed class ClientPrefs
     /// </summary>
     public bool AgentsEnabled { get; set; }
 
+    /// <summary>The file browser shows hidden files (names starting with a dot).</summary>
+    public bool FilesShowHidden { get; set; }
+
+    /// <summary>Where the file browser's "Download" puts files; null for the Downloads folder.</summary>
+    public string? DownloadFolder { get; set; }
+
     public ClientPrefs Clone()
     {
         var copy = (ClientPrefs)MemberwiseClone();

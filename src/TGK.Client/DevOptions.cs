@@ -47,6 +47,15 @@ public sealed class DevOptions
     /// <summary><c>--dev-send=&lt;text&gt;</c>: typed into the <c>--dev-connect</c> session once it is connected; \r \n \t \e \\ are unescaped.</summary>
     public string? Send { get; private init; }
 
+    /// <summary>
+    /// <c>--dev-files[=/remote/folder]</c>: <c>--dev-connect</c> opens a Files tab (SFTP) instead of a terminal, at
+    /// that folder (else the home folder).
+    /// </summary>
+    public bool Files { get; private init; }
+
+    /// <summary>The folder given to <c>--dev-files=</c>, if any.</summary>
+    public string? FilesPath { get; private init; }
+
     public static readonly string[] Scenes =
     [
         "login", "login-totp", "register", "register-totp",
@@ -64,8 +73,8 @@ public sealed class DevOptions
 
     public static DevOptions Parse(string[] args)
     {
-        bool autoLogin = false, overlay = false;
-        string? scene = null, connect = null, send = null;
+        bool autoLogin = false, overlay = false, files = false;
+        string? scene = null, connect = null, send = null, filesPath = null;
         (int, int)? size = null;
         foreach (string arg in args)
         {
@@ -81,6 +90,10 @@ public sealed class DevOptions
                 connect = arg["--dev-connect=".Length..].Trim();
             else if (arg.StartsWith("--dev-send=", StringComparison.Ordinal))
                 send = Unescape(arg["--dev-send=".Length..]);
+            else if (arg == "--dev-files")
+                files = true;
+            else if (arg.StartsWith("--dev-files=", StringComparison.Ordinal))
+                (files, filesPath) = (true, arg["--dev-files=".Length..].Trim() is { Length: > 0 } path ? path : null);
         }
         if (scene is not null && Array.IndexOf(Scenes, scene) < 0)
         {
@@ -94,7 +107,7 @@ public sealed class DevOptions
         return new DevOptions
         {
             AutoLogin = autoLogin, SkipRestore = skipRestore, UsesLocalVault = localScene, Scene = scene, WindowSize = size, DebugOverlay = overlay,
-            Connect = connect, Send = send,
+            Connect = connect, Send = send, Files = files, FilesPath = filesPath,
         };
     }
 

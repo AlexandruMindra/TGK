@@ -598,6 +598,7 @@ public sealed class SessionTabContent : TabContent, IKeyInput
     {
         if (_terminal.InputEnabled)
             yield return new MenuItem { Text = "Disconnect", Icon = "logout", Action = () => _session?.Disconnect() };
+        yield return new MenuItem { Text = "Browse files", Icon = "folder", Action = BrowseFiles };
         yield return new MenuItem { Text = "New tab", Icon = "plus", Hint = "Ctrl+Shift+T", Action = Host.NewTab };
         yield return MenuItem.Separator;
         foreach (MenuItem item in Host.PaneMenuItems(this))
@@ -605,6 +606,9 @@ public sealed class SessionTabContent : TabContent, IKeyInput
         yield return MenuItem.Separator;
         yield return new MenuItem { Text = "Close tab", Icon = "x", Hint = "Ctrl+Shift+W", Action = () => Host.CloseTab(this) };
     }
+
+    /// <summary>Opens this host's files (SFTP) in a new tab, trying the password typed here first.</summary>
+    public void BrowseFiles() => Host.OpenFiles(CurrentHost, null, _password);
 
     private void OnGridResized(int cols, int rows)
     {

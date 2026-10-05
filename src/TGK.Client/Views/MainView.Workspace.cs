@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Blossom;
 using TGK.Client.Controls;
+using TGK.Client.Files;
 using TGK.Client.Main;
 using TGK.Core;
 using TGK.Core.Models;
@@ -130,11 +131,12 @@ public sealed partial class MainView
     // A saved host that was deleted since is not reopened.
     private TabContent? ReopenTab(WorkspaceTab saved)
     {
-        if (saved.HostId is { } id)
-            return Services.Vault.Current.FindHost(id) is { } host ? App.SessionTabFactory(host) : null;
-        if (saved.Host is { Length: > 0 } address)
-            return App.SessionTabFactory(new HostEntry { Host = address, Port = saved.Port, Username = saved.Username ?? "" });
-        return new HomeTabContent(this);
+        HostEntry? host = saved.HostId is { } id ? Services.Vault.Current.FindHost(id)
+            : saved.Host is { Length: > 0 } address ? new HostEntry { Host = address, Port = saved.Port, Username = saved.Username ?? "" }
+            : null;
+        if (host is null)
+            return saved.HostId is null ? new HomeTabContent(this) : null;
+        return saved.IsFiles ? new FilesTabContent(host, saved.Path) : App.SessionTabFactory(host);
     }
 
     /// <summary>The tabs and split views as "reopen my tabs" saves them (the preference on).</summary>
@@ -171,7 +173,7 @@ public sealed partial class MainView
     private static string DeviceName => Environment.MachineName;
 
     /// <summary>The user changed what is saved (tabs, their order, split views, the active tab): save soon.</summary>
-    private void WorkspaceChanged()
+    internal void WorkspaceChanged()
     {
         if (_restoring)
             return;

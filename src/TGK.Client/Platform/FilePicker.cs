@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,7 +14,7 @@ namespace TGK.Client.Platform;
 public sealed record FileFilter(string Name, params string[] Patterns);
 
 /// <summary>
-/// Native "open file" and "save file" dialogs: GetOpenFileNameW / GetSaveFileNameW on Windows, zenity or kdialog on
+/// Native "open file", "save file" and "choose folder" dialogs: GetOpenFileNameW / GetSaveFileNameW on Windows, zenity or kdialog on
 /// Linux, the system dialogs through AppleScript (osascript) on macOS. Run off the UI thread so the app keeps
 /// rendering while the dialog is open.
 /// </summary>
@@ -51,6 +53,80 @@ public static class FilePicker
             return Task.Run(() => ShowMac(title, StartDirectory(initialDirectory), defaultName));
         string tool = FindLinuxTool() ?? throw new PlatformNotSupportedException("No file picker (zenity or kdialog) is installed.");
         return Task.Run(() => ShowLinux(tool, title, StartDirectory(initialDirectory) + defaultName, filter, save: true));
+    }
+
+    /// <summary>
+    /// Like <see cref="PickFileAsync"/>, but several files can be chosen. Completes with the chosen paths, or an empty
+    /// list when cancelled.
+    /// </summary>
+    public static Task<IReadOnlyList<string>> PickFilesAsync(string title, string? initialDirectory = null)
+    {
+        if (OperatingSystem.IsWindows())
+            return RunOnStaThread(() => ShowWindowsMulti(title, initialDirectory));
+        if (OperatingSystem.IsMacOS())
+            return Task.Run(() => Lines(RunMac(title, StartDirectory(initialDirectory),
+                "set picked to choose file with prompt (item 1 of argv) default location (POSIX file (item 2 of argv)) with multiple selections allowed",
+                "set out to \"\"",
+                "repeat with f in picked",
+                "set out to out & POSIX path of f & linefeed",
+                "end repeat",
+                "out")));
+        string tool = FindLinuxTool() ?? throw new PlatformNotSupportedException("No file picker (zenity or kdialog) is installed.");
+        return Task.Run(() => Lines(RunLinux(tool, tool == "zenity"
+            ? ["--file-selection", "--multiple", "--separator=\n", "--title=" + title, "--filename=" + StartDirectory(initialDirectory)]
+            : ["--title", title, "--getopenfilename", StartDirectory(initialDirectory), "--multiple", "--separate-output"])));
+    }
+
+    /// <summary>Shows a folder picker. Completes with the chosen folder, or null when cancelled.</summary>
+    public static Task<string?> PickFolderAsync(string title, string? initialDirectory = null)
+    {
+        if (OperatingSystem.IsWindows())
+            return RunOnStaThread(() => ShowWindowsFolder(title));
+        if (OperatingSystem.IsMacOS())
+            return Task.Run(() => Single(RunMac(title, StartDirectory(initialDirectory),
+                "POSIX path of (choose folder with prompt (item 1 of argv) default location (POSIX file (item 2 of argv)))")));
+        string tool = FindLinuxTool() ?? throw new PlatformNotSupportedException("No file picker (zenity or kdialog) is installed.");
+        return Task.Run(() => Single(RunLinux(tool, tool == "zenity"
+            ? ["--file-selection", "--directory", "--title=" + title, "--filename=" + StartDirectory(initialDirectory)]
+            : ["--title", title, "--getexistingdirectory", StartDirectory(initialDirectory)])));
+    }
+
+    private static IReadOnlyList<string> Lines(string? output) =>
+        output is null ? [] : output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static string? Single(string? output) => output?.Trim() is { Length: > 0 } path ? path.TrimEnd('/') is { Length: > 0 } p ? p : "/" : null;
+
+    // The tool's output when it exited normally (a cancelled dialog exits with an error).
+    private static string? RunLinux(string tool, string[] arguments)
+    {
+        var psi = new ProcessStartInfo(tool) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (string argument in arguments)
+            psi.ArgumentList.Add(argument);
+        using Process process = Process.Start(psi) ?? throw new PlatformNotSupportedException($"Could not start {tool}.");
+        string output = process.StandardOutput.ReadToEnd();
+        process.WaitForExit();
+        return process.ExitCode == 0 ? output : null;
+    }
+
+    // Runs an AppleScript whose argv is (title, start folder); lines are passed as separate -e arguments, never spliced.
+    private static string? RunMac(string title, string start, params string[] body)
+    {
+        var psi = new ProcessStartInfo("osascript") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        psi.ArgumentList.Add("-e");
+        psi.ArgumentList.Add("on run argv");
+        foreach (string line in body)
+        {
+            psi.ArgumentList.Add("-e");
+            psi.ArgumentList.Add(line);
+        }
+        psi.ArgumentList.Add("-e");
+        psi.ArgumentList.Add("end run");
+        psi.ArgumentList.Add(title);
+        psi.ArgumentList.Add(start);
+        using Process process = Process.Start(psi) ?? throw new PlatformNotSupportedException("Could not start osascript.");
+        string output = process.StandardOutput.ReadToEnd();
+        process.WaitForExit();
+        return process.ExitCode == 0 ? output : null;
     }
 
     private static string StartDirectory(string? directory) =>
@@ -143,9 +219,9 @@ public static class FilePicker
         return process.ExitCode == 0 && path.Length > 0 ? path : null;
     }
 
-    private static Task<string?> RunOnStaThread(Func<string?> func)
+    private static Task<T> RunOnStaThread<T>(Func<T> func)
     {
-        var tcs = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
             try
@@ -201,6 +277,96 @@ public static class FilePicker
             Marshal.FreeHGlobal(buffer);
         }
     }
+
+    // OFN_ALLOWMULTISELECT: one file comes back as its full path; several as the folder, then each name, NUL-separated.
+    private static IReadOnlyList<string> ShowWindowsMulti(string title, string? initialDirectory)
+    {
+        const int MaxChars = 1 << 20;
+        IntPtr buffer = Marshal.AllocHGlobal(MaxChars * sizeof(char));
+        try
+        {
+            Marshal.WriteInt16(buffer, 0);
+            var ofn = new OpenFileName
+            {
+                lStructSize = Marshal.SizeOf<OpenFileName>(),
+                lpstrFilter = "All files\0*.*\0\0",
+                lpstrFile = buffer,
+                nMaxFile = MaxChars,
+                lpstrTitle = title,
+                lpstrInitialDir = initialDirectory,
+                Flags = OfnPathMustExist | OfnNoChangeDir | OfnExplorer | OfnFileMustExist | OfnAllowMultiSelect,
+            };
+            if (!GetOpenFileNameW(ref ofn))
+            {
+                int error = CommDlgExtendedError();
+                if (error != 0)
+                    throw new Win32Exception($"The file dialog failed (error 0x{error:X}).");
+                return []; // cancelled
+            }
+            var parts = new List<string>();
+            int offset = 0;
+            while (true)
+            {
+                string part = Marshal.PtrToStringUni(buffer + offset * sizeof(char)) ?? "";
+                if (part.Length == 0)
+                    break;
+                parts.Add(part);
+                offset += part.Length + 1;
+            }
+            return parts.Count <= 1 ? parts : parts.Skip(1).Select(name => Path.Combine(parts[0], name)).ToList();
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    // The shell's folder browser (SHBrowseForFolder with the resizable new-style dialog; it starts at the desktop).
+    // The thread is STA.
+    private static string? ShowWindowsFolder(string title)
+    {
+        IntPtr displayName = Marshal.AllocHGlobal(260 * sizeof(char)); // MAX_PATH, as the API assumes
+        IntPtr path = Marshal.AllocHGlobal(32768 * sizeof(char));
+        IntPtr list = IntPtr.Zero;
+        try
+        {
+            var info = new BrowseInfo { pszDisplayName = displayName, lpszTitle = title, ulFlags = BifReturnOnlyFsDirs | BifNewDialogStyle | BifEditBox };
+            list = SHBrowseForFolderW(ref info);
+            if (list == IntPtr.Zero)
+                return null; // cancelled
+            return SHGetPathFromIDListEx(list, path, 32768, 0) ? Marshal.PtrToStringUni(path) : null;
+        }
+        finally
+        {
+            if (list != IntPtr.Zero)
+                Marshal.FreeCoTaskMem(list);
+            Marshal.FreeHGlobal(path);
+            Marshal.FreeHGlobal(displayName);
+        }
+    }
+
+    private const int OfnAllowMultiSelect = 0x200;
+    private const uint BifReturnOnlyFsDirs = 0x1, BifEditBox = 0x10, BifNewDialogStyle = 0x40;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct BrowseInfo
+    {
+        public IntPtr hwndOwner;
+        public IntPtr pidlRoot;
+        public IntPtr pszDisplayName;
+        public string? lpszTitle;
+        public uint ulFlags;
+        public IntPtr lpfn;
+        public IntPtr lParam;
+        public int iImage;
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr SHBrowseForFolderW(ref BrowseInfo info);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SHGetPathFromIDListEx(IntPtr pidl, IntPtr path, int pathLength, int options);
 
     private const int OfnOverwritePrompt = 0x2, OfnPathMustExist = 0x800, OfnFileMustExist = 0x1000, OfnNoChangeDir = 0x8, OfnExplorer = 0x80000;
 

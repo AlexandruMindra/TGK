@@ -11,6 +11,7 @@ using Silk.NET.Input;
 using SkiaSharp;
 using TGK.Client.Controls;
 using TGK.Client.Dialogs;
+using TGK.Client.Files;
 using TGK.Client.Input;
 using TGK.Client.Main;
 using TGK.Client.Terminal;
@@ -81,6 +82,7 @@ public sealed partial class MainView : TgkView
         RegisterShortcuts();
         Events.OnMouseDown += OnViewMouseDown;
         Events.OnMouseMove += OnViewMouseMove;
+        Shell.FilesDropped += OnFilesDropped;
         UiClock.Tick += OnUiTick;
         _sidebar.Refresh();
         NewTab();
@@ -304,6 +306,25 @@ public sealed partial class MainView : TgkView
     /// <summary>Opens <paramref name="host"/> in a new session tab.</summary>
     public void ConnectInNewTab(HostEntry host) => OpenTab(App.SessionTabFactory(host));
 
+    /// <summary>
+    /// Opens the files of <paramref name="host"/> (SFTP) in a new tab, at <paramref name="path"/> or its home folder;
+    /// <paramref name="password"/> is tried first (e.g. the one typed for a terminal of the same host).
+    /// </summary>
+    public void OpenFiles(HostEntry host, string? path = null, string? password = null) => OpenTab(new FilesTabContent(host, path, password));
+
+    // Files dropped on the window (from the system's file manager) are uploaded by the files tab on screen.
+    private void OnFilesDropped(string[] paths)
+    {
+        if (_torndown || paths.Length == 0)
+            return;
+        if (HasModal)
+            return;
+        if (ActiveTab is FilesTabContent files)
+            files.UploadDropped(paths);
+        else
+            ShowToast("To upload files, drop them on a Files tab (right-click a host → Browse files).", ToastKind.Info);
+    }
+
     /// <summary>Opens <paramref name="host"/> in <paramref name="tab"/>, replacing its content (used by the new-tab page).</summary>
     public void ConnectInTab(TabContent tab, HostEntry host) => ReplaceTab(tab, App.SessionTabFactory(host));
 
@@ -451,6 +472,7 @@ public sealed partial class MainView : TgkView
         [
             new MenuItem { Text = "Connect", Icon = "terminal", Action = () => Connect(host) },
             new MenuItem { Text = "Connect in new tab", Icon = "plus", Action = () => ConnectInNewTab(host) },
+            new MenuItem { Text = "Browse files", Icon = "folder", Action = () => OpenFiles(host) },
             MenuItem.Separator,
             new MenuItem { Text = "Edit…", Icon = "edit", Hint = "F2", Action = () => EditHost(host) },
             new MenuItem { Text = "Duplicate", Icon = "copy", Action = () => DuplicateHost(host) },
@@ -689,6 +711,7 @@ public sealed partial class MainView : TgkView
         App.Agents.Changed -= RefreshAgentChip;
         App.Agents.OnSignedOut();
         Services.Vault.Changed -= OnVaultChanged;
+        Shell.FilesDropped -= OnFilesDropped;
         UiClock.Tick -= OnUiTick;
         foreach (IDisposable shortcut in _shortcuts)
             shortcut.Dispose();
@@ -876,10 +899,11 @@ public sealed partial class MainView : TgkView
             ShowToast($"--dev-connect: {error}", ToastKind.Error);
             return;
         }
+        TabContent tab = Services.Dev.Files ? new FilesTabContent(host, Services.Dev.FilesPath, password) : new SessionTabContent(host, password, send);
         if (ActiveTab is HomeTabContent home)
-            ReplaceTab(home, new SessionTabContent(host, password, send));
+            ReplaceTab(home, tab);
         else
-            OpenTab(new SessionTabContent(host, password, send));
+            OpenTab(tab);
     }
 
     /// <summary>Full-window root that lays out the four regions.</summary>
