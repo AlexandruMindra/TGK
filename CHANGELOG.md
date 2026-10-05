@@ -21,6 +21,14 @@ shows the current Unreleased section.
   approved by you, and TGK supplies the password. Agents never see passwords or keys; the status bar shows when they
   are connected, and every call is listed in the activity view, mirrored in an "Agent log" tab and kept in an audit
   log. See docs/AGENTS.md.
+- **Files (SFTP)**: a Files tab per host (right-click a host → *Browse files*, or *Browse files* in a terminal's
+  menu). Browse folders (back, forward, up, a path to type, a name filter, hidden files with Ctrl+H, sortable columns),
+  upload files and folders (pick them or drop them on the window), download them to the Downloads folder or anywhere,
+  with a transfer panel (progress, speed, time left, cancel) and Replace / Skip for names that already exist. Open or
+  edit a file in a local program: each save is uploaded back. New folder or file, rename, move, delete, permissions,
+  copy paths, open a terminal in a folder. Connects through the host's jump hosts with its credentials (a one-time
+  code is asked once); symbolic links are shown with their target, and deleting or renaming one never touches what it
+  points to. Files tabs are reopened at their folder with "Reopen my tabs" (older versions open them as terminals).
 
 ### Fixed
 

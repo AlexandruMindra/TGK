@@ -9,7 +9,7 @@ entirely on one machine.
 ## Features
 
 **Sessions**
-- Tabs like a browser: every tab is an SSH terminal; a new tab offers quick connect (`user@host:port`) that also
+- Tabs like a browser: every tab is an SSH terminal (or a host's files); a new tab offers quick connect (`user@host:port`) that also
   searches your saved hosts by name, user or host. Drag tabs to reorder them, or onto another tab to show both side by
   side. Any number of tabs: the tab strip scrolls (mouse wheel, touchpad, the ‹ › arrows) and lists them all.
 - Split view: show several sessions at once — 2 or 3 side by side, stacked, 1 large + 2, grids of 4 or 6 (the layout
@@ -29,6 +29,18 @@ entirely on one machine.
   mouse reporting, bracketed paste, wide characters, selection with copy/paste.
 - Auth with private keys (OpenSSH/PEM, with passphrase), password or keyboard-interactive; host key verification
   on first connect and on change.
+
+**Files (SFTP)**
+- A Files tab per host (right-click a host → Browse files, or from a terminal's menu): folders with back/forward/up, a
+  path to type, a name filter, hidden files (`Ctrl+H`) and sortable columns; through the same jump hosts, credentials
+  and host-key checks as the terminal.
+- Upload files and folders (pick them or drop them on the window) and download them — to your Downloads folder or
+  anywhere — with a transfer panel (progress, speed, time left, cancel). Existing names ask Replace / Skip; files are
+  written under a temporary name and put in place when complete; times and permissions are kept.
+- Open or edit a file in a program on your computer: every save is uploaded back. On Windows, programs and scripts
+  from a server open as text, never run.
+- New folder / file, rename, move, delete (links are removed, never what they point to), permissions, copy paths, open
+  a terminal in the folder. Files tabs are reopened at their folder with "Reopen my tabs".
 
 **Hosts**
 - Groups, search, tag colors, identities (username + password or private key) shared between hosts.

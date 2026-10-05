@@ -65,7 +65,9 @@ dotnet test tests/TGK.Core.Tests --filter Category=E2E
 ```
 
 Never point these variables at a real server or account. Besides the terminal sessions (`SshEndToEndTests`) this
-runs the agent tests against it: `RemoteConnectionEndToEndTests` (commands, SFTP and the fallback through commands)
+runs the file browser's tests (`SftpEndToEndTests`: listing with links, create/rename/delete, links removed without
+their targets, permissions, uploads and downloads of folders with conflicts and cancellation, edited files uploaded
+back, jump hosts) and the agent tests: `RemoteConnectionEndToEndTests` (commands, SFTP and the fallback through commands)
 and `AgentEndToEndTests`, which starts the real `tgk-mcp` from an MCP client and calls every tool through an
 `AgentEndpoint` (approvals, read-only access and hanging up are checked too; the tests that need no SSH server always
 run).
@@ -96,6 +98,7 @@ The client has developer flags for driving UI states without a mouse (harmless u
 | `--scene=<name>` | Open a UI state. Login screen: `login`, `login-totp` (authenticator reset), `register`, `register-totp` (these never restore a kept session). Signed in, on a kept session if one is restored, else the mock vault: `main`, `split` (a split view: the new-tab page and two sessions), `tabs-overflow` (more tabs than fit in the strip), `update` (the status bar's "new version available" chip), `host-editor` (also `host-editor-connection`, `host-editor-tunnels`, `host-editor-appearance`: the host editor on that tab), `group-settings`, `connection-defaults` (Settings on the synced connection defaults), `identities`, `settings`, `hostkey`, `hostkey-changed`, `password-prompt`, `menu`, `devices`, `change-password`. The mock vault's sample hosts include a group-level jump host (Production → bastion), a tunnel (db-primary) and a color scheme (homelab). |
 | `--dev-connect=<user>[:<password>]@<host>[:<port>]` | After sign-in, open a session tab to that address (no password: the prompt appears). |
 | `--dev-send=<text>` | Typed into the `--dev-connect` session once connected; `\r`, `\n`, `\t`, `\e` and `\\` are unescaped. |
+| `--dev-files[=<folder>]` | `--dev-connect` opens a Files tab (SFTP) instead of a terminal, at that remote folder (else home). |
 | `--window=<W>x<H>` | Initial window size. |
 | `--fps` | Blossom's frame-time overlay. |
 
