@@ -1,9 +1,9 @@
 using System;
 using System.Text;
 
-namespace TGK.Core.Sftp;
+namespace TGK.Core.Files;
 
-public enum SftpEntryKind
+public enum FileEntryKind
 {
     File,
     Directory,
@@ -17,7 +17,7 @@ public enum SftpEntryKind
 /// </summary>
 /// <param name="Path">Absolute, normalized.</param>
 /// <param name="Mode">The permission bits including setuid, setgid and sticky (e.g. 0755).</param>
-public sealed record SftpEntry(string Path, string Name, SftpEntryKind Kind, long Size, DateTimeOffset Modified, int Mode, long Uid, long Gid)
+public sealed record FileEntry(string Path, string Name, FileEntryKind Kind, long Size, DateTimeOffset Modified, int Mode, long Uid, long Gid)
 {
     /// <summary>Where a symbolic link points, as stored in the link (may be relative); null for other entries or when unreadable.</summary>
     public string? LinkTarget { get; init; }
@@ -29,10 +29,13 @@ public sealed record SftpEntry(string Path, string Name, SftpEntryKind Kind, lon
     public bool IsBrokenLink { get; init; }
 
     /// <summary>A directory, or a symbolic link to one.</summary>
-    public bool IsDirectory => Kind == SftpEntryKind.Directory || (Kind == SftpEntryKind.Symlink && LinksToDirectory);
+    public bool IsDirectory => Kind == FileEntryKind.Directory || (Kind == FileEntryKind.Symlink && LinksToDirectory);
 
-    /// <summary>Hidden by Unix convention (the name starts with a dot).</summary>
-    public bool IsHidden => Name.StartsWith('.');
+    /// <summary>Marked hidden by Windows (local files only).</summary>
+    public bool HiddenAttribute { get; init; }
+
+    /// <summary>Hidden: by Unix convention (the name starts with a dot) or, for Windows files, marked hidden.</summary>
+    public bool IsHidden => Name.StartsWith('.') || HiddenAttribute;
 
     /// <summary><c>ls -l</c> style, e.g. <c>drwxr-xr-x</c> or <c>-rwsr-x---</c>.</summary>
     public string Permissions
@@ -40,7 +43,7 @@ public sealed record SftpEntry(string Path, string Name, SftpEntryKind Kind, lon
         get
         {
             var sb = new StringBuilder(10);
-            sb.Append(Kind switch { SftpEntryKind.Directory => 'd', SftpEntryKind.Symlink => 'l', SftpEntryKind.Other => '?', _ => '-' });
+            sb.Append(Kind switch { FileEntryKind.Directory => 'd', FileEntryKind.Symlink => 'l', FileEntryKind.Other => '?', _ => '-' });
             AppendTriplet(sb, Mode >> 6, (Mode & 0x800) != 0, 's');
             AppendTriplet(sb, Mode >> 3, (Mode & 0x400) != 0, 's');
             AppendTriplet(sb, Mode, (Mode & 0x200) != 0, 't');
@@ -60,4 +63,4 @@ public sealed record SftpEntry(string Path, string Name, SftpEntryKind Kind, lon
 }
 
 /// <summary>A file operation failed for a reason worth showing the user (missing file, no permission, name taken…).</summary>
-public sealed class SftpOperationException(string message, Exception? inner = null) : Exception(message, inner);
+public sealed class FileOperationException(string message, Exception? inner = null) : Exception(message, inner);

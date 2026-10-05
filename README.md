@@ -41,6 +41,11 @@ entirely on one machine.
   from a server open as text, never run.
 - New folder / file, rename, move, delete (links are removed, never what they point to), permissions, copy paths, open
   a terminal in the folder. Files tabs are reopened at their folder with "Reopen my tabs".
+- Split view with panes side by side (*Open a pane beside…*): another folder of the same host, this computer, or another
+  saved host. Drag items onto the other pane (or one of its folders), or press `F5` (copy) / `F6` (move): within a
+  host a move is a rename; between two hosts files go through a private buffer on this computer, so the hosts never
+  need to reach each other, or — if you choose — host A copies straight to host B over SSH with B's credentials from
+  the vault (checked against B's trusted host key, removed from A afterwards).
 
 **Hosts**
 - Groups, search, tag colors, identities (username + password or private key) shared between hosts.

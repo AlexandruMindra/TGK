@@ -6,7 +6,7 @@ using Silk.NET.Input;
 using SkiaSharp;
 using TGK.Client.Controls;
 using TGK.Client.Input;
-using TGK.Core.Sftp;
+using TGK.Core.Files;
 
 namespace TGK.Client.Files;
 
@@ -22,8 +22,8 @@ public sealed class FileList : Control, IKeyInput
     private const float ThumbW = 6, SizeW = 84, DateW = 128, PermW = 104, IconX = 22;
     private const int DoubleClickMs = 400, TypeAheadMs = 900;
 
-    private List<SftpEntry> _entries = []; // as listed
-    private List<SftpEntry> _rows = [];    // filtered and sorted
+    private List<FileEntry> _entries = []; // as listed
+    private List<FileEntry> _rows = [];    // filtered and sorted
     private readonly HashSet<string> _selected = new(StringComparer.Ordinal);
     private int _cursor = -1, _anchor = -1, _hover = -1;
     private float _scroll;
@@ -34,6 +34,11 @@ public sealed class FileList : Control, IKeyInput
     private string _typed = "";
     private long _typedAt;
     private string _filter = "";
+    private const float DragThreshold = 6;
+    private System.Numerics.Vector2? _press; // where the left button went down on a selected row (a drag may start)
+    private int _pendingSelectOnly = -1;     // a click on a row of a multiple selection selects only it, unless it drags
+    private bool _dragging;
+    private string? _dropTarget;             // highlighted for a drop: "" the whole list, else a folder row's path
     private bool _showHidden;
     private string? _message;
     private FileSortColumn _sortColumn = FileSortColumn.Name;
@@ -47,13 +52,25 @@ public sealed class FileList : Control, IKeyInput
         IsClipping = true;
         Events.OnMouseDown += OnDown;
         Events.OnMouseMove += OnMove;
-        Events.OnMouseUp += (_, _) =>
+        Events.OnMouseUp += (_, e) =>
         {
             if (_thumbDrag)
             {
                 _thumbDrag = false;
                 ReleasePointer();
             }
+            if (_dragging)
+            {
+                _dragging = false;
+                ReleasePointer();
+                DragEnded?.Invoke(e.Global.X, e.Global.Y);
+            }
+            else if (_pendingSelectOnly >= 0 && _pendingSelectOnly < _rows.Count)
+            {
+                SelectOnly(_pendingSelectOnly);
+            }
+            _press = null;
+            _pendingSelectOnly = -1;
         };
         Events.OnScroll += (_, e) =>
         {
@@ -65,7 +82,7 @@ public sealed class FileList : Control, IKeyInput
     }
 
     /// <summary>Double-click or Enter on an entry.</summary>
-    public event Action<SftpEntry>? Activated;
+    public event Action<FileEntry>? Activated;
 
     /// <summary>Right-click at window point (x, y), after the selection was updated for it (empty when on no row).</summary>
     public event Action<float, float>? MenuRequested;
@@ -73,17 +90,57 @@ public sealed class FileList : Control, IKeyInput
     /// <summary>The selection (or the rows shown) changed.</summary>
     public event Action? SelectionChanged;
 
+    /// <summary>The selection is being dragged; the pointer is at window point (x, y).</summary>
+    public event Action<float, float>? DragMoved;
+
+    /// <summary>A drag of the selection ended (button released) at window point (x, y).</summary>
+    public event Action<float, float>? DragEnded;
+
+    /// <summary>The selection is being dragged.</summary>
+    public bool IsDragging => _dragging;
+
+    /// <summary>Highlights a drop: "" the whole list, a folder row's path that row, null nothing.</summary>
+    public string? DropTarget
+    {
+        get => _dropTarget;
+        set => SetAndPaint(ref _dropTarget, value);
+    }
+
+    /// <summary>Whether window point (x, y) is over the list.</summary>
+    public bool Contains(float x, float y)
+    {
+        var c = Transform.Computed;
+        return EffectiveVisible && x >= c.X && x < c.X + c.Width && y >= c.Y && y < c.Y + c.Height;
+    }
+
+    /// <summary>The folder (or link to one) under window point (x, y), if any.</summary>
+    public FileEntry? FolderAt(float x, float y)
+    {
+        int index = RowAt(y - Transform.Computed.Y);
+        return index >= 0 && _rows[index].IsDirectory ? _rows[index] : null;
+    }
+
+    /// <summary>Ends a drag without a drop (e.g. Escape).</summary>
+    public void CancelDrag()
+    {
+        if (!_dragging)
+            return;
+        _dragging = false;
+        _press = null;
+        ReleasePointer();
+    }
+
     /// <summary>The rows shown: filtered by name and the hidden setting, sorted.</summary>
-    public IReadOnlyList<SftpEntry> Rows => _rows;
+    public IReadOnlyList<FileEntry> Rows => _rows;
 
     /// <summary>Every entry of the folder, as listed.</summary>
-    public IReadOnlyList<SftpEntry> Entries => _entries;
+    public IReadOnlyList<FileEntry> Entries => _entries;
 
     /// <summary>The selected rows, in list order.</summary>
-    public IReadOnlyList<SftpEntry> Selected => _rows.Where(r => _selected.Contains(r.Path)).ToList();
+    public IReadOnlyList<FileEntry> Selected => _rows.Where(r => _selected.Contains(r.Path)).ToList();
 
     /// <summary>The row with the keyboard cursor.</summary>
-    public SftpEntry? Focused => _cursor >= 0 && _cursor < _rows.Count ? _rows[_cursor] : null;
+    public FileEntry? Focused => _cursor >= 0 && _cursor < _rows.Count ? _rows[_cursor] : null;
 
     public FileSortColumn SortColumn => _sortColumn;
     public bool SortDescending => _descending;
@@ -127,7 +184,7 @@ public sealed class FileList : Control, IKeyInput
     /// Shows a folder's entries. <paramref name="select"/> selects (and scrolls to) that path; otherwise the selection
     /// is kept for the paths still there when <paramref name="keepSelection"/>, else the list starts at the top.
     /// </summary>
-    public void SetEntries(IReadOnlyList<SftpEntry> entries, string? select = null, bool keepSelection = false)
+    public void SetEntries(IReadOnlyList<FileEntry> entries, string? select = null, bool keepSelection = false)
     {
         string? focused = Focused?.Path;
         _entries = [.. entries];
@@ -161,7 +218,7 @@ public sealed class FileList : Control, IKeyInput
     public void SelectAll()
     {
         _selected.Clear();
-        foreach (SftpEntry row in _rows)
+        foreach (FileEntry row in _rows)
             _selected.Add(row.Path);
         InvalidatePaint();
         SelectionChanged?.Invoke();
@@ -239,6 +296,19 @@ public sealed class FileList : Control, IKeyInput
 
     private void OnMove(object? sender, MouseEventArgs e)
     {
+        if (_dragging)
+        {
+            DragMoved?.Invoke(e.Global.X, e.Global.Y);
+            return;
+        }
+        if (_press is { } press && _selected.Count > 0 && System.Numerics.Vector2.Distance(press, e.Global) > DragThreshold)
+        {
+            _dragging = true;
+            _pendingSelectOnly = -1;
+            CapturePointer();
+            DragMoved?.Invoke(e.Global.X, e.Global.Y);
+            return;
+        }
         if (_thumbDrag)
         {
             (float top, float height) = Thumb();
@@ -299,8 +369,12 @@ public sealed class FileList : Control, IKeyInput
             SelectRange(_anchor, index, add: (mods & KeyModifiers.Ctrl) != 0);
         else if ((mods & KeyModifiers.Ctrl) != 0)
             Toggle(index);
+        else if (_selected.Contains(_rows[index].Path) && _selected.Count > 1)
+            _pendingSelectOnly = index; // keeps the selection for a drag; a plain click selects only this row
         else
             SelectOnly(index);
+        if (_selected.Contains(_rows[index].Path))
+            _press = e.Global;
 
         long now = UiClock.NowMs;
         if (mods == KeyModifiers.None && index == _lastClickRow && now - _lastClickMs < DoubleClickMs)
@@ -471,6 +545,8 @@ public sealed class FileList : Control, IKeyInput
             foreach ((string line, int i) in Gfx.Wrap(text, Gfx.Font(Theme.FontBase), Math.Max(40, W - 48), 4).Select((l, i) => (l, i)))
                 Gfx.Text(c, line, W / 2f, HeaderH + 40 + i * 20, Theme.FontBase, Theme.WeightRegular, Theme.TextMuted, TextAlignment.Center);
             c.Restore();
+            if (_dropTarget is "")
+                Gfx.StrokeRound(c, new SKRect(2, 2, W - 2, H - 2), Theme.Radius, Theme.Accent, 2);
             return;
         }
 
@@ -481,7 +557,7 @@ public sealed class FileList : Control, IKeyInput
         int last = Math.Min(_rows.Count - 1, (int)((_scroll + ListH) / RowH) + 1);
         for (int i = first; i <= last; i++)
         {
-            SftpEntry entry = _rows[i];
+            FileEntry entry = _rows[i];
             float y = HeaderH + i * RowH - _scroll;
             float cy = y + RowH / 2f;
             var r = new SKRect(4, y + 1, W - 4 - (MaxScroll > 0 ? ThumbW : 0), y + RowH - 1);
@@ -495,7 +571,7 @@ public sealed class FileList : Control, IKeyInput
 
             bool dir = entry.IsDirectory;
             Icons.Draw(c, dir ? "folder" : "file", IconX, cy, 16, dir ? Theme.Accent : Theme.TextSecondary);
-            if (entry.Kind == SftpEntryKind.Symlink)
+            if (entry.Kind == FileEntryKind.Symlink)
                 Icons.Draw(c, "link", IconX + 7, cy + 6, 9, entry.IsBrokenLink ? Theme.Danger : Theme.TextMuted);
 
             float nameLeft = 40;
@@ -503,7 +579,7 @@ public sealed class FileList : Control, IKeyInput
             SKColor nameColor = entry.IsHidden ? Theme.TextSecondary : Theme.TextPrimary;
             float nameMax = Math.Max(0, nameRight - nameLeft);
             Gfx.Text(c, name, nameLeft, cy, nameFont, nameColor, TextAlignment.Left, nameMax);
-            if (entry.Kind == SftpEntryKind.Symlink)
+            if (entry.Kind == FileEntryKind.Symlink)
             {
                 float used = Math.Min(nameMax, Gfx.Measure(name, nameFont));
                 string target = entry.IsBrokenLink ? $"→ {FileFormat.Printable(entry.LinkTarget ?? "?")} (missing)" : $"→ {FileFormat.Printable(entry.LinkTarget ?? "")}";
@@ -519,6 +595,12 @@ public sealed class FileList : Control, IKeyInput
                 Gfx.Text(c, entry.Permissions, permLeft, cy, monoFont, muted, TextAlignment.Left, PermW);
         }
 
+        if (_dropTarget is { Length: > 0 } dropPath && _rows.FindIndex(r => r.Path == dropPath) is var dropIndex and >= 0)
+        {
+            float y = HeaderH + dropIndex * RowH - _scroll;
+            Gfx.StrokeRound(c, new SKRect(5, y + 1.5f, W - 5, y + RowH - 1.5f), Theme.RadiusSm, Theme.Accent, 2);
+        }
+
         if (MaxScroll > 0)
         {
             (float top, float height) = Thumb();
@@ -526,6 +608,8 @@ public sealed class FileList : Control, IKeyInput
                 _thumbDrag ? Theme.TextMuted : Theme.BorderStrong);
         }
         c.Restore();
+        if (_dropTarget is "")
+            Gfx.StrokeRound(c, new SKRect(2, 2, W - 2, H - 2), Theme.Radius, Theme.Accent, 2);
     }
 
     private void PaintHeader(SKCanvas c, float sizeRight, float dateLeft, float permLeft)

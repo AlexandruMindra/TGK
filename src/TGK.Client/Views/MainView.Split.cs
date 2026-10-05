@@ -290,6 +290,30 @@ public sealed partial class MainView
         home.FocusQuickConnect();
     }
 
+    /// <summary>
+    /// Opens <paramref name="pane"/> (a new tab) as a pane right of <paramref name="tab"/>, in its split view (started
+    /// if needed), and activates it.
+    /// </summary>
+    public void OpenBeside(TabContent tab, TabContent pane)
+    {
+        if (!_tabs.Contains(tab))
+        {
+            OpenTab(pane);
+            return;
+        }
+        PaneLayout<TabContent> layout = tab.Split ?? new PaneLayout<TabContent>(tab);
+        tab.Split = layout;
+        layout.SplitAt(tab, pane, SplitOrientation.Horizontal);
+        Attach(pane, _tabs.IndexOf(tab) + 1);
+        pane.Split = layout;
+        GatherPanes(layout);
+        ActivateTab(pane);
+    }
+
+    /// <summary>The file pane on screen whose list is under window point (<paramref name="x"/>, <paramref name="y"/>), if any.</summary>
+    public FilesTabContent? FilesPaneAt(float x, float y) =>
+        _tabs.OfType<FilesTabContent>().FirstOrDefault(t => t.IsShown && t.ListContains(x, y));
+
     /// <summary>Shows <paramref name="tab"/> beside the active tab, in the active tab's split view (started if needed).</summary>
     public void ShowBeside(TabContent tab)
     {
@@ -560,7 +584,7 @@ public sealed partial class MainView
             items.Add(new MenuItem
             {
                 Text = tab.Split is null ? tab.Title : $"{tab.Title}  ·  split view",
-                Icon = tab switch { HomeTabContent => "plus", FilesTabContent => "folder", _ => "terminal" },
+                Icon = tab switch { HomeTabContent => "plus", FilesTabContent { IsLocal: true } => "monitor", FilesTabContent => "folder", _ => "terminal" },
                 Hint = tab.Status switch
                 {
                     TabStatus.Connected => "Connected",

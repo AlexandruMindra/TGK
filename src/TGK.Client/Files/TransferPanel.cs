@@ -4,7 +4,7 @@ using System.Linq;
 using Blossom.Core.Input;
 using SkiaSharp;
 using TGK.Client.Controls;
-using TGK.Core.Sftp;
+using TGK.Core.Files;
 
 namespace TGK.Client.Files;
 
@@ -19,9 +19,9 @@ public sealed class TransferPanel : Control
     private const int MaxVisibleRows = 4;
     private const float ButtonSize = 24;
 
-    private readonly Dictionary<SftpTransfer, Rate> _rates = [];
-    private readonly Dictionary<SftpTransfer, string> _labels = [];
-    private IReadOnlyList<SftpTransfer> _transfers = [];
+    private readonly Dictionary<FileTransfer, Rate> _rates = [];
+    private readonly Dictionary<FileTransfer, string> _labels = [];
+    private IReadOnlyList<FileTransfer> _transfers = [];
     private float _scroll;
     private int _hoverButton = -2; // row whose button is hovered; -1 the "Clear" button
 
@@ -38,10 +38,10 @@ public sealed class TransferPanel : Control
     }
 
     /// <summary>The cancel button of a transfer that has not finished.</summary>
-    public event Action<SftpTransfer>? CancelClicked;
+    public event Action<FileTransfer>? CancelClicked;
 
     /// <summary>The folder button of a finished download.</summary>
-    public event Action<SftpTransfer>? ShowClicked;
+    public event Action<FileTransfer>? ShowClicked;
 
     /// <summary>"Clear finished" in the header.</summary>
     public event Action? ClearClicked;
@@ -54,25 +54,25 @@ public sealed class TransferPanel : Control
 
     private float MaxScroll => Math.Max(0, _transfers.Count * RowH + 4 - (H - HeaderH));
 
-    public void SetTransfers(IReadOnlyList<SftpTransfer> transfers)
+    public void SetTransfers(IReadOnlyList<FileTransfer> transfers)
     {
         _transfers = transfers.Reverse().ToList();
-        foreach (SftpTransfer gone in _rates.Keys.Except(_transfers).ToList())
+        foreach (FileTransfer gone in _rates.Keys.Except(_transfers).ToList())
             _rates.Remove(gone);
-        foreach (SftpTransfer gone in _labels.Keys.Except(_transfers).ToList())
+        foreach (FileTransfer gone in _labels.Keys.Except(_transfers).ToList())
             _labels.Remove(gone);
         _scroll = Math.Clamp(_scroll, 0, MaxScroll);
         InvalidatePaint();
     }
 
     /// <summary>Shows <paramref name="where"/> instead of the destination (e.g. for the private copy of a file being edited).</summary>
-    public void Describe(SftpTransfer transfer, string where) => _labels[transfer] = where;
+    public void Describe(FileTransfer transfer, string where) => _labels[transfer] = where;
 
     /// <summary>Samples the running transfers' speeds and repaints.</summary>
     public void Refresh()
     {
         long now = UiClock.NowMs;
-        foreach (SftpTransfer transfer in _transfers)
+        foreach (FileTransfer transfer in _transfers)
         {
             TransferProgress p = transfer.Snapshot();
             if (p.State != TransferState.Running)
@@ -108,11 +108,11 @@ public sealed class TransferPanel : Control
         }
         if (button < 0)
             return;
-        SftpTransfer transfer = _transfers[button];
+        FileTransfer transfer = _transfers[button];
         TransferProgress p = transfer.Snapshot();
         if (!p.IsFinished)
             CancelClicked?.Invoke(transfer);
-        else if (transfer.Direction == TransferDirection.Download && p.State == TransferState.Done)
+        else if (CanShow(transfer, p))
             ShowClicked?.Invoke(transfer);
     }
 
@@ -125,10 +125,13 @@ public sealed class TransferPanel : Control
         if (index < 0 || index >= _transfers.Count || x < W - 12 - ButtonSize - 4)
             return -2;
         TransferProgress p = _transfers[index].Snapshot();
-        bool hasButton = !p.IsFinished
-            || (_transfers[index].Direction == TransferDirection.Download && p.State == TransferState.Done && !_labels.ContainsKey(_transfers[index]));
+        bool hasButton = !p.IsFinished || CanShow(_transfers[index], p);
         return hasButton ? index : -2;
     }
+
+    // A finished transfer to this computer can show its folder (not the private copies of opened files).
+    private bool CanShow(FileTransfer transfer, TransferProgress p) =>
+        p.State == TransferState.Done && transfer.Target is { IsLocal: true } && !_labels.ContainsKey(transfer);
 
     private static float ClearWidth() => Gfx.Measure("Clear finished", Theme.FontSm);
 
@@ -153,10 +156,10 @@ public sealed class TransferPanel : Control
         c.Restore();
     }
 
-    private void PaintRow(SKCanvas c, SftpTransfer transfer, int index, float y, long now)
+    private void PaintRow(SKCanvas c, FileTransfer transfer, int index, float y, long now)
     {
         TransferProgress p = transfer.Snapshot();
-        bool upload = transfer.Direction == TransferDirection.Upload;
+        string icon = transfer.Kind switch { TransferKind.Upload => "upload", TransferKind.Download => "download", _ => "copy" };
         float buttonX = W - 12 - ButtonSize;
         float textRight = buttonX - 12;
         float top = y + 14, bottom = y + 32;
@@ -168,9 +171,10 @@ public sealed class TransferPanel : Control
             TransferState.Cancelled => Theme.TextMuted,
             _ => Theme.Accent,
         };
-        Icons.Draw(c, upload ? "upload" : "download", 22, y + RowH / 2f, 16, iconColor);
+        Icons.Draw(c, icon, 22, y + RowH / 2f, 16, iconColor);
 
-        string where = _labels.TryGetValue(transfer, out string? label) ? label : $"to {FileFormat.Printable(transfer.Destination)}";
+        string where = _labels.TryGetValue(transfer, out string? label) ? label
+            : $"{(transfer.IsMove ? "moving " : "")}to {FileFormat.Printable(transfer.Destination)}";
         float titleW = Gfx.Measure(FileFormat.Printable(transfer.Title), Theme.FontBase, Theme.WeightSemibold);
         float titleMax = Math.Max(60, (textRight - 40) * 0.55f);
         Gfx.Text(c, FileFormat.Printable(transfer.Title), 40, top, Theme.FontBase, Theme.WeightSemibold, Theme.TextPrimary, TextAlignment.Left, titleMax);
@@ -186,7 +190,7 @@ public sealed class TransferPanel : Control
         {
             var track = new SKRect(barLeft, bottom - 3, textRight, bottom + 3);
             Gfx.FillRound(c, track, 3, Theme.Border);
-            if (p.State == TransferState.Running)
+            if (p.State == TransferState.Running && !transfer.Indeterminate)
             {
                 float fill = (float)(track.Width * p.Fraction);
                 if (fill > 0)
@@ -205,7 +209,7 @@ public sealed class TransferPanel : Control
             }
         }
 
-        bool canShow = !upload && p.State == TransferState.Done && !_labels.ContainsKey(transfer);
+        bool canShow = CanShow(transfer, p);
         if (!p.IsFinished || canShow)
         {
             var b = new SKRect(buttonX, y + (RowH - ButtonSize) / 2f, buttonX + ButtonSize, y + (RowH + ButtonSize) / 2f);
@@ -217,7 +221,7 @@ public sealed class TransferPanel : Control
             Gfx.Line(c, 12, y + RowH - 0.5f, W - 12, y + RowH - 0.5f, Theme.Border.WithAlpha(110));
     }
 
-    private string Detail(SftpTransfer transfer, TransferProgress p, long now)
+    private string Detail(FileTransfer transfer, TransferProgress p, long now)
     {
         string skipped = transfer.Skipped > 0 ? $" · {transfer.Skipped} skipped" : "";
         switch (p.State)
@@ -228,12 +232,19 @@ public sealed class TransferPanel : Control
                 return "Preparing…";
             case TransferState.Done when p.TotalFiles == 0 && transfer.Skipped > 0:
                 return $"Nothing copied · {transfer.Skipped} skipped";
+            case TransferState.Done when transfer.Indeterminate:
+                return $"Done · {FileFormat.Count(p.TotalFiles, "item")}{skipped}";
             case TransferState.Done:
                 return $"Done · {FileFormat.Count(p.TotalFiles, "file")}, {FileFormat.Size(p.TotalBytes)}{skipped}";
             case TransferState.Cancelled:
                 return $"Cancelled{(p.DoneFiles > 0 ? $" after {FileFormat.Count(p.DoneFiles, "file")}" : "")}";
             case TransferState.Failed:
                 return $"Failed: {p.Error}";
+        }
+        if (transfer.Indeterminate)
+        {
+            long seconds = _rates.TryGetValue(transfer, out Rate? started) ? (now - started.Started) / 1000 : 0;
+            return $"Copying directly{(p.Current is { } current ? $" ({current})" : "")}… {seconds / 60}:{seconds % 60:00}";
         }
         string text = $"{FileFormat.Size(p.DoneBytes)} of {FileFormat.Size(p.TotalBytes)}";
         if (p.TotalFiles > 1)

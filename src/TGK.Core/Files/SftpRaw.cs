@@ -5,7 +5,7 @@ using System.Runtime.ExceptionServices;
 using Renci.SshNet;
 using Renci.SshNet.Sftp;
 
-namespace TGK.Core.Sftp;
+namespace TGK.Core.Files;
 
 /// <summary>
 /// SFTP requests on an exact path. SSH.NET's public methods first ask the server for the canonical path (realpath),

@@ -131,6 +131,8 @@ public sealed partial class MainView
     // A saved host that was deleted since is not reopened.
     private TabContent? ReopenTab(WorkspaceTab saved)
     {
+        if (saved.Kind == WorkspaceTab.LocalFilesKind && saved.HostId is null && saved.Host is null)
+            return FilesTabContent.Local(saved.Path);
         HostEntry? host = saved.HostId is { } id ? Services.Vault.Current.FindHost(id)
             : saved.Host is { Length: > 0 } address ? new HostEntry { Host = address, Port = saved.Port, Username = saved.Username ?? "" }
             : null;

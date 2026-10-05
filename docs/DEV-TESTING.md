@@ -67,7 +67,8 @@ dotnet test tests/TGK.Core.Tests --filter Category=E2E
 Never point these variables at a real server or account. Besides the terminal sessions (`SshEndToEndTests`) this
 runs the file browser's tests (`SftpEndToEndTests`: listing with links, create/rename/delete, links removed without
 their targets, permissions, uploads and downloads of folders with conflicts and cancellation, edited files uploaded
-back, jump hosts) and the agent tests: `RemoteConnectionEndToEndTests` (commands, SFTP and the fallback through commands)
+back, jump hosts, copies and moves between two hosts through the local buffer and within one host, and the direct
+copy from host to host, which needs an `ssh` client at `/usr/bin/ssh` on the test server's machine) and the agent tests: `RemoteConnectionEndToEndTests` (commands, SFTP and the fallback through commands)
 and `AgentEndToEndTests`, which starts the real `tgk-mcp` from an MCP client and calls every tool through an
 `AgentEndpoint` (approvals, read-only access and hanging up are checked too; the tests that need no SSH server always
 run).

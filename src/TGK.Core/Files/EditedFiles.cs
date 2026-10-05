@@ -5,7 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Threading;
 
-namespace TGK.Core.Sftp;
+namespace TGK.Core.Files;
 
 /// <summary>
 /// Remote files opened in a program on this computer: each is downloaded into a private temporary folder and watched,

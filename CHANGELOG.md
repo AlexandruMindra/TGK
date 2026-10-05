@@ -29,6 +29,13 @@ shows the current Unreleased section.
   copy paths, open a terminal in a folder. Connects through the host's jump hosts with its credentials (a one-time
   code is asked once); symbolic links are shown with their target, and deleting or renaming one never touches what it
   points to. Files tabs are reopened at their folder with "Reopen my tabs" (older versions open them as terminals).
+- **Files: split view**: open a pane beside a Files tab (toolbar → panes, or *More*): another folder of the same host
+  (same connection, no second sign-in), this computer's files, or another saved host. Copy or move between panes by
+  dragging (onto the pane or one of its folders; Shift moves, Ctrl copies), with `F5` / `F6`, or from the context
+  menu, after a confirmation. Within one host a move is a rename. Between two hosts you choose the route: *Through
+  this computer* (each file goes through a private local buffer, the hosts never connect to each other) or *Directly
+  between the hosts* (host A copies to host B over SSH with B's vault credentials, checked against B's trusted host
+  key, nothing left on A). Panes refresh when a transfer into them finishes; local panes are reopened too.
 
 ### Fixed
 

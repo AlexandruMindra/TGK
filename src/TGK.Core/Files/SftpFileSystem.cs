@@ -12,26 +12,54 @@ using Renci.SshNet.Sftp;
 using TGK.Core.Agents;
 using TGK.Core.Ssh;
 
-namespace TGK.Core.Sftp;
+namespace TGK.Core.Files;
 
 /// <summary>
 /// The files of one host over an <see cref="SftpConnection"/>, for the file browser: listing, creating, renaming,
 /// deleting and permissions. Paths are absolute and normalized (<see cref="RemotePath"/>). Calls may run at once.
 /// </summary>
 /// <remarks>
-/// Failures the user can act on throw <see cref="SftpOperationException"/> with a readable message; a dropped
+/// Failures the user can act on throw <see cref="FileOperationException"/> with a readable message; a dropped
 /// connection throws <see cref="SshSessionException"/> (<see cref="SshErrorKind.ConnectionLost"/>) and marks the
 /// connection lost.
 /// </remarks>
-public sealed class SftpFileSystem
+public sealed class SftpFileSystem : IFileSystem
 {
     private const int MaxLinkLookups = 8;
 
     private readonly SftpConnection _connection;
 
-    public SftpFileSystem(SftpConnection connection) => _connection = connection ?? throw new ArgumentNullException(nameof(connection));
+    /// <param name="displayName">The host's name, for messages (default: its address).</param>
+    public SftpFileSystem(SftpConnection connection, string? displayName = null)
+    {
+        _connection = connection ?? throw new ArgumentNullException(nameof(connection));
+        DisplayName = displayName ?? connection.Request?.Host ?? "the host";
+    }
 
     public SftpConnection Connection => _connection;
+
+    public string DisplayName { get; }
+
+    public bool IsLocal => false;
+
+    public bool HasPermissions => true;
+
+    string IFileSystem.Join(string directory, string name) => Join(directory, name);
+
+    public string Parent(string path) => RemotePath.Directory(RemotePath.Normalize(path));
+
+    public string NameOf(string path) => path == "/" ? "/" : RemotePath.FileName(RemotePath.Normalize(path));
+
+    public string Resolve(string typed, string current)
+    {
+        typed = typed.Trim();
+        return RemotePath.Resolve(Home, typed.StartsWith('/') || typed.StartsWith('~') ? typed : Join(current, typed));
+    }
+
+    public bool IsWithin(string path, string folder) =>
+        path == folder || folder == "/" || path.StartsWith(folder.TrimEnd('/') + "/", StringComparison.Ordinal);
+
+    string? IFileSystem.ValidateName(string name) => ValidateName(name);
 
     /// <summary>The directory the server starts in (the user's home directory on OpenSSH).</summary>
     public string Home => RemotePath.Normalize(Client.WorkingDirectory is { Length: > 0 } dir ? dir : "/");
@@ -39,10 +67,10 @@ public sealed class SftpFileSystem
     private SftpClient Client => _connection.Client;
 
     /// <summary>The entries of a directory (without <c>.</c> and <c>..</c>), in the server's order. Links are resolved to tell directories apart.</summary>
-    public async Task<IReadOnlyList<SftpEntry>> ListAsync(string directory, CancellationToken ct)
+    public async Task<IReadOnlyList<FileEntry>> ListAsync(string directory, CancellationToken ct)
     {
         SftpClient client = Client;
-        var entries = new List<SftpEntry>();
+        var entries = new List<FileEntry>();
         await Run(directory, "list", async () =>
         {
             await foreach (ISftpFile file in client.ListDirectoryAsync(directory, ct).ConfigureAwait(false))
@@ -55,13 +83,13 @@ public sealed class SftpFileSystem
 
         // Where links lead decides whether they open like folders: ask for a few at a time (a folder such as
         // /etc/alternatives holds thousands).
-        int[] links = Enumerable.Range(0, entries.Count).Where(i => entries[i].Kind == SftpEntryKind.Symlink).ToArray();
+        int[] links = Enumerable.Range(0, entries.Count).Where(i => entries[i].Kind == FileEntryKind.Symlink).ToArray();
         if (links.Length > 0)
         {
             using var slots = new SemaphoreSlim(MaxLinkLookups);
             await Run(directory, "list", async () =>
             {
-                SftpEntry[] resolved = await Task.WhenAll(links.Select(async i =>
+                FileEntry[] resolved = await Task.WhenAll(links.Select(async i =>
                 {
                     await slots.WaitAsync(ct).ConfigureAwait(false);
                     try
@@ -81,7 +109,7 @@ public sealed class SftpFileSystem
     }
 
     /// <summary>The entry at <paramref name="path"/> without following a link at its end; null when nothing is there.</summary>
-    public async Task<SftpEntry?> StatAsync(string path, CancellationToken ct)
+    public async Task<FileEntry?> StatAsync(string path, CancellationToken ct)
     {
         SftpClient client = Client;
         try
@@ -89,8 +117,8 @@ public sealed class SftpFileSystem
             SftpFileAttributes attributes = SftpRaw.IsAvailable(client)
                 ? await Task.Run(() => SftpRaw.LStat(client, path), ct).ConfigureAwait(false)
                 : await client.GetAttributesAsync(path, ct).ConfigureAwait(false);
-            SftpEntry entry = FromAttributes(path, attributes);
-            return entry.Kind == SftpEntryKind.Symlink ? await ResolveLinkAsync(client, entry, ct).ConfigureAwait(false) : entry;
+            FileEntry entry = FromAttributes(path, attributes);
+            return entry.Kind == FileEntryKind.Symlink ? await ResolveLinkAsync(client, entry, ct).ConfigureAwait(false) : entry;
         }
         catch (SftpPathNotFoundException)
         {
@@ -119,7 +147,7 @@ public sealed class SftpFileSystem
         });
 
     /// <summary>Renames or moves an entry (a link itself, never its target); fails when <paramref name="to"/> exists.</summary>
-    public async Task RenameAsync(SftpEntry entry, string to, CancellationToken ct)
+    public async Task RenameAsync(FileEntry entry, string to, CancellationToken ct)
     {
         await Run(to, "rename", () => EnsureMissingAsync(to, ct)).ConfigureAwait(false);
         SftpClient client = Client;
@@ -127,7 +155,7 @@ public sealed class SftpFileSystem
         {
             if (SftpRaw.IsAvailable(client))
                 await Task.Run(() => SftpRaw.Rename(client, entry.Path, to), ct).ConfigureAwait(false);
-            else if (entry.Kind == SftpEntryKind.Symlink)
+            else if (entry.Kind == FileEntryKind.Symlink)
                 throw LinksUnsupported(entry.Path);
             else
                 await client.RenameFileAsync(entry.Path, to, ct).ConfigureAwait(false);
@@ -138,15 +166,15 @@ public sealed class SftpFileSystem
     /// Deletes an entry; a directory with everything in it (links inside are removed, never followed). A link is
     /// removed itself, never its target. <paramref name="progress"/> gets each path as it is removed.
     /// </summary>
-    public async Task DeleteAsync(SftpEntry entry, IProgress<string>? progress, CancellationToken ct)
+    public async Task DeleteAsync(FileEntry entry, IProgress<string>? progress, CancellationToken ct)
     {
         SftpClient client = Client;
         bool raw = SftpRaw.IsAvailable(client);
-        if (!raw && entry.Kind == SftpEntryKind.Symlink)
+        if (!raw && entry.Kind == FileEntryKind.Symlink)
             throw LinksUnsupported(entry.Path);
-        if (entry.Kind == SftpEntryKind.Directory)
+        if (entry.Kind == FileEntryKind.Directory)
         {
-            foreach (SftpEntry child in await ListAsync(entry.Path, ct).ConfigureAwait(false))
+            foreach (FileEntry child in await ListAsync(entry.Path, ct).ConfigureAwait(false))
             {
                 ct.ThrowIfCancellationRequested();
                 await DeleteAsync(child, progress, ct).ConfigureAwait(false);
@@ -281,7 +309,7 @@ public sealed class SftpFileSystem
     {
         switch (ex)
         {
-            case SftpOperationException or OperationCanceledException:
+            case FileOperationException or OperationCanceledException:
                 return ex;
             case SshSessionException { Kind: SshErrorKind.ConnectionLost } lost:
                 _connection.MarkLost(lost.Message);
@@ -291,13 +319,13 @@ public sealed class SftpFileSystem
                 _connection.MarkLost(reason);
                 return new SshSessionException(SshErrorKind.ConnectionLost, reason, ex);
             case SftpPathNotFoundException:
-                return new SftpOperationException($"{path} does not exist (any more).", ex);
+                return new FileOperationException($"{path} does not exist (any more).", ex);
             case SftpPermissionDeniedException:
-                return new SftpOperationException($"Permission denied: you can't {action} {path}.", ex);
+                return new FileOperationException($"Permission denied: you can't {action} {path}.", ex);
             case SshOperationTimeoutException:
-                return new SftpOperationException($"The server did not answer in time ({action} {path}).", ex);
+                return new FileOperationException($"The server did not answer in time ({action} {path}).", ex);
             default:
-                return new SftpOperationException($"Could not {action} {path}: {ex.Message.TrimEnd('.')}.", ex);
+                return new FileOperationException($"Could not {action} {path}: {ex.Message.TrimEnd('.')}.", ex);
         }
     }
 
@@ -307,11 +335,11 @@ public sealed class SftpFileSystem
     private async Task EnsureMissingAsync(string path, CancellationToken ct)
     {
         if (await StatAsync(path, ct).ConfigureAwait(false) is { } existing)
-            throw new SftpOperationException($"{(existing.IsDirectory ? "A folder" : "A file")} named \"{existing.Name}\" already exists there.");
+            throw new FileOperationException($"{(existing.IsDirectory ? "A folder" : "A file")} named \"{existing.Name}\" already exists there.");
     }
 
     // Reads the link and stats its target; a link that leads nowhere stays a link (IsBrokenLink).
-    private static async Task<SftpEntry> ResolveLinkAsync(SftpClient client, SftpEntry link, CancellationToken ct)
+    private static async Task<FileEntry> ResolveLinkAsync(SftpClient client, FileEntry link, CancellationToken ct)
     {
         string? target = null;
         try
@@ -321,7 +349,7 @@ public sealed class SftpFileSystem
             // GetAttributes asks for the canonical path first, which follows the link. A link's own mode is always
             // 0777 and says nothing: the entry carries its target's permissions, owner, size and time.
             SftpFileAttributes attributes = await client.GetAttributesAsync(link.Path, ct).ConfigureAwait(false);
-            SftpEntry resolved = FromAttributes(link.Path, attributes);
+            FileEntry resolved = FromAttributes(link.Path, attributes);
             return link with
             {
                 LinkTarget = target,
@@ -339,19 +367,19 @@ public sealed class SftpFileSystem
         }
     }
 
-    internal static SftpEntry FromAttributes(string path, SftpFileAttributes a)
+    internal static FileEntry FromAttributes(string path, SftpFileAttributes a)
     {
-        SftpEntryKind kind = a.IsSymbolicLink ? SftpEntryKind.Symlink
-            : a.IsDirectory ? SftpEntryKind.Directory
-            : a.IsRegularFile ? SftpEntryKind.File
-            : SftpEntryKind.Other;
+        FileEntryKind kind = a.IsSymbolicLink ? FileEntryKind.Symlink
+            : a.IsDirectory ? FileEntryKind.Directory
+            : a.IsRegularFile ? FileEntryKind.File
+            : FileEntryKind.Other;
         int mode = (a.OwnerCanRead ? 0x100 : 0) | (a.OwnerCanWrite ? 0x80 : 0) | (a.OwnerCanExecute ? 0x40 : 0)
             | (a.GroupCanRead ? 0x20 : 0) | (a.GroupCanWrite ? 0x10 : 0) | (a.GroupCanExecute ? 0x8 : 0)
             | (a.OthersCanRead ? 0x4 : 0) | (a.OthersCanWrite ? 0x2 : 0) | (a.OthersCanExecute ? 0x1 : 0)
             | (a.IsUIDBitSet ? 0x800 : 0) | (a.IsGroupIDBitSet ? 0x400 : 0) | (a.IsStickyBitSet ? 0x200 : 0);
-        return new SftpEntry(path, RemotePath.FileName(path), kind, a.Size, new DateTimeOffset(a.LastWriteTimeUtc, TimeSpan.Zero), mode, a.UserId, a.GroupId);
+        return new FileEntry(path, RemotePath.FileName(path), kind, a.Size, new DateTimeOffset(a.LastWriteTimeUtc, TimeSpan.Zero), mode, a.UserId, a.GroupId);
     }
 
-    private static SftpOperationException LinksUnsupported(string path) =>
+    private static FileOperationException LinksUnsupported(string path) =>
         new($"{path} is a symbolic link, which can't be changed safely on this connection.");
 }

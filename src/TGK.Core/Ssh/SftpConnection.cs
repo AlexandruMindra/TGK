@@ -34,6 +34,7 @@ public sealed class SftpConnection : IDisposable
     private TimeSpan _stepTimeout;
     private SshConnectRequest? _request;
     private bool _connected, _lost, _disposed;
+    private byte[]? _hostKey; // the final host's public key blob, once trusted
 
     /// <param name="verifier">Decides whether to trust each hop's host key (prompts the user for unknown keys).</param>
     /// <param name="promptUser">Answers sign-in questions the stored credentials can't (one-time codes); null to fail instead.</param>
@@ -73,6 +74,12 @@ public sealed class SftpConnection : IDisposable
 
     /// <summary>The final host's trusted host key fingerprint once connected.</summary>
     public string? HostKeyFingerprint { get { lock (_gate) return _final?.TrustedFingerprint; } }
+
+    /// <summary>
+    /// The final host's trusted public key (SSH wire format, its first field the key type) once connected, e.g. for a
+    /// known_hosts line another machine checks the host against.
+    /// </summary>
+    public byte[]? HostKey { get { lock (_gate) return _hostKey; } }
 
     /// <summary>The SFTP client of an established connection.</summary>
     /// <exception cref="SshSessionException">Not connected, or the connection is gone (<see cref="SshErrorKind.ConnectionLost"/>).</exception>
@@ -280,9 +287,15 @@ public sealed class SftpConnection : IDisposable
         lock (_gate)
         {
             if (trusted)
+            {
                 hop.TrustedFingerprint = fingerprint;
+                if (hop.IsFinal)
+                    _hostKey = e.HostKey;
+            }
             else
+            {
                 rejection.Hop ??= hop.Request;
+            }
         }
         e.CanTrust = trusted;
     }

@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text;
-using TGK.Core.Sftp;
+using TGK.Core.Files;
 
 namespace TGK.Client.Files;
 
@@ -70,16 +70,16 @@ public static class FileFormat
     /// Orders entries for the list: folders (and links to folders) first, then the column, ties by name. Names compare
     /// naturally ("file2" before "file10") and without case first.
     /// </summary>
-    public static List<SftpEntry> Sort(IEnumerable<SftpEntry> entries, FileSortColumn column, bool descending)
+    public static List<FileEntry> Sort(IEnumerable<FileEntry> entries, FileSortColumn column, bool descending)
     {
-        Comparison<SftpEntry> byColumn = column switch
+        Comparison<FileEntry> byColumn = column switch
         {
             FileSortColumn.Size => (a, b) => a.Size.CompareTo(b.Size),
             FileSortColumn.Modified => (a, b) => a.Modified.CompareTo(b.Modified),
             FileSortColumn.Permissions => (a, b) => string.CompareOrdinal(a.Permissions, b.Permissions),
             _ => (a, b) => CompareNames(a.Name, b.Name),
         };
-        List<SftpEntry> sorted = [.. entries];
+        List<FileEntry> sorted = [.. entries];
         sorted.Sort((a, b) =>
         {
             if (a.IsDirectory != b.IsDirectory)
@@ -125,7 +125,7 @@ public static class FileFormat
     }
 
     /// <summary>Whether <paramref name="entry"/> passes the list's name filter (case-insensitive substring) and hidden-files setting.</summary>
-    public static bool Shows(SftpEntry entry, string filter, bool showHidden) =>
+    public static bool Shows(FileEntry entry, string filter, bool showHidden) =>
         (showHidden || !entry.IsHidden) && (filter.Length == 0 || entry.Name.Contains(filter, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>The parent of an absolute remote path ("/" stays "/").</summary>
@@ -136,7 +136,7 @@ public static class FileFormat
     }
 
     /// <summary>A short description of several entries for dialogs: "notes.txt", "notes.txt and logs", "3 items".</summary>
-    public static string Describe(IReadOnlyList<SftpEntry> entries) => entries.Count switch
+    public static string Describe(IReadOnlyList<FileEntry> entries) => entries.Count switch
     {
         0 => "nothing",
         1 => $"“{entries[0].Name}”",
@@ -145,7 +145,7 @@ public static class FileFormat
     };
 
     /// <summary>"3 folders, 12 files" (only the parts that are there), for a folder's status line.</summary>
-    public static string Summary(IReadOnlyCollection<SftpEntry> entries)
+    public static string Summary(IReadOnlyCollection<FileEntry> entries)
     {
         int folders = entries.Count(e => e.IsDirectory), files = entries.Count - folders;
         if (entries.Count == 0)

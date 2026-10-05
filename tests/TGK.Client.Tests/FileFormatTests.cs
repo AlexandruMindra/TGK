@@ -1,18 +1,18 @@
 using System;
 using System.Linq;
 using TGK.Client.Files;
-using TGK.Core.Sftp;
+using TGK.Core.Files;
 using Xunit;
 
 namespace TGK.Client.Tests;
 
 public class FileFormatTests
 {
-    private static SftpEntry File(string name, long size = 0, int day = 1) =>
-        new($"/d/{name}", name, SftpEntryKind.File, size, new DateTimeOffset(2025, 1, day, 0, 0, 0, TimeSpan.Zero), 0x1A4, 0, 0);
+    private static FileEntry File(string name, long size = 0, int day = 1) =>
+        new($"/d/{name}", name, FileEntryKind.File, size, new DateTimeOffset(2025, 1, day, 0, 0, 0, TimeSpan.Zero), 0x1A4, 0, 0);
 
-    private static SftpEntry Folder(string name) =>
-        new($"/d/{name}", name, SftpEntryKind.Directory, 4096, DateTimeOffset.UnixEpoch, 0x1ED, 0, 0);
+    private static FileEntry Folder(string name) =>
+        new($"/d/{name}", name, FileEntryKind.Directory, 4096, DateTimeOffset.UnixEpoch, 0x1ED, 0, 0);
 
     [Theory]
     [InlineData(0, "0 B")]

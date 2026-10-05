@@ -2,7 +2,7 @@ using System;
 using System.Linq;
 using System.Text;
 
-namespace TGK.Core.Sftp;
+namespace TGK.Core.Files;
 
 /// <summary>Remote file names as local ones: Windows can't store some characters and names that Unix allows.</summary>
 public static class LocalNames

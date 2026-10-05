@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 using TGK.Client.Controls;
 using TGK.Client.Dialogs;
 using TGK.Client.Views;
-using TGK.Core.Sftp;
+using TGK.Core.Files;
 
 namespace TGK.Client.Files;
 
@@ -74,7 +74,7 @@ public sealed class PermissionsDialog : DialogBase
     private int _special; // setuid, setgid and sticky bits, kept as they were unless typed in the octal field
     private bool _syncing;
 
-    private PermissionsDialog(TgkView view, IReadOnlyList<SftpEntry> entries)
+    private PermissionsDialog(TgkView view, IReadOnlyList<FileEntry> entries)
         : base(view, "Permissions", 420)
     {
         Subtitle = entries.Count == 1 ? FileFormat.Printable(entries[0].Path) : FileFormat.Describe(entries);
@@ -102,7 +102,7 @@ public sealed class PermissionsDialog : DialogBase
     }
 
     /// <summary>On the UI thread: completes with the chosen mode, or null when cancelled.</summary>
-    public static Task<int?> ShowAsync(TgkView view, IReadOnlyList<SftpEntry> entries)
+    public static Task<int?> ShowAsync(TgkView view, IReadOnlyList<FileEntry> entries)
     {
         var dialog = new PermissionsDialog(view, entries);
         dialog.Open();
@@ -212,3 +212,152 @@ public sealed class PermissionsDialog : DialogBase
 
     protected override void OnClosed() => _result.TrySetResult(null);
 }
+
+/// <summary>How files go from one host to another.</summary>
+public enum TransferRoute
+{
+    /// <summary>Each file comes down to this computer (a private buffer) and goes up again: the hosts never meet.</summary>
+    ThroughThisComputer,
+
+    /// <summary>The source host sends them straight to the other host (with that host's credentials).</summary>
+    Direct,
+}
+
+/// <summary>What the user chose in a <see cref="TransferDialog"/>.</summary>
+public sealed record TransferChoice(TransferRoute Route, string DirectHost, int DirectPort);
+
+/// <summary>
+/// Confirms a copy or move between two file panes ("Copy 3 items from web-01:/var/www to this computer:~/site"). Between
+/// two hosts it also offers the route: through this computer (default), or directly from one host to the other, where
+/// the address the source host uses to reach the other one can be changed and what that means for the credentials is
+/// spelled out. Completes with the choice, or null when cancelled.
+/// </summary>
+public sealed class TransferDialog : DialogBase
+{
+    private readonly Label _message;
+    private readonly SegmentedControl? _route;
+    private readonly Label? _explain;
+    private readonly Label? _addressCaption;
+    private readonly TextField? _address;
+    private readonly Label _error;
+    private readonly string _sourceName, _targetName;
+    private readonly int _defaultPort;
+    private readonly TaskCompletionSource<TransferChoice?> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private TransferDialog(TgkView view, bool move, IReadOnlyList<FileEntry> entries, string from, string to, string sourceName, string targetName,
+        bool offerDirect, string defaultHost, int defaultPort, string? jumpNote)
+        : base(view, move ? "Move" : "Copy", 500)
+    {
+        _sourceName = sourceName;
+        _targetName = targetName;
+        _defaultPort = defaultPort;
+        string what = FileFormat.Describe(entries);
+        _message = AddBody(new Label($"{(move ? "Move" : "Copy")} {what}\nfrom {FileFormat.Printable(from)}\nto {FileFormat.Printable(to)}"
+            + (move ? "\n\nThe originals are removed once everything was copied." : ""), Theme.FontBase, Theme.TextSecondary) { MaxLines = 8 });
+        if (offerDirect)
+        {
+            _route = AddBody(new SegmentedControl("Through this computer", "Directly between the hosts"));
+            _route.SelectionChanged += _ => UpdateRoute();
+            _explain = AddBody(new Label("", Theme.FontSm, Theme.TextSecondary) { MaxLines = 9 });
+            _addressCaption = AddBody(Form.Caption($"Address {sourceName} uses to reach {targetName}"));
+            _address = AddBody(new TextField("host or host:port") { Text = defaultPort == 22 ? defaultHost : $"{defaultHost}:{defaultPort}", Mono = true });
+            _jumpNote = jumpNote;
+        }
+        _error = AddBody(new Label("", Theme.FontSm, Theme.Danger) { MaxLines = 3, Visible = false });
+        AddButton("Cancel", ButtonVariant.Secondary, Cancel);
+        AddButton(move ? "Move" : "Copy", ButtonVariant.Primary, Accept);
+        UpdateRoute();
+    }
+
+    private readonly string? _jumpNote;
+
+    /// <summary>On the UI thread: completes with the choice, or null when cancelled.</summary>
+    /// <param name="offerDirect">Between two hosts: offer the direct route.</param>
+    /// <param name="jumpNote">Why the default address may not work from the source host (the target is behind jump hosts), if so.</param>
+    public static Task<TransferChoice?> ShowAsync(TgkView view, bool move, IReadOnlyList<FileEntry> entries, string from, string to,
+        string sourceName, string targetName, bool offerDirect = false, string defaultHost = "", int defaultPort = 22, string? jumpNote = null)
+    {
+        var dialog = new TransferDialog(view, move, entries, from, to, sourceName, targetName, offerDirect, defaultHost, defaultPort, jumpNote);
+        dialog.Open();
+        return dialog._result.Task;
+    }
+
+    private bool Direct => _route?.SelectedIndex == 1;
+
+    private void UpdateRoute()
+    {
+        if (_route is null)
+            return;
+        _explain!.Text = Direct
+            ? $"{_sourceName} connects to {_targetName} itself (it needs ssh and tar; {_targetName} needs tar). For that, "
+              + $"{_targetName}'s key or password is placed on {_sourceName}, in a folder only your account there (and its "
+              + $"administrators) can read, and removed when the copy ends. {_sourceName} accepts only the host key you "
+              + $"trusted for {_targetName}. Use this only if you trust {_sourceName} with {_targetName}'s credentials."
+              + (_jumpNote is null ? "" : $"\n{_jumpNote}")
+            : $"Each file comes down to this computer, into a private folder, and goes up to {_targetName}: the hosts never "
+              + "need to reach each other and no credentials leave this computer. Fast enough for most copies.";
+        _explain.Color = Direct ? Theme.Warning : Theme.TextSecondary;
+        _addressCaption!.Visible = _address!.Visible = Direct;
+        _error.Visible = false;
+        InvalidateLayout();
+    }
+
+    protected override float LayoutBody(float left, float top, float width)
+    {
+        float y = top;
+        float mh = _message.MeasureHeight(width);
+        _message.Transform.SetLocalFrame(left, y, width, mh);
+        y += mh + 14;
+        if (_route is not null)
+        {
+            _route.Transform.SetLocalFrame(left, y, width, Theme.ControlHeight);
+            y += Theme.ControlHeight + 10;
+            float eh = _explain!.MeasureHeight(width);
+            _explain.Transform.SetLocalFrame(left, y, width, eh);
+            y += eh + 10;
+            if (_address!.Visible)
+                y = Form.Place(_addressCaption!, _address, left, y, width);
+        }
+        if (_error.Visible)
+        {
+            float eh = _error.MeasureHeight(width);
+            _error.Transform.SetLocalFrame(left, y + 6, width, eh);
+            y += 6 + eh;
+        }
+        return y - top;
+    }
+
+    protected override void Accept()
+    {
+        if (!Direct)
+        {
+            _result.TrySetResult(new TransferChoice(TransferRoute.ThroughThisComputer, "", 0));
+            Close();
+            return;
+        }
+        string text = _address!.Text.Trim();
+        string host = text;
+        int port = _defaultPort;
+        int colon = text.LastIndexOf(':');
+        if (colon > 0 && text.IndexOf(':') == colon && int.TryParse(text[(colon + 1)..], System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out int p))
+        {
+            host = text[..colon];
+            port = p;
+        }
+        if (host.Length == 0 || host.AsSpan().IndexOfAny(" \t'\"\\") >= 0 || port is < 1 or > 65535)
+        {
+            _error.Text = "Enter the address as host or host:port.";
+            _error.Visible = true;
+            _address.HasError = true;
+            InvalidateLayout();
+            _address.Focus();
+            return;
+        }
+        _result.TrySetResult(new TransferChoice(TransferRoute.Direct, host, port));
+        Close();
+    }
+
+    protected override void OnClosed() => _result.TrySetResult(null);
+}
+

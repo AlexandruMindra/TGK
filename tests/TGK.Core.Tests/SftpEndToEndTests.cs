@@ -5,7 +5,8 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Renci.SshNet;
-using TGK.Core.Sftp;
+using TGK.Core.Agents;
+using TGK.Core.Files;
 using TGK.Core.Ssh;
 using Xunit;
 
@@ -65,11 +66,11 @@ public sealed class SftpEndToEndTests : IAsyncLifetime
 
         Assert.Equal(["dangling", "empty.txt", "sub", "to-file", "to-sub"], entries.Select(e => e.Name));
         Assert.All(entries, e => Assert.Equal($"{_dir}/{e.Name}", e.Path));
-        Assert.True(entries[0] is { Kind: SftpEntryKind.Symlink, IsBrokenLink: true, IsDirectory: false });
-        Assert.True(entries[1] is { Kind: SftpEntryKind.File, Size: 0, IsDirectory: false });
-        Assert.True(entries[2] is { Kind: SftpEntryKind.Directory, IsDirectory: true });
-        Assert.True(entries[3] is { Kind: SftpEntryKind.Symlink, LinksToDirectory: false, IsBrokenLink: false });
-        Assert.True(entries[4] is { Kind: SftpEntryKind.Symlink, LinksToDirectory: true, IsDirectory: true });
+        Assert.True(entries[0] is { Kind: FileEntryKind.Symlink, IsBrokenLink: true, IsDirectory: false });
+        Assert.True(entries[1] is { Kind: FileEntryKind.File, Size: 0, IsDirectory: false });
+        Assert.True(entries[2] is { Kind: FileEntryKind.Directory, IsDirectory: true });
+        Assert.True(entries[3] is { Kind: FileEntryKind.Symlink, LinksToDirectory: false, IsBrokenLink: false });
+        Assert.True(entries[4] is { Kind: FileEntryKind.Symlink, LinksToDirectory: true, IsDirectory: true });
         Assert.Equal($"{_dir}/sub", entries[4].LinkTarget);
     }
 
@@ -82,15 +83,15 @@ public sealed class SftpEndToEndTests : IAsyncLifetime
         await _files.CreateDirectoryAsync($"{_dir}/a/deeper", Ct);
         await _files.CreateFileAsync($"{_dir}/a/deeper/two.txt", Ct);
 
-        var taken = await Assert.ThrowsAsync<SftpOperationException>(() => _files.CreateFileAsync($"{_dir}/a/one.txt", Ct));
+        var taken = await Assert.ThrowsAsync<FileOperationException>(() => _files.CreateFileAsync($"{_dir}/a/one.txt", Ct));
         Assert.Contains("already exists", taken.Message);
-        await Assert.ThrowsAsync<SftpOperationException>(() => _files.CreateDirectoryAsync($"{_dir}/a", Ct));
+        await Assert.ThrowsAsync<FileOperationException>(() => _files.CreateDirectoryAsync($"{_dir}/a", Ct));
 
-        SftpEntry one = (await _files.StatAsync($"{_dir}/a/one.txt", Ct))!;
+        FileEntry one = (await _files.StatAsync($"{_dir}/a/one.txt", Ct))!;
         await _files.RenameAsync(one, $"{_dir}/a/renamed.txt", Ct);
         Assert.Null(await _files.StatAsync($"{_dir}/a/one.txt", Ct));
-        SftpEntry renamed = (await _files.StatAsync($"{_dir}/a/renamed.txt", Ct))!;
-        var clash = await Assert.ThrowsAsync<SftpOperationException>(() => _files.RenameAsync(renamed, $"{_dir}/a/deeper", Ct));
+        FileEntry renamed = (await _files.StatAsync($"{_dir}/a/renamed.txt", Ct))!;
+        var clash = await Assert.ThrowsAsync<FileOperationException>(() => _files.RenameAsync(renamed, $"{_dir}/a/deeper", Ct));
         Assert.Contains("already exists", clash.Message);
 
         var removed = new System.Collections.Concurrent.ConcurrentBag<string>();
@@ -109,8 +110,8 @@ public sealed class SftpEndToEndTests : IAsyncLifetime
         await ShellAsync($"ln -s {_dir}/target {_dir}/link && ln -s target/keep.txt {_dir}/file-link");
 
         await _files.RenameAsync((await _files.StatAsync($"{_dir}/file-link", Ct))!, $"{_dir}/moved-link", Ct);
-        SftpEntry moved = (await _files.StatAsync($"{_dir}/moved-link", Ct))!;
-        Assert.Equal(SftpEntryKind.Symlink, moved.Kind);
+        FileEntry moved = (await _files.StatAsync($"{_dir}/moved-link", Ct))!;
+        Assert.Equal(FileEntryKind.Symlink, moved.Kind);
         await _files.DeleteAsync(moved, null, Ct);
         await _files.DeleteAsync((await _files.StatAsync($"{_dir}/link", Ct))!, null, Ct);
 
@@ -130,22 +131,22 @@ public sealed class SftpEndToEndTests : IAsyncLifetime
         // alias -> real/a, and real/a/cfg -> ../shared.txt: through alias, "cfg" leads to real/shared.txt.
         await ShellAsync($"ln -s real/a {_dir}/alias && ln -s ../shared.txt {_dir}/real/a/cfg");
 
-        SftpEntry cfg = (await _files.StatAsync($"{_dir}/alias/cfg", Ct))!;
-        Assert.Equal(SftpEntryKind.Symlink, cfg.Kind);
+        FileEntry cfg = (await _files.StatAsync($"{_dir}/alias/cfg", Ct))!;
+        Assert.Equal(FileEntryKind.Symlink, cfg.Kind);
         Assert.Equal("600", cfg.OctalMode); // the target's, not the link's own 0777
 
         string local = Path.Combine(_local.Path, "cfg");
         File.WriteAllText(local, "through links");
-        using var queue = new SftpTransferQueue(_files);
-        await queue.Upload([local], $"{_dir}/alias", _ => Task.FromResult(ConflictChoice.Replace)).Completion.WaitAsync(Timeout, Ct);
+        using var queue = new TransferQueue(Path.Combine(_local.Path, "relay"));
+        await queue.Upload([local], _files, $"{_dir}/alias", _ => Task.FromResult(ConflictChoice.Replace)).Completion.WaitAsync(Timeout, Ct);
 
         Assert.Equal("through links", await ReadRemoteAsync($"{_dir}/real/shared.txt"));
         Assert.Equal("600", (await _files.StatAsync($"{_dir}/real/shared.txt", Ct))!.OctalMode);
-        Assert.Equal(SftpEntryKind.Symlink, (await _files.StatAsync($"{_dir}/real/a/cfg", Ct))!.Kind); // still a link
+        Assert.Equal(FileEntryKind.Symlink, (await _files.StatAsync($"{_dir}/real/a/cfg", Ct))!.Kind); // still a link
         Assert.Null(await _files.StatAsync($"{_dir}/shared.txt", Ct)); // nothing written where the text alone points
 
         string back = Path.Combine(_local.Path, "back");
-        await queue.Download([(await _files.StatAsync($"{_dir}/alias/cfg", Ct))!], back).Completion.WaitAsync(Timeout, Ct);
+        await queue.Download([(await _files.StatAsync($"{_dir}/alias/cfg", Ct))!], _files, back).Completion.WaitAsync(Timeout, Ct);
         Assert.Equal("through links", File.ReadAllText(Path.Combine(back, "cfg")));
         if (!OperatingSystem.IsWindows())
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(Path.Combine(back, "cfg")));
@@ -157,8 +158,8 @@ public sealed class SftpEndToEndTests : IAsyncLifetime
         RequireServer();
         string big = Path.Combine(_local.Path, "big.bin");
         File.WriteAllBytes(big, new byte[64 * 1024 * 1024]);
-        var queue = new SftpTransferQueue(_files);
-        SftpTransfer upload = queue.Upload([big], _dir);
+        var queue = new TransferQueue(Path.Combine(_local.Path, "relay"));
+        FileTransfer upload = queue.Upload([big], _files, _dir);
         while (upload.Snapshot() is { State: not TransferState.Running } p && !p.IsFinished)
             await Task.Delay(20, Ct);
         await Task.Delay(100, Ct);
@@ -177,7 +178,7 @@ public sealed class SftpEndToEndTests : IAsyncLifetime
 
         await _files.SetPermissionsAsync($"{_dir}/run.sh", 0x1E8, Ct); // 0750
 
-        SftpEntry entry = (await _files.StatAsync($"{_dir}/run.sh", Ct))!;
+        FileEntry entry = (await _files.StatAsync($"{_dir}/run.sh", Ct))!;
         Assert.Equal("750", entry.OctalMode);
         Assert.Equal("-rwxr-x---", entry.Permissions);
     }
@@ -198,8 +199,8 @@ public sealed class SftpEndToEndTests : IAsyncLifetime
         string single = Path.Combine(_local.Path, "single.txt");
         File.WriteAllText(single, "one file");
 
-        using var queue = new SftpTransferQueue(_files);
-        SftpTransfer upload = queue.Upload([source, single], _dir);
+        using var queue = new TransferQueue(Path.Combine(_local.Path, "relay"));
+        FileTransfer upload = queue.Upload([source, single], _files, _dir);
         await upload.Completion.WaitAsync(Timeout, Ct);
 
         TransferProgress done = upload.Snapshot();
@@ -207,7 +208,7 @@ public sealed class SftpEndToEndTests : IAsyncLifetime
         Assert.Equal(4, done.TotalFiles);
         Assert.Equal(done.TotalBytes, done.DoneBytes);
         Assert.Equal(1.0, done.Fraction);
-        SftpEntry readme = (await _files.StatAsync($"{_dir}/project/README.md", Ct))!;
+        FileEntry readme = (await _files.StatAsync($"{_dir}/project/README.md", Ct))!;
         Assert.Equal(stamp, readme.Modified.UtcDateTime);
         Assert.Equal(300_000, (await _files.StatAsync($"{_dir}/project/src/deep/data.bin", Ct))!.Size);
         if (!OperatingSystem.IsWindows())
@@ -215,7 +216,7 @@ public sealed class SftpEndToEndTests : IAsyncLifetime
         Assert.DoesNotContain(await _files.ListAsync($"{_dir}/project", Ct), e => e.Name.Contains("tgk-part"));
 
         string back = Path.Combine(_local.Path, "back");
-        SftpTransfer download = queue.Download([(await _files.StatAsync($"{_dir}/project", Ct))!], back);
+        FileTransfer download = queue.Download([(await _files.StatAsync($"{_dir}/project", Ct))!], _files, back);
         await download.Completion.WaitAsync(Timeout, Ct);
 
         Assert.Equal(TransferState.Done, download.Snapshot().State);
@@ -232,13 +233,13 @@ public sealed class SftpEndToEndTests : IAsyncLifetime
         string a = Path.Combine(_local.Path, "a.txt"), b = Path.Combine(_local.Path, "b.txt");
         File.WriteAllText(a, "new a");
         File.WriteAllText(b, "new b");
-        using var queue = new SftpTransferQueue(_files);
-        await queue.Upload([a], _dir).Completion.WaitAsync(Timeout, Ct);
+        using var queue = new TransferQueue(Path.Combine(_local.Path, "relay"));
+        await queue.Upload([a], _files, _dir).Completion.WaitAsync(Timeout, Ct);
         await _files.SetPermissionsAsync($"{_dir}/a.txt", 0x180, Ct); // 0600, kept when replaced
         File.WriteAllText(a, "newer a");
 
         string[]? asked = null;
-        SftpTransfer skip = queue.Upload([a, b], _dir, names =>
+        FileTransfer skip = queue.Upload([a, b], _files, _dir, names =>
         {
             asked = [.. names];
             return Task.FromResult(ConflictChoice.Skip);
@@ -249,12 +250,12 @@ public sealed class SftpEndToEndTests : IAsyncLifetime
         Assert.Equal("new a", await ReadRemoteAsync($"{_dir}/a.txt"));
         Assert.Equal("new b", await ReadRemoteAsync($"{_dir}/b.txt"));
 
-        SftpTransfer replace = queue.Upload([a], _dir, _ => Task.FromResult(ConflictChoice.Replace));
+        FileTransfer replace = queue.Upload([a], _files, _dir, _ => Task.FromResult(ConflictChoice.Replace));
         await replace.Completion.WaitAsync(Timeout, Ct);
         Assert.Equal("newer a", await ReadRemoteAsync($"{_dir}/a.txt"));
         Assert.Equal("600", (await _files.StatAsync($"{_dir}/a.txt", Ct))!.OctalMode);
 
-        SftpTransfer cancelled = queue.Upload([a], _dir, _ => Task.FromResult(ConflictChoice.Cancel));
+        FileTransfer cancelled = queue.Upload([a], _files, _dir, _ => Task.FromResult(ConflictChoice.Cancel));
         await cancelled.Completion.WaitAsync(Timeout, Ct);
         Assert.Equal(TransferState.Cancelled, cancelled.Snapshot().State);
     }
@@ -265,11 +266,11 @@ public sealed class SftpEndToEndTests : IAsyncLifetime
         RequireServer();
         string big = Path.Combine(_local.Path, "big.bin");
         File.WriteAllBytes(big, new byte[8 * 1024 * 1024]);
-        using var queue = new SftpTransferQueue(_files);
-        await queue.Upload([big], _dir).Completion.WaitAsync(Timeout, Ct);
+        using var queue = new TransferQueue(Path.Combine(_local.Path, "relay"));
+        await queue.Upload([big], _files, _dir).Completion.WaitAsync(Timeout, Ct);
 
         string target = Path.Combine(_local.Path, "out");
-        SftpTransfer download = queue.Download([(await _files.StatAsync($"{_dir}/big.bin", Ct))!], target);
+        FileTransfer download = queue.Download([(await _files.StatAsync($"{_dir}/big.bin", Ct))!], _files, target);
         download.Cancel();
         await download.Completion.WaitAsync(Timeout, Ct);
 
@@ -284,19 +285,122 @@ public sealed class SftpEndToEndTests : IAsyncLifetime
         RequireServer();
         await _files.CreateFileAsync($"{_dir}/notes.txt", Ct);
         using var edits = new EditedFiles(_local.Path);
-        using var queue = new SftpTransferQueue(_files);
-        SftpEntry notes = (await _files.StatAsync($"{_dir}/notes.txt", Ct))!;
+        using var queue = new TransferQueue(Path.Combine(_local.Path, "relay"));
+        FileEntry notes = (await _files.StatAsync($"{_dir}/notes.txt", Ct))!;
         string local = edits.LocalPathFor(notes.Path);
-        await queue.DownloadFile(notes, local).Completion.WaitAsync(Timeout, Ct);
+        await queue.DownloadFile(notes, _files, local).Completion.WaitAsync(Timeout, Ct);
         edits.Watch(notes.Path, local);
         var saved = new TaskCompletionSource<(string Remote, string Local)>(TaskCreationOptions.RunContinuationsAsynchronously);
         edits.Saved += (remote, path) => saved.TrySetResult((remote, path));
 
         File.WriteAllText(local, "edited ✓");
         (string remote, string path) = await saved.Task.WaitAsync(Timeout, Ct);
-        await queue.UploadFile(path, remote).Completion.WaitAsync(Timeout, Ct);
+        await queue.UploadFile(path, _files, remote).Completion.WaitAsync(Timeout, Ct);
 
         Assert.Equal("edited ✓", await ReadRemoteAsync($"{_dir}/notes.txt"));
+    }
+
+    [Fact]
+    public async Task BetweenTwoHosts_FilesGoThroughAPrivateBuffer_AndAMoveRemovesTheOriginals()
+    {
+        RequireServer();
+        // A second connection plays host B (the same test server, another file system object).
+        using var other = new SftpConnection(new RemoteConnectionEndToEndTests.TrustAll());
+        await other.ConnectAsync(RemoteConnectionEndToEndTests.Request("TGK_E2E_SSH"), Ct);
+        var hostB = new SftpFileSystem(other, "host B");
+        await _files.CreateDirectoryAsync($"{_dir}/a", Ct);
+        await _files.CreateDirectoryAsync($"{_dir}/a/inner", Ct);
+        await _files.CreateDirectoryAsync($"{_dir}/b", Ct);
+        string seed = Path.Combine(_local.Path, "seed");
+        File.WriteAllBytes(seed, Enumerable.Range(0, 200_000).Select(i => (byte)(i * 7)).ToArray());
+        string buffer = Path.Combine(_local.Path, "relay");
+        using var queue = new TransferQueue(buffer);
+        await queue.Upload([seed], _files, $"{_dir}/a/inner").Completion.WaitAsync(Timeout, Ct);
+        await _files.SetPermissionsAsync($"{_dir}/a/inner/seed", 0x1E0, Ct); // 0740, carried to the copy
+
+        FileTransfer copy = queue.Copy(_files, [(await _files.StatAsync($"{_dir}/a", Ct))!], hostB, $"{_dir}/b");
+        await copy.Completion.WaitAsync(Timeout, Ct);
+
+        Assert.Equal(TransferState.Done, copy.Snapshot().State);
+        Assert.Equal(TransferKind.Copy, copy.Kind);
+        Assert.Equal(File.ReadAllBytes(seed), await ReadRemoteBytesAsync($"{_dir}/b/a/inner/seed"));
+        Assert.Equal("740", (await hostB.StatAsync($"{_dir}/b/a/inner/seed", Ct))!.OctalMode);
+        Assert.NotNull(await _files.StatAsync($"{_dir}/a/inner/seed", Ct)); // a copy keeps the original
+        Assert.Empty(Directory.Exists(buffer) ? Directory.GetFileSystemEntries(buffer) : []);
+
+        await _files.CreateDirectoryAsync($"{_dir}/c", Ct);
+        FileTransfer move = queue.Copy(hostB, [(await hostB.StatAsync($"{_dir}/b/a", Ct))!], _files, $"{_dir}/c", move: true);
+        await move.Completion.WaitAsync(Timeout, Ct);
+        Assert.Equal(TransferState.Done, move.Snapshot().State);
+        Assert.Null(await hostB.StatAsync($"{_dir}/b/a", Ct));
+        Assert.Equal(200_000, (await _files.StatAsync($"{_dir}/c/a/inner/seed", Ct))!.Size);
+    }
+
+    [Fact]
+    public async Task WithinOneHost_AMoveIsARename_AndACopyGoesThroughTheBuffer()
+    {
+        RequireServer();
+        await _files.CreateDirectoryAsync($"{_dir}/from", Ct);
+        await _files.CreateDirectoryAsync($"{_dir}/to", Ct);
+        await _files.CreateFileAsync($"{_dir}/from/x.txt", Ct);
+        await _files.CreateFileAsync($"{_dir}/to/x.txt", Ct);
+        using var queue = new TransferQueue(Path.Combine(_local.Path, "relay"));
+        FileEntry x = (await _files.StatAsync($"{_dir}/from/x.txt", Ct))!;
+
+        string[]? asked = null;
+        FileTransfer move = queue.Copy(_files, [x], _files, $"{_dir}/to", move: true, names =>
+        {
+            asked = [.. names];
+            return Task.FromResult(ConflictChoice.Replace);
+        });
+        await move.Completion.WaitAsync(Timeout, Ct);
+        Assert.Equal(TransferState.Done, move.Snapshot().State);
+        Assert.Equal(["x.txt"], asked!);
+        Assert.Null(await _files.StatAsync($"{_dir}/from/x.txt", Ct));
+        Assert.NotNull(await _files.StatAsync($"{_dir}/to/x.txt", Ct));
+
+        FileTransfer copy = queue.Copy(_files, [(await _files.StatAsync($"{_dir}/to", Ct))!], _files, $"{_dir}/from");
+        await copy.Completion.WaitAsync(Timeout, Ct);
+        Assert.Equal(TransferState.Done, copy.Snapshot().State);
+        Assert.NotNull(await _files.StatAsync($"{_dir}/from/to/x.txt", Ct));
+
+        FileTransfer intoItself = queue.Copy(_files, [(await _files.StatAsync($"{_dir}/from", Ct))!], _files, $"{_dir}/from/to", move: true);
+        await intoItself.Completion.WaitAsync(Timeout, Ct);
+        Assert.Equal(TransferState.Failed, intoItself.Snapshot().State);
+        Assert.Contains("into itself", intoItself.Snapshot().Error);
+    }
+
+    [Fact]
+    public async Task DirectCopy_HostAStreamsToHostB_CheckingBsKey()
+    {
+        RequireServer();
+        Assert.SkipWhen(!OperatingSystem.IsLinux() || !File.Exists("/usr/bin/ssh"), "the test server's host needs an ssh client");
+        SshConnectRequest request = RemoteConnectionEndToEndTests.Request("TGK_E2E_SSH");
+        using var a = new RemoteConnection(new RemoteConnectionEndToEndTests.TrustAll());
+        await a.ConnectAsync(request, Ct);
+        await ShellAsync($"mkdir -p {_dir}/src/sub {_dir}/dst && printf 'one ✓' > {_dir}/src/sub/one.txt && printf two > \"{_dir}/src/it's two.txt\" && chmod 640 {_dir}/src/sub/one.txt");
+        var target = new DirectTarget(request.Host, request.Port, request.Username, request.Password, null, null, _connection!.HostKey!);
+        Assert.StartsWith("tgk-direct-target ssh-", DirectCopy.KnownHostsLine(target.HostKey));
+
+        await DirectCopy.RunAsync(a, $"{_dir}/src", ["sub", "it's two.txt"], target, $"{_dir}/dst/new folder", Ct);
+
+        Assert.Equal("one ✓", await ReadRemoteAsync($"{_dir}/dst/new folder/sub/one.txt"));
+        Assert.Equal("two", await ReadRemoteAsync($"{_dir}/dst/new folder/it's two.txt"));
+        Assert.Equal("640", (await _files.StatAsync($"{_dir}/dst/new folder/sub/one.txt", Ct))!.OctalMode);
+        CommandResult leftovers = await a.RunAsync("ls -d ${TMPDIR:-/tmp}/tgk-direct-* 2>/dev/null | wc -l", Timeout, ct: Ct);
+        Assert.Equal("0", leftovers.Stdout.Trim());
+
+        // Another key for B: host A refuses to send anything.
+        byte[] wrong = (byte[])target.HostKey.Clone();
+        wrong[^1] ^= 0x55;
+        var refused = await Assert.ThrowsAsync<FileOperationException>(() =>
+            DirectCopy.RunAsync(a, $"{_dir}/src", ["sub"], target with { HostKey = wrong }, $"{_dir}/dst/refused", Ct));
+        Assert.Contains("not the one trusted", refused.Message);
+        Assert.Null(await _files.StatAsync($"{_dir}/dst/refused", Ct));
+
+        var badPassword = await Assert.ThrowsAsync<FileOperationException>(() =>
+            DirectCopy.RunAsync(a, $"{_dir}/src", ["sub"], target with { Password = "wrong" }, $"{_dir}/dst/denied", Ct));
+        Assert.Contains("refused the sign-in", badPassword.Message);
     }
 
     [Fact]
@@ -330,6 +434,13 @@ public sealed class SftpEndToEndTests : IAsyncLifetime
         await shell.ConnectAsync(RemoteConnectionEndToEndTests.Request("TGK_E2E_SSH"), Ct);
         CommandResult result = await shell.RunAsync(command, Timeout, ct: Ct);
         Assert.True(result.ExitCode == 0, result.Stderr);
+    }
+
+    private async Task<byte[]> ReadRemoteBytesAsync(string path)
+    {
+        using var buffer = new MemoryStream();
+        await Client.DownloadFileAsync(path, buffer, Ct);
+        return buffer.ToArray();
     }
 
     private async Task<string> ReadRemoteAsync(string path)
