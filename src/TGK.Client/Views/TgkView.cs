@@ -104,7 +104,7 @@ public abstract class TgkView : View, IKeyInput
     public sealed override void Init()
     {
         KeyboardHub.Install(Application);
-        AppWindow.HookResize();
+        AppWindow.HookResize(Application);
         UiClock.Start();
         Build();
         _built = true;

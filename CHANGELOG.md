@@ -22,6 +22,11 @@ shows the current Unreleased section.
   are connected, and every call is listed in the activity view, mirrored in an "Agent log" tab and kept in an audit
   log. See docs/AGENTS.md.
 
+### Fixed
+
+- **Windows, macOS**: resizing the window by dragging its edge now repaints the content live, instead of only once the
+  mouse button is released.
+
 ## [0.2.4] - 2026-10-04
 
 ### Added

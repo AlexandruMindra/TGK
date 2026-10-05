@@ -1,6 +1,10 @@
 using System;
+using System.Reflection;
 using Blossom;
+using Blossom.Core;
 using Silk.NET.GLFW;
+using Silk.NET.Windowing;
+using TGK.Client.Controls;
 
 namespace TGK.Client.Platform;
 
@@ -11,17 +15,75 @@ namespace TGK.Client.Platform;
 public static class AppWindow
 {
     private static bool _hooked;
+    private static Application? _app;
+    private static IWindow? _window;
+    private static GlfwCallbacks.WindowRefreshCallback? _onRefresh, _previousOnRefresh; // kept alive while GLFW holds them
+    private static bool _inLiveFrame;
 
     /// <summary>Raised on the UI thread after a resize, once Blossom has updated the view size.</summary>
     public static event Action? Resized;
 
-    /// <summary>Subscribes to the window's resize event (raised after Blossom's own handler, so view sizes are current).</summary>
-    public static void HookResize()
+    /// <summary>
+    /// Subscribes to the window's resize event (raised after Blossom's own handler, so view sizes are current) and, on
+    /// Windows and macOS, keeps the content painting while the user drags the window's edge.
+    /// </summary>
+    public static void HookResize(Application app)
     {
         if (_hooked)
             return;
         _hooked = true;
+        _app = app;
         Shell.ClientResized += (_, _) => Resized?.Invoke();
+        if (!OperatingSystem.IsLinux())
+            HookLiveResize();
+    }
+
+    /// <summary>
+    /// While the user drags the window's edge, Windows and macOS run a modal loop of their own: GLFW's event call does
+    /// not return until the mouse button is released, so Blossom's main loop neither ticks nor renders and the content
+    /// only catches up on release (the window grows over a stale frame). GLFW still calls the window refresh callback
+    /// from inside that loop, on every size step; Silk's handler for it does nothing under Blossom (its frame callback
+    /// is only set by Silk's own run loop, which Blossom never enters), so this chains one that runs a loop tick and
+    /// renders a frame, as the main loop would. Linux has no such loop; resizing already paints there.
+    /// </summary>
+    private static unsafe void HookLiveResize()
+    {
+        // Blossom does not expose its window; the field is read once and the hook is skipped if it is ever renamed.
+        _window = typeof(Shell).GetField("window", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null) as IWindow;
+        if (_window is null || _window.Handle == 0)
+        {
+            Log.Warning("Live resize: Blossom's window was not found; the content will repaint when the resize ends.");
+            return;
+        }
+        _onRefresh = OnRefresh;
+        _previousOnRefresh = GlfwProvider.GLFW.Value.SetWindowRefreshCallback((WindowHandle*)_window.Handle, _onRefresh);
+    }
+
+    private static unsafe void OnRefresh(WindowHandle* handle)
+    {
+        // Native code calls this: an exception must not escape into it.
+        try
+        {
+            _previousOnRefresh?.Invoke(handle);
+            if (_inLiveFrame || _window is not { IsClosing: false } window || _app?.ActiveView is not { } view)
+                return;
+            _inLiveFrame = true;
+            try
+            {
+                UiClock.RaiseTick(); // what the active view's Loop does (TgkView.OnLoop)
+                // Outside a modal loop the main loop would render this frame next, and then has nothing left to render.
+                if (view.RenderRequired)
+                    window.DoRender();
+            }
+            finally
+            {
+                _inLiveFrame = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Live resize frame failed: {ex}");
+        }
     }
 
     /// <summary>
