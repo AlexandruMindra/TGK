@@ -584,7 +584,7 @@ public sealed partial class MainView
             items.Add(new MenuItem
             {
                 Text = tab.Split is null ? tab.Title : $"{tab.Title}  ·  split view",
-                Icon = tab switch { HomeTabContent => "plus", FilesTabContent { IsLocal: true } => "monitor", FilesTabContent => "folder", _ => "terminal" },
+                Icon = tab switch { HomeTabContent => "plus", FilesTabContent { IsLocal: true } => "monitor", FilesTabContent => "folder", FileEditorTabContent => "edit", _ => "terminal" },
                 Hint = tab.Status switch
                 {
                     TabStatus.Connected => "Connected",

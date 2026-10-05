@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using System.Collections.Generic;
 using Blossom.Core.Visual;
 using TGK.Client.Views;
@@ -96,6 +97,12 @@ public abstract class TabContent : VisualElement
 
     /// <summary>The tab is being closed or replaced: release sessions and timers. The element is disposed afterwards.</summary>
     public virtual void OnClosing() { }
+
+    /// <summary>Closing it would lose work (an edited file not saved yet): <see cref="ConfirmCloseAsync"/> asks first.</summary>
+    public virtual bool HasUnsavedChanges => false;
+
+    /// <summary>Asks what to do with unsaved work (save it, discard it); false keeps the tab open.</summary>
+    public virtual Task<bool> ConfirmCloseAsync() => Task.FromResult(true);
 
     protected void SetTitle(string title)
     {

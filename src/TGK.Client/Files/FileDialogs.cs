@@ -361,3 +361,52 @@ public sealed class TransferDialog : DialogBase
     protected override void OnClosed() => _result.TrySetResult(null);
 }
 
+
+public enum SaveChoice
+{
+    Cancel,
+    Save,
+    Discard,
+}
+
+/// <summary>Closing a file with unsaved changes: save them, discard them, or keep the file open.</summary>
+public sealed class SaveChangesDialog : DialogBase
+{
+    private readonly Label _message;
+    private readonly TaskCompletionSource<SaveChoice> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private SaveChangesDialog(TgkView view, string name, string where)
+        : base(view, $"Save changes to {FileFormat.Printable(name)}?", 460)
+    {
+        Subtitle = where;
+        _message = AddBody(new Label("Your changes are lost if you don't save them.", Theme.FontBase, Theme.TextSecondary) { MaxLines = 4 });
+        AddLeftButton("Cancel", ButtonVariant.Ghost, Cancel);
+        AddButton("Don't save", ButtonVariant.Secondary, () => Finish(SaveChoice.Discard));
+        AddButton("Save", ButtonVariant.Primary, Accept);
+    }
+
+    /// <summary>On the UI thread: completes with the choice (Cancel when the dialog is dismissed).</summary>
+    public static Task<SaveChoice> ShowAsync(TgkView view, string name, string where)
+    {
+        var dialog = new SaveChangesDialog(view, name, where);
+        dialog.Open();
+        return dialog._result.Task;
+    }
+
+    protected override float LayoutBody(float left, float top, float width)
+    {
+        float h = _message.MeasureHeight(width);
+        _message.Transform.SetLocalFrame(left, top, width, h);
+        return h;
+    }
+
+    protected override void Accept() => Finish(SaveChoice.Save);
+
+    private void Finish(SaveChoice choice)
+    {
+        _result.TrySetResult(choice);
+        Close();
+    }
+
+    protected override void OnClosed() => _result.TrySetResult(SaveChoice.Cancel);
+}

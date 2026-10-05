@@ -114,8 +114,12 @@ public sealed partial class FilesTabContent
         }
         else if (single)
         {
-            items.Add(new MenuItem { Text = "Open", Icon = "file", Hint = "Enter", IsEnabled = live && !first.IsBrokenLink, Action = () => Open(first) });
-            items.Add(new MenuItem { Text = "Edit as text", Icon = "edit", IsEnabled = live && !first.IsBrokenLink, Action = () => OpenFile(first, asText: true) });
+            bool text = OpensInEditor(first);
+            bool usable = live && !first.IsBrokenLink;
+            items.Add(new MenuItem { Text = "Edit", Icon = "edit", Hint = text ? "Enter" : "F4", IsEnabled = usable, Action = () => OpenInEditor(first, EditorMode.Edit) });
+            items.Add(new MenuItem { Text = "View", Icon = "eye", Hint = "F3", IsEnabled = usable, Action = () => OpenInEditor(first, EditorMode.View) });
+            items.Add(new MenuItem { Text = "Open in a program", Icon = "file", Hint = text ? null : "Enter", IsEnabled = usable, Action = () => OpenFile(first, asText: false) });
+            items.Add(new MenuItem { Text = "Edit in a text editor of this computer", IsEnabled = usable, Action = () => OpenFile(first, asText: true) });
         }
         items.AddRange(OtherPaneItems(selected, live));
         if (!IsLocal)

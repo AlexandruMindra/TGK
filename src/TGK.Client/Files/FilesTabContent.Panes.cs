@@ -149,24 +149,8 @@ public sealed partial class FilesTabContent
             Host.ShowToast("A direct copy takes items of one folder.", ToastKind.Error);
             return;
         }
-        int generation = _generation;
         // A command connection to host A (the SFTP one can't run commands); its prompts come to this pane.
-        Func<CancellationToken, Task<RemoteConnection>> connectSource = async ct =>
-        {
-            var verifier = new KnownHostsVerifier(Host.Services.Vault, (info, token) =>
-                UiThread.InvokeAsync(() => AskAsync(generation, _ => Dialogs.HostKeyDialog.ShowAsync(Host, info, token))));
-            var exec = new RemoteConnection(verifier, SignInPrompts(generation));
-            try
-            {
-                await exec.ConnectAsync(from.Request, ct);
-                return exec;
-            }
-            catch
-            {
-                exec.Dispose();
-                throw;
-            }
-        };
+        Func<CancellationToken, Task<RemoteConnection>> connectSource = CommandConnector();
         DirectCopy.Enqueue(queue, from.Files, entries, to.Files, targetDir, move, directTarget, connectSource,
             ResolveConflicts($"{target.PlaceName}: {targetDir}"), $"{target.PlaceName}:{targetDir} (direct)");
     }

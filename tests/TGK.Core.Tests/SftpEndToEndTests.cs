@@ -421,6 +421,49 @@ public sealed class SftpEndToEndTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TextEditor_ReadsRanges_AndSavesKeepingPermissionsAndLinks()
+    {
+        await ShellAsync($"mkdir -p {_dir}/etc && printf 'line one\\nline two\\n' > {_dir}/etc/app.conf && chmod 640 {_dir}/etc/app.conf && ln -s etc/app.conf {_dir}/conf-link");
+
+        Assert.Equal("line two\n", Encoding.UTF8.GetString(await _files.ReadAsync($"{_dir}/etc/app.conf", 9, 100, Ct)));
+        Assert.Equal("line", Encoding.UTF8.GetString(await _files.ReadAsync($"{_dir}/conf-link", 0, 4, Ct)));
+
+        await _files.WriteAsync($"{_dir}/conf-link", "edited ✓\n"u8.ToArray(), Ct);
+        Assert.Equal("edited ✓\n", await ReadRemoteAsync($"{_dir}/etc/app.conf"));
+        FileEntry link = (await _files.StatAsync($"{_dir}/conf-link", Ct))!;
+        Assert.Equal(FileEntryKind.Symlink, link.Kind); // still a link, its target got the content
+        Assert.Equal("640", link.OctalMode);
+
+        await _files.WriteAsync($"{_dir}/etc/new.conf", "new"u8.ToArray(), Ct);
+        Assert.Equal("new", await ReadRemoteAsync($"{_dir}/etc/new.conf"));
+        Assert.DoesNotContain((await _files.ListAsync($"{_dir}/etc", Ct)), e => e.Name.EndsWith(".tgk-part", StringComparison.Ordinal));
+        await Assert.ThrowsAsync<FileOperationException>(() => _files.WriteAsync($"{_dir}/etc", "x"u8.ToArray(), Ct));
+    }
+
+    [Fact]
+    public async Task SudoFiles_ReadAndWriteAsRoot()
+    {
+        RequireServer();
+        SshConnectRequest request = RemoteConnectionEndToEndTests.Request("TGK_E2E_SSH");
+        using var exec = new RemoteConnection(new RemoteConnectionEndToEndTests.TrustAll());
+        await exec.ConnectAsync(request, Ct);
+        CommandResult probe = await exec.RunAsync("sudo -n true", Timeout, ct: Ct);
+        Assert.SkipWhen(probe.ExitCode != 0, "the test server's user has no passwordless sudo");
+        await ShellAsync($"mkdir -p {_dir} && printf 'root only\\n' > {_dir}/secret.log && chmod 600 {_dir}/secret.log");
+        int asked = 0;
+        var sudo = new SudoFiles(exec, (_, _) => { asked++; return Task.FromResult<string?>(null); });
+
+        Assert.Equal(10, await sudo.SizeAsync($"{_dir}/secret.log", Ct));
+        Assert.Equal("only\n", Encoding.UTF8.GetString(await sudo.ReadAsync($"{_dir}/secret.log", 5, 100, Ct)));
+        await sudo.WriteAsync($"{_dir}/secret.log", "changed as root\n"u8.ToArray(), Ct);
+        Assert.Equal("changed as root\n", await ReadRemoteAsync($"{_dir}/secret.log"));
+        Assert.Equal("600", (await _files.StatAsync($"{_dir}/secret.log", Ct))!.OctalMode);
+        Assert.Equal(0, asked); // passwordless: never asks (nor sends) a password
+        var missing = await Assert.ThrowsAsync<FileOperationException>(() => sudo.ReadAsync($"{_dir}/missing", 0, 10, Ct));
+        Assert.Contains("As root", missing.Message);
+    }
+
+    [Fact]
     public async Task JumpHost_ConnectsThroughIt()
     {
         SshConnectRequest target = RemoteConnectionEndToEndTests.Request("TGK_E2E_SSH");

@@ -166,6 +166,25 @@ public sealed class SftpTests
     }
 
     [Fact]
+    public async Task LocalFiles_ReadRanges_AndSaveInPlaceOfTheFile()
+    {
+        using var temp = new TempDirectory();
+        LocalFileSystem local = LocalFileSystem.Instance;
+        string file = Path.Combine(temp.Path, "notes.txt");
+        await local.WriteAsync(file, "hello world"u8.ToArray(), Ct);
+        Assert.Equal("world", System.Text.Encoding.UTF8.GetString(await local.ReadAsync(file, 6, 100, Ct)));
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+        await local.WriteAsync(file, "changed"u8.ToArray(), Ct);
+        Assert.Equal("changed", File.ReadAllText(file));
+        if (!OperatingSystem.IsWindows())
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(file));
+        Assert.Single(Directory.GetFiles(temp.Path)); // no temporary file left
+        await Assert.ThrowsAsync<FileOperationException>(() => local.ReadAsync(Path.Combine(temp.Path, "missing"), 0, 1, Ct));
+    }
+
+    [Fact]
     public void LocalFiles_PathsAndNames()
     {
         LocalFileSystem local = LocalFileSystem.Instance;

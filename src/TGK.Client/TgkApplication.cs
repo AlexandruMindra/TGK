@@ -26,6 +26,7 @@ public sealed class TgkApplication : Application
         Title = "TGK";
         Services = services;
         Agents = new AgentService(this);
+        Platform.AppWindow.CloseGuard = () => _main?.InterceptClose() == true; // files with unsaved changes ask first
         // Subscribed first: the background sync of a restored session may already find it revoked.
         services.Vault.SessionEnded += reason => UiThread.Post(() => OnSessionEnded(reason));
         if (!services.Dev.SkipRestore)

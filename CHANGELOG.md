@@ -37,6 +37,14 @@ shows the current Unreleased section.
   between the hosts* (host A copies to host B over SSH with B's vault credentials, checked against B's trusted host
   key, nothing left on A; B's key works in any format the vault takes — PuTTY, PEM, PKCS#8, with a passphrase — as it
   is converted for ssh on host A). Panes refresh when a transfer into them finishes; local panes are reopened too.
+- **Files: built-in text editor**: text files open in TGK itself, beside the file pane (double-click or Enter, *Edit*
+  / F4, or *View* / F3 for read only), without downloading them: line numbers, undo and redo, find and replace
+  (Ctrl+F, Ctrl+H), go to line (Ctrl+G), Tab indents (with the file's own tabs or spaces), the file's encoding and line
+  endings kept. Ctrl+S saves straight to the host: written beside the file and put in its place, keeping its
+  permissions and owner, after checking that nobody changed it meanwhile. Files you can't read or write are opened and
+  saved as root with sudo when you ask (the password is asked for, never stored). Logs (`*.log`, `/var/log`) open read
+  only at their end and follow what is added; files over 8 MB show their last 2 MB. Closing a tab, signing out or
+  quitting with unsaved changes asks first. Other files (images, archives, documents…) still open in a program here.
 
 ### Fixed
 

@@ -37,6 +37,10 @@ entirely on one machine.
 - Upload files and folders (pick them or drop them on the window) and download them — to your Downloads folder or
   anywhere — with a transfer panel (progress, speed, time left, cancel). Existing names ask Replace / Skip; files are
   written under a temporary name and put in place when complete; times and permissions are kept.
+- Edit text files right in TGK, beside the file list (double-click, F4; F3 to view): find and replace, go to line,
+  undo; Ctrl+S saves straight to the server, keeping permissions and owner, and warns if the file changed meanwhile.
+  Files only root may read or write are opened and saved through sudo when you ask. Logs open at their end and follow
+  new lines; large files show their end.
 - Open or edit a file in a program on your computer: every save is uploaded back. On Windows, programs and scripts
   from a server open as text, never run.
 - New folder / file, rename, move, delete (links are removed, never what they point to), permissions, copy paths, open

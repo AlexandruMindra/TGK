@@ -63,4 +63,17 @@ public interface IFileSystem
     Task DeleteAsync(FileEntry entry, IProgress<string>? progress, CancellationToken ct);
 
     Task SetPermissionsAsync(string path, int mode, CancellationToken ct);
+
+    /// <summary>
+    /// At most <paramref name="count"/> bytes of a file from <paramref name="offset"/> on (fewer at its end); a link is
+    /// followed. For the text editor (and the end of a log).
+    /// </summary>
+    Task<byte[]> ReadAsync(string path, long offset, int count, CancellationToken ct);
+
+    /// <summary>
+    /// Replaces the content of a file (or creates it) so that it is never seen half written: the content goes beside
+    /// it and then takes its place, with its permissions and owner. A file whose folder can't be written to, or whose
+    /// owner or group could not be kept, is written in place instead. A link is followed: its target gets the content.
+    /// </summary>
+    Task WriteAsync(string path, byte[] content, CancellationToken ct);
 }

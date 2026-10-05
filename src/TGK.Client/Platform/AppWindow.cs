@@ -18,7 +18,14 @@ public static class AppWindow
     private static Application? _app;
     private static IWindow? _window;
     private static GlfwCallbacks.WindowRefreshCallback? _onRefresh, _previousOnRefresh; // kept alive while GLFW holds them
+    private static GlfwCallbacks.WindowCloseCallback? _onClose, _previousOnClose;
     private static bool _inLiveFrame;
+
+    /// <summary>
+    /// Asked when the user closes the window: true keeps it open (e.g. files with unsaved changes; the guard then asks
+    /// and closes it with <see cref="Close"/> once settled). Called on the UI thread.
+    /// </summary>
+    public static Func<bool>? CloseGuard { get; set; }
 
     /// <summary>Raised on the UI thread after a resize, once Blossom has updated the view size.</summary>
     public static event Action? Resized;
@@ -36,6 +43,40 @@ public static class AppWindow
         Shell.ClientResized += (_, _) => Resized?.Invoke();
         if (OperatingSystem.IsMacOS())
             HookLiveResize();
+        HookClose();
+    }
+
+    // GLFW sets the window's close flag and then calls this callback, which may clear it again: the guard gets a say
+    // before Blossom's own callback (which ends the application) runs.
+    private static unsafe void HookClose()
+    {
+        Glfw glfw = GlfwProvider.GLFW.Value;
+        WindowHandle* handle = glfw.GetCurrentContext();
+        if (handle is null)
+        {
+            Log.Warning("Close guard: no window; unsaved files are not asked about when the window closes.");
+            return;
+        }
+        _onClose = OnCloseRequested;
+        _previousOnClose = glfw.SetWindowCloseCallback(handle, _onClose);
+    }
+
+    private static unsafe void OnCloseRequested(WindowHandle* handle)
+    {
+        // Native code calls this: an exception must not escape into it.
+        try
+        {
+            if (CloseGuard?.Invoke() == true)
+            {
+                GlfwProvider.GLFW.Value.SetWindowShouldClose(handle, false);
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Close guard failed: {ex}");
+        }
+        _previousOnClose?.Invoke(handle);
     }
 
     /// <summary>

@@ -227,4 +227,83 @@ public sealed class LocalFileSystem : IFileSystem
             throw new FileOperationException($"Could not {action} {path}: {ex.Message.TrimEnd('.')}.", ex);
         }
     });
+
+    private static async Task RunAsync(string path, string action, Func<Task> operation)
+    {
+        try
+        {
+            await operation().ConfigureAwait(false);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            throw new FileOperationException($"Permission denied: you can't {action} {path}.", ex);
+        }
+        catch (Exception ex) when (ex is DirectoryNotFoundException or FileNotFoundException)
+        {
+            throw new FileOperationException($"{path} does not exist (any more).", ex);
+        }
+        catch (IOException ex)
+        {
+            throw new FileOperationException($"Could not {action} {path}: {ex.Message.TrimEnd('.')}.", ex);
+        }
+    }
+
+    public async Task<byte[]> ReadAsync(string path, long offset, int count, CancellationToken ct)
+    {
+        byte[] buffer = new byte[Math.Max(0, count)];
+        int total = 0;
+        await RunAsync(path, "read", async () =>
+        {
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 64 * 1024, useAsync: true);
+            if (offset > 0)
+                stream.Seek(offset, SeekOrigin.Begin);
+            while (total < buffer.Length)
+            {
+                int read = await stream.ReadAsync(buffer.AsMemory(total), ct).ConfigureAwait(false);
+                if (read == 0)
+                    break;
+                total += read;
+            }
+        }).ConfigureAwait(false);
+        return total == buffer.Length ? buffer : buffer[..total];
+    }
+
+    public async Task WriteAsync(string path, byte[] content, CancellationToken ct)
+    {
+        if (Directory.Exists(path))
+            throw new FileOperationException($"{path} is a folder.");
+        string target = File.Exists(path) && new FileInfo(path).ResolveLinkTarget(returnFinalTarget: true) is { } link ? link.FullName : path;
+        bool exists = File.Exists(target);
+        string temp = Path.Combine(Parent(target), $".{NameOf(target)}.{Guid.NewGuid().ToString("N")[..8]}.tgk-part");
+        await RunAsync(path, "write", async () =>
+        {
+            try
+            {
+                await File.WriteAllBytesAsync(temp, content, ct).ConfigureAwait(false);
+            }
+            catch (UnauthorizedAccessException) when (exists)
+            {
+                // The folder is not writable but the file may be: write it in place.
+                await File.WriteAllBytesAsync(target, content, ct).ConfigureAwait(false);
+                return;
+            }
+            try
+            {
+                if (!exists)
+                    File.Move(temp, target);
+                else if (OperatingSystem.IsWindows())
+                    File.Replace(temp, target, null, ignoreMetadataErrors: true); // keeps the original's attributes
+                else
+                {
+                    File.SetUnixFileMode(temp, File.GetUnixFileMode(target));
+                    File.Move(temp, target, overwrite: true);
+                }
+            }
+            finally
+            {
+                if (File.Exists(temp))
+                    File.Delete(temp);
+            }
+        }).ConfigureAwait(false);
+    }
 }

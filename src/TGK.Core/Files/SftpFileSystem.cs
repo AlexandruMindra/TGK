@@ -201,6 +201,100 @@ public sealed class SftpFileSystem : IFileSystem
         return Run(path, "change the permissions of", () => Task.Run(() => client.ChangePermissions(path, digits), ct));
     }
 
+    public async Task<byte[]> ReadAsync(string path, long offset, int count, CancellationToken ct)
+    {
+        SftpClient client = Client;
+        byte[] buffer = new byte[Math.Max(0, count)];
+        int total = 0;
+        await Run(path, "read", async () =>
+        {
+            await using SftpFileStream stream = await client.OpenAsync(path, FileMode.Open, FileAccess.Read, ct).ConfigureAwait(false);
+            if (offset > 0)
+                stream.Seek(offset, SeekOrigin.Begin);
+            while (total < buffer.Length)
+            {
+                int read = await stream.ReadAsync(buffer.AsMemory(total), ct).ConfigureAwait(false);
+                if (read == 0)
+                    break;
+                total += read;
+            }
+        }).ConfigureAwait(false);
+        return total == buffer.Length ? buffer : buffer[..total];
+    }
+
+    public async Task WriteAsync(string path, byte[] content, CancellationToken ct)
+    {
+        SftpClient client = Client;
+        FileEntry? existing = await StatAsync(path, ct).ConfigureAwait(false);
+        if (existing is { IsDirectory: true })
+            throw new FileOperationException($"{path} is a folder.");
+        string target = existing is { Kind: FileEntryKind.Symlink, IsBrokenLink: false } ? await RealPathAsync(path, ct).ConfigureAwait(false) : path;
+        string temp = Join(RemotePath.Directory(target), $".{RemotePath.FileName(target)}.{Guid.NewGuid().ToString("N")[..8]}.tgk-part");
+        bool placed = false;
+        try
+        {
+            bool inPlace = false;
+            try
+            {
+                await Run(target, "write", async () =>
+                {
+                    await using SftpFileStream stream = await client.OpenAsync(temp, FileMode.CreateNew, FileAccess.Write, ct).ConfigureAwait(false);
+                    await stream.WriteAsync(content, ct).ConfigureAwait(false);
+                }).ConfigureAwait(false);
+            }
+            catch (FileOperationException ex) when (existing is not null && ex.InnerException is SftpPermissionDeniedException)
+            {
+                inPlace = true; // the folder is not writable, the file may be (e.g. a config file one may edit)
+            }
+            if (!inPlace && existing is not null)
+                inPlace = !await TakeOverAsync(client, temp, existing, ct).ConfigureAwait(false);
+            if (inPlace)
+            {
+                await DeleteQuietlyAsync(temp).ConfigureAwait(false);
+                await Run(target, "write", async () =>
+                {
+                    await using SftpFileStream stream = await client.OpenAsync(target, FileMode.Create, FileAccess.Write, ct).ConfigureAwait(false);
+                    await stream.WriteAsync(content, ct).ConfigureAwait(false);
+                }).ConfigureAwait(false);
+                placed = true;
+                return;
+            }
+            await ReplaceAsync(temp, target, ct).ConfigureAwait(false);
+            placed = true;
+        }
+        finally
+        {
+            if (!placed)
+                await DeleteQuietlyAsync(temp).ConfigureAwait(false);
+        }
+    }
+
+    // Gives the new copy the original's permissions, owner and group; false when the owner or group can't be kept
+    // (another user's file), which is then written in place rather than handed over to this user.
+    private async Task<bool> TakeOverAsync(SftpClient client, string temp, FileEntry existing, CancellationToken ct)
+    {
+        try
+        {
+            SftpFileAttributes made = await client.GetAttributesAsync(temp, ct).ConfigureAwait(false);
+            if (made.UserId != existing.Uid || made.GroupId != existing.Gid)
+            {
+                made.UserId = (int)existing.Uid;
+                made.GroupId = (int)existing.Gid;
+                await Task.Run(() => client.SetAttributes(temp, made), ct).ConfigureAwait(false);
+                made = await client.GetAttributesAsync(temp, ct).ConfigureAwait(false);
+                if (made.UserId != existing.Uid || made.GroupId != existing.Gid)
+                    return false;
+            }
+            short digits = short.Parse(Convert.ToString(existing.Mode & 0xFFF, 8), CultureInfo.InvariantCulture);
+            await Task.Run(() => client.ChangePermissions(temp, digits), ct).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception ex) when (ex is SshException and not SshConnectionException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// Puts <paramref name="temp"/> in <paramref name="target"/>'s place, replacing it if it exists (atomically when
     /// the server offers posix-rename). Used to finish uploads.

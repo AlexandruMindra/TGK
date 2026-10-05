@@ -19,9 +19,10 @@ namespace TGK.Client.Files;
 
 /// <summary>
 /// A file browser pane: a host's files over SFTP, or this computer's. Browse folders (back, forward, up, a path to
-/// type, a name filter, hidden files on or off), create, rename, move and delete, change permissions, copy paths;
-/// for a host also upload and download (picked or dropped on the window), open or edit files in a local program (each
-/// save is uploaded back) and open a terminal in a folder. Beside other file panes (a split view) items are copied or
+/// type, a name filter, hidden files on or off), create, rename, move and delete, change permissions, copy paths, edit
+/// text files in TGK's editor beside the pane (see <c>FilesTabContent.Editor.cs</c>); for a host also upload and
+/// download (picked or dropped on the window), open or edit files in a local program (each save is uploaded back) and
+/// open a terminal in a folder. Beside other file panes (a split view) items are copied or
 /// moved between them: dragged, or with F5 / F6 (see <c>FilesTabContent.Panes.cs</c>). Transfers run one after the
 /// other in a panel at the bottom.
 /// </summary>
@@ -625,6 +626,8 @@ public sealed partial class FilesTabContent : TabContent, IKeyInput
             Navigate(entry.Path);
         else if (entry.IsBrokenLink)
             Host.ShowToast($"{FileFormat.Printable(entry.Name)} points to {FileFormat.Printable(entry.LinkTarget ?? "?")}, which does not exist.", ToastKind.Error);
+        else if (OpensInEditor(entry))
+            OpenInEditor(entry, EditorMode.Auto);
         else
             OpenFile(entry, asText: false);
     }
@@ -821,6 +824,12 @@ public sealed partial class FilesTabContent : TabContent, IKeyInput
             case Key.F5 when k.Modifiers == KeyModifiers.None:
             case Key.R when k.Modifiers == KeyModifiers.Ctrl:
                 Refresh();
+                return true;
+            case Key.F3 when k.Modifiers == KeyModifiers.None && _list.Selected is [{ IsDirectory: false } viewed]:
+                OpenInEditor(viewed, EditorMode.View);
+                return true;
+            case Key.F4 when k.Modifiers == KeyModifiers.None && _list.Selected is [{ IsDirectory: false } edited]:
+                OpenInEditor(edited, EditorMode.Edit);
                 return true;
             case Key.F2 when k.Modifiers == KeyModifiers.None && _list.Selected is [{ } one]:
                 Rename(one);

@@ -28,6 +28,7 @@ namespace TGK.Client.Views;
 public sealed partial class MainView : TgkView
 {
     private readonly List<TabContent> _tabs = [];
+    private readonly HashSet<TabContent> _closeAsking = []; // tabs asking about unsaved work before they close
     private readonly List<IDisposable> _shortcuts = [];
     private MainRoot _root = null!;
     private TabStrip _strip = null!;
@@ -244,6 +245,34 @@ public sealed partial class MainView : TgkView
     {
         if (index < 0 || index >= _tabs.Count)
             return;
+        TabContent tab = _tabs[index];
+        if (tab.HasUnsavedChanges)
+        {
+            CloseAfterAsking(tab);
+            return;
+        }
+        CloseNow(index);
+    }
+
+    // Unsaved work: the tab asks (save, discard or keep it open) and closes only when that is settled.
+    private async void CloseAfterAsking(TabContent tab)
+    {
+        if (_closeAsking.Contains(tab))
+            return;
+        _closeAsking.Add(tab);
+        try
+        {
+            if (await tab.ConfirmCloseAsync() && _tabs.IndexOf(tab) is >= 0 and int index)
+                CloseNow(index);
+        }
+        finally
+        {
+            _closeAsking.Remove(tab);
+        }
+    }
+
+    private void CloseNow(int index)
+    {
         TabContent tab = _tabs[index];
         bool wasActive = index == _active;
         List<TabContent> otherPanes = tab.Split?.Items.Where(t => t != tab).ToList() ?? [];
@@ -657,6 +686,11 @@ public sealed partial class MainView : TgkView
         if (!confirmed && sessions > 0 && !await ConfirmDialog.ShowAsync(this, local ? "Lock the vault?" : "Sign out?",
                 $"{sessions} open session{(sessions == 1 ? "" : "s")} will be closed.", action))
             return;
+        int unsaved = _tabs.Count(t => t.HasUnsavedChanges);
+        if (!confirmed && unsaved > 0 && !await ConfirmDialog.ShowAsync(this, "Discard unsaved changes?",
+                $"{(unsaved == 1 ? "A file edited here has" : $"{unsaved} files edited here have")} changes that are not saved. {action} discards them.",
+                $"{action} anyway", danger: true))
+            return;
         SaveWorkspace(); // before the flush below, so the tabs reach the server too
         if (Services.Vault.PendingChanges > 0)
         {
@@ -698,6 +732,44 @@ public sealed partial class MainView : TgkView
         {
             Log.Error($"Could not save the open tabs at exit: {ex}");
             return null;
+        }
+    }
+
+    /// <summary>
+    /// The window is being closed: true keeps it open while the user is asked about files with unsaved changes (the
+    /// window then closes once they chose to discard them).
+    /// </summary>
+    internal bool InterceptClose()
+    {
+        if (_quitConfirmed || _torndown)
+            return false;
+        List<TabContent> unsaved = _tabs.Where(t => t.HasUnsavedChanges).ToList();
+        if (unsaved.Count == 0)
+            return false;
+        UiThread.Post(() => AskBeforeQuit(unsaved));
+        return true;
+    }
+
+    private bool _quitConfirmed, _quitAsking;
+
+    private async void AskBeforeQuit(List<TabContent> unsaved)
+    {
+        if (_quitAsking)
+            return;
+        _quitAsking = true;
+        try
+        {
+            ActivateTab(unsaved[0]);
+            string what = unsaved.Count == 1 ? $"{unsaved[0].Title.TrimStart('●', ' ')} has" : $"{unsaved.Count} files have";
+            if (!await ConfirmDialog.ShowAsync(this, "Quit with unsaved changes?", $"{what} changes that are not saved. Quitting discards them.",
+                    "Discard and quit", danger: true))
+                return;
+            _quitConfirmed = true;
+            Platform.AppWindow.Close();
+        }
+        finally
+        {
+            _quitAsking = false;
         }
     }
 
