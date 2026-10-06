@@ -10,6 +10,8 @@ shows the current Unreleased section.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-06
+
 ### Added
 
 - **Agents (MCP)**: Claude Code and other MCP clients can work on your saved hosts through TGK: run commands, read,
@@ -169,7 +171,8 @@ First release.
   vault on one device; moving between the two; encrypted backups.
 - Linux and Windows builds.
 
-[Unreleased]: https://github.com/AlexandruMindra/TGK/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/AlexandruMindra/TGK/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/AlexandruMindra/TGK/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/AlexandruMindra/TGK/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/AlexandruMindra/TGK/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/AlexandruMindra/TGK/compare/v0.2.1...v0.2.2
