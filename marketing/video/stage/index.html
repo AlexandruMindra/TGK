@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>TGK video stage</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="stage"><div id="bg"></div></div>
+<script src="lib.js"></script>
+<script src="app.js"></script>
+<script src="strings.js"></script>
+<script src="scenes1.js"></script>
+<script src="scenes2.js"></script>
+<script src="thumb.js"></script>
+<script>
+  // render.mjs calls init(timing) and then seek(t) for every frame; ?preview=1 plays it in a browser in real time.
+  window.init = async (timing) => {
+    bgBuild();
+    setup(timing, STRINGS[timing.lang]);
+    await document.fonts.ready;
+    await Promise.all(['Inter', 'JBM', 'DejaVu', 'VT323'].flatMap(f => [400, 700].map(w => document.fonts.load(`${w} 20px ${f}`, 'aé日✓●⎿'))));
+    // touch every frame once so lazily used glyphs and fonts are loaded before rendering starts
+    for (let t = 0; t < timing.total; t += 0.5) { seek(t); void document.body.offsetHeight; }
+    await document.fonts.ready;
+    seek(0);
+    return true;
+  };
+  window.sfxEvents = () => LIVE.flatMap(s => (s.def.sfx ? s.def.sfx(s.dur, s.cues, s.ends) : []).map(ev => ({ ...ev, t: ev.t + s.start })))
+    .concat(LIVE.map(s => ({ t: s.start - .25, type: 'whoosh' })).slice(1));
+  const q = new URLSearchParams(location.search);
+  if (q.get('preview')) {
+    fetch(`../build/${q.get('lang') || 'en'}/timing.json`).then(r => r.json()).then(async tm => {
+      await init(tm);
+      const t0 = performance.now() - (+q.get('t') || 0) * 1000;
+      const loop = () => { seek((performance.now() - t0) / 1000); requestAnimationFrame(loop); };
+      loop();
+    });
+  }
+</script>
+</body>
+</html>
