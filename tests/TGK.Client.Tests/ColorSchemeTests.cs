@@ -19,7 +19,7 @@ public sealed class ColorSchemeTests
     [Fact]
     public void RetroSchemes_ComeWithTheBundledRetroFont()
     {
-        foreach (string name in new[] { "Green CRT", "Amber CRT", "Commodore 64", "MS-DOS", "Synthwave '84" })
+        foreach (string name in new[] { "Green CRT", "Amber CRT", "Commodore 64", "MS-DOS", "Synthwave '84", "Teletype" })
         {
             ColorScheme retro = ColorScheme.Find(name.ToLowerInvariant());
             Assert.Equal(name, retro.Name);

@@ -84,7 +84,7 @@ public sealed class ColorScheme
         // Retro schemes, each with the bundled VT323 font. Monitors: green and amber phosphor (VT220, IBM 5151 / 3180),
         // every color a shade of the phosphor told apart by brightness. Home computers: the Commodore 64's 16 colors on
         // its blue screen (Pepto's palette) and IBM CGA's on black, as at a DOS prompt. Synthwave '84 after Robb Owen's
-        // 80s neon theme.
+        // 80s neon theme. Teletype: ink on paper, as a printing terminal.
         new("Green CRT",
         [
             0x0C2412, 0x1FA347, 0x3DFF6E, 0x9BFF6A, 0x178A3A, 0x2FCB5A, 0x6BFFA0, 0xA8FFBE,
@@ -110,6 +110,11 @@ public sealed class ColorScheme
             0x241B30, 0xFE4450, 0x72F1B8, 0xFEDE5D, 0x6E95FF, 0xFF7EDB, 0x03EDF9, 0xE0D7EE,
             0x495495, 0xFF6E7A, 0x9CFFD6, 0xFFF08A, 0x9AB6FF, 0xFFA6EA, 0x7CF6FF, 0xFFFFFF,
         ], 0xF2E9FF, 0x241B30, 0xFF7EDB, new SKColor(0xFF, 0x7E, 0xDB, 0x50), font: TerminalFonts.Retro),
+        new("Teletype",
+        [
+            0x2B2620, 0xA6322B, 0x4F7A28, 0x9A6A12, 0x2F5A8C, 0x7A3E78, 0x2E7A73, 0x8A7F6E,
+            0x6B6254, 0xC4453C, 0x5E9130, 0xB98318, 0x3C6FA8, 0x965092, 0x38928A, 0x1A1712,
+        ], 0x2B2620, 0xF1E8D2, 0x2B2620, new SKColor(0x2B, 0x26, 0x20, 0x38), font: TerminalFonts.Retro),
     ];
 
     /// <summary>The scheme named <paramref name="name"/> (case-insensitive), or <see cref="TgkDark"/> for an unknown name.</summary>

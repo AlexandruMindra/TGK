@@ -62,7 +62,7 @@ entirely on one machine.
   - Startup command, environment variables, terminal type.
   - Font (bundled DejaVu Sans Mono or VT323, or any installed monospace font), font size, color scheme (TGK Dark,
     Solarized, Dracula, Nord, Gruvbox, One Dark, and retro ones: Green CRT, Amber CRT, Commodore 64, MS-DOS,
-    Synthwave '84), opt-in legacy algorithms for old devices.
+    Synthwave '84, Teletype), opt-in legacy algorithms for old devices.
 - Terminal settings (font, size, colors, scrollback, cursor, copy-on-select) are kept in the vault and follow you to
   every device.
 
