@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading.Tasks;
 using Blossom;
 using TGK.Client.Platform;
+using TGK.Client.Terminal;
 using TGK.Core;
 using TGK.Core.Services;
 
@@ -31,6 +32,7 @@ internal static class Program
         Shell.MaxFps = 120;
         Shell.ShowDebugOverlay = dev.DebugOverlay;
 
+        TerminalFonts.WarmUp(); // the settings' font list, built before a dialog needs it
         UiThread.Install();
         var app = new TgkApplication(services);
         app.EnableStatsOverlay = dev.DebugOverlay; // F12 toggles the frame-time overlay only with --fps

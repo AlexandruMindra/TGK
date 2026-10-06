@@ -438,7 +438,8 @@ public sealed class OptionsEditor
         if (selected is not null && !_familyValues.Exists(f => f is not null && string.Equals(f, selected, StringComparison.OrdinalIgnoreCase)))
         {
             _familyValues.Add(selected);
-            names.Add($"{selected} (not installed on this device)");
+            // Installed but not listed (its name does not look like a terminal font), or chosen on another device.
+            names.Add(TerminalFonts.IsAvailable(selected) ? selected : $"{selected} (not installed on this device)");
         }
         _family.Options = names;
         _family.SelectedIndex = selected is null ? 0

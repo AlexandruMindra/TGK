@@ -10,6 +10,13 @@ shows the current Unreleased section.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Settings, New host / Edit host, group settings**: the first of these dialogs in a run no longer freezes the window
+  for seconds (and no longer adds hundreds of MB of memory) on systems with many fonts installed, as is common on
+  Linux. The terminal font list now opens only the fonts whose name suggests a terminal font, and is built in the
+  background at startup; a font chosen on another device and installed here still works even if it is not listed.
+
 ## [0.3.0] - 2026-10-06
 
 ### Added
