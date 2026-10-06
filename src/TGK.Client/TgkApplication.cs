@@ -27,6 +27,13 @@ public sealed class TgkApplication : Application
         Services = services;
         Agents = new AgentService(this);
         Platform.AppWindow.CloseGuard = () => _main?.InterceptClose() == true; // files with unsaved changes ask first
+        // Every start asks GitHub about updates, in the background: nothing waits for the answer (the main view takes it).
+        if (services.Prefs.CheckForUpdates && services.Dev.Scene is null)
+        {
+            UpdateChannel channel = services.Prefs.UpdateChannel ?? UpdateChecker.DefaultChannel(AppInfo.Version);
+            // On the thread pool as a whole: the UI loop does not run yet.
+            _startupUpdateCheck = Task.Run(() => MainView.AskGitHubAsync(channel));
+        }
         // Subscribed first: the background sync of a restored session may already find it revoked.
         services.Vault.SessionEnded += reason => UiThread.Post(() => OnSessionEnded(reason));
         if (!services.Dev.SkipRestore)
@@ -50,6 +57,16 @@ public sealed class TgkApplication : Application
     }
 
     public ClientServices Services { get; }
+
+    private Task<(bool Ok, UpdateInfo? Update)>? _startupUpdateCheck;
+
+    /// <summary>The update check sent as TGK started, for the first main view to take (null afterwards).</summary>
+    internal Task<(bool Ok, UpdateInfo? Update)>? TakeStartupUpdateCheck()
+    {
+        Task<(bool Ok, UpdateInfo? Update)>? check = _startupUpdateCheck;
+        _startupUpdateCheck = null;
+        return check;
+    }
 
     /// <summary>Agents (MCP): the local endpoint, approvals and activity.</summary>
     public AgentService Agents { get; }

@@ -20,6 +20,9 @@ shows the current Unreleased section.
 
 ### Changed
 
+- **Update check**: TGK now asks GitHub for a newer version on every start, in the background as it starts (nothing
+  waits for the answer; the last one shows until it arrives), instead of at most twice a day and only 45 seconds after
+  the window opened. A new nightly build is seen at the next start.
 - **Color schemes**: the scheme shown on the first card (the default, or the one inherited from the group or the
   defaults) is no longer offered a second time; TGK Dark no longer appears twice in Settings.
 

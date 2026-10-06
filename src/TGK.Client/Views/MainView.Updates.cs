@@ -16,8 +16,9 @@ using TGK.Core.Services;
 
 namespace TGK.Client.Views;
 
-// Updates: GitHub is asked about newer releases in the background, never while TGK starts (the first check waits
-// until the window has been open for a while) and at most about twice a day (the answer is kept in the preferences).
+// Updates: GitHub is asked about newer releases on every start, in the background (TgkApplication sends the request as
+// TGK starts; nothing waits for it: the last answer, kept in the preferences, shows until the new one arrives), then
+// about twice a day while TGK runs.
 // A newer version only adds a quiet chip to the status bar. Its menu installs it ("Update now": the release archive is
 // downloaded, checked and unpacked in the background, then swapped in when TGK restarts or closes), opens the release
 // page, skips that version or hides the chip until the next start. Settings → Startup turns the check off; the account
@@ -45,7 +46,14 @@ public sealed partial class MainView
 
     private void StartUpdateChecks()
     {
+        // The scheduled check also removes what an earlier update left behind, a little after the start; with the start's
+        // own answer just in, it asks GitHub only when that request failed.
         _nextUpdateCheck = UiClock.NowMs + FirstUpdateCheckDelayMs;
+        if (Services.Prefs.CheckForUpdates && App.TakeStartupUpdateCheck() is { } startup)
+        {
+            ShowUpdate(CachedUpdate(Services.Prefs)); // the last answer, until the new one arrives
+            ApplyStartupUpdateCheck(startup);
+        }
         // An update downloaded before a sign-out or lock in this run is still waiting to be installed.
         if (App.PendingUpdate is not null && App.PendingUpdateInfo is { } pending)
         {
@@ -83,6 +91,25 @@ public sealed partial class MainView
         CheckForUpdates(manual: false);
     }
 
+    // The answer to the request sent as TGK started (TgkApplication), taken like a scheduled check's.
+    private async void ApplyStartupUpdateCheck(Task<(bool Ok, UpdateInfo? Update)> startup)
+    {
+        _updateChecking = true;
+        (bool ok, UpdateInfo? update) = await startup;
+        _updateChecking = false;
+        if (_torndown || !ok || _updateStage >= UpdateStage.Downloading)
+            return;
+        RememberUpdateCheck(update);
+        ShowUpdate(update);
+    }
+
+    private void RememberUpdateCheck(UpdateInfo? update) => Services.UpdatePrefs(p =>
+    {
+        p.LastUpdateCheck = DateTimeOffset.UtcNow;
+        p.AvailableUpdate = update?.Version.ToString();
+        p.AvailableUpdateUrl = update?.Url;
+    });
+
     /// <summary>The update channel of this device: the one chosen, else the installed build's kind.</summary>
     public UpdateChannel CurrentChannel => Services.Prefs.UpdateChannel ?? UpdateChecker.DefaultChannel(AppInfo.Version);
 
@@ -113,7 +140,7 @@ public sealed partial class MainView
             : null;
 
     // Asks GitHub; null when that failed (logged).
-    private static async Task<(bool Ok, UpdateInfo? Update)> AskGitHubAsync(UpdateChannel channel)
+    internal static async Task<(bool Ok, UpdateInfo? Update)> AskGitHubAsync(UpdateChannel channel)
     {
         try
         {
@@ -152,12 +179,7 @@ public sealed partial class MainView
                 ShowToast("Couldn't check for updates: GitHub can't be reached right now.", ToastKind.Error);
             return;
         }
-        Services.UpdatePrefs(p =>
-        {
-            p.LastUpdateCheck = DateTimeOffset.UtcNow;
-            p.AvailableUpdate = update?.Version.ToString();
-            p.AvailableUpdateUrl = update?.Url;
-        });
+        RememberUpdateCheck(update);
         if (!manual)
         {
             ShowUpdate(update);
