@@ -451,7 +451,7 @@ public sealed class SchemePicker : Control
             int i = IndexAt(e.Relative.X, e.Relative.Y);
             if (i < 0)
                 return;
-            Selected = i == 0 ? null : ColorScheme.All[i - 1].Name;
+            Selected = i == 0 ? null : SchemeAt(i).Name;
             Changed?.Invoke();
         };
     }
@@ -467,7 +467,21 @@ public sealed class SchemePicker : Control
         InvalidatePaint();
     }
 
-    private static int Count => ColorScheme.All.Count + 1;
+    // The first card is the inherited scheme (or the default); the others are the remaining schemes, so none is twice.
+    private static int Count => ColorScheme.All.Count;
+
+    private ColorScheme SchemeAt(int i)
+    {
+        if (i == 0)
+            return _inherited;
+        int n = 0;
+        foreach (ColorScheme scheme in ColorScheme.All)
+        {
+            if (scheme != _inherited && ++n == i)
+                return scheme;
+        }
+        return _inherited;
+    }
 
     public static float MeasureHeight()
     {
@@ -498,19 +512,24 @@ public sealed class SchemePicker : Control
         return -1;
     }
 
-    private bool IsSelected(int i) => i == 0 ? _selected is null : string.Equals(ColorScheme.All[i - 1].Name, _selected, StringComparison.OrdinalIgnoreCase);
+    // The inherited scheme chosen explicitly (as older versions allowed) shows on the first card.
+    private bool IsSelected(int i) =>
+        i == 0 ? _selected is null || string.Equals(_inherited.Name, _selected, StringComparison.OrdinalIgnoreCase)
+            : string.Equals(SchemeAt(i).Name, _selected, StringComparison.OrdinalIgnoreCase);
 
     protected override void Paint(SKCanvas c)
     {
         for (int i = 0; i < Count; i++)
         {
-            ColorScheme scheme = i == 0 ? _inherited : ColorScheme.All[i - 1];
+            ColorScheme scheme = SchemeAt(i);
             SKRect r = CardRect(i);
             bool selected = IsSelected(i);
             Gfx.FillRound(c, r, Theme.Radius, scheme.Background);
             Gfx.StrokeRound(c, r, Theme.Radius, selected ? Theme.Accent : i == _hover ? Theme.TextMuted : Theme.BorderStrong, selected ? 2 : 1);
             string title = i == 0 ? $"{_inheritLabel} · {scheme.Name}" : scheme.Name;
-            Gfx.Text(c, title, r.Left + 10, r.Top + 15, Theme.FontXs, Theme.WeightSemibold, scheme.Foreground, TextAlignment.Left, r.Width - (selected ? 34 : 18));
+            // A scheme with its own font shows its name in it.
+            SKFont titleFont = scheme.Font is { } family ? Gfx.Font(Theme.FontXs + 5, TerminalFonts.Get(family).Regular) : Gfx.Font(Theme.FontXs, Theme.WeightSemibold);
+            Gfx.Text(c, title, r.Left + 10, r.Top + 15, titleFont, scheme.Foreground, TextAlignment.Left, r.Width - (selected ? 34 : 18));
             for (int k = 0; k < 6; k++)
                 Gfx.Circle(c, r.Left + 14 + k * 13, r.Bottom - 14, 4, scheme.Ansi[k + 1]);
             if (selected)

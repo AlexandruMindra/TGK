@@ -25,14 +25,18 @@ public sealed class TerminalFont : IDisposable
     /// <param name="family">Null or a family not installed: the bundled font.</param>
     public TerminalFont(float size, string? family = null)
     {
+        size = TerminalFonts.DrawSize(family, size);
         Size = size;
         (SKTypeface regularFace, SKTypeface boldFace) = TerminalFonts.Get(family);
         _primary = regularFace;
         Family = family;
-        foreach (SKTypeface face in new[] { regularFace, boldFace })
+        SKTypeface[] faces = [regularFace, boldFace];
+        for (int weight = 0; weight < faces.Length; weight++)
         {
+            // A family without a bold face (e.g. VT323) draws its bold text emboldened.
+            bool embolden = weight == 1 && boldFace == regularFace;
             foreach (bool italic in new[] { false, true })
-                _fonts.Add(CreateFont(face, size, italic));
+                _fonts.Add(CreateFont(faces[weight], size, italic, embolden));
         }
 
         SKFont regular = _fonts[0];
@@ -46,6 +50,7 @@ public sealed class TerminalFont : IDisposable
         StrikeY = MathF.Round(Baseline - (m.XHeight > 0 ? m.XHeight : size * 0.5f) / 2f);
     }
 
+    /// <summary>The size the font is drawn at (the chosen size, adjusted for the family: <see cref="TerminalFonts.DrawSize"/>).</summary>
     public float Size { get; }
 
     /// <summary>The family asked for (null: the bundled font).</summary>
@@ -162,11 +167,12 @@ public sealed class TerminalFont : IDisposable
         return widths[0];
     }
 
-    private static SKFont CreateFont(SKTypeface face, float size, bool italic) => new(face, size)
+    private static SKFont CreateFont(SKTypeface face, float size, bool italic, bool embolden = false) => new(face, size)
     {
         Subpixel = true,
         Edging = SKFontEdging.Antialias,
         Hinting = SKFontHinting.Slight,
         SkewX = italic ? ItalicSkew : 0,
+        Embolden = embolden,
     };
 }

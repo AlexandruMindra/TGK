@@ -96,6 +96,9 @@ public static class Theme
     public static SKTypeface Mono { get; }
     public static SKTypeface MonoBold { get; }
 
+    /// <summary>Bundled VT323 (a DEC VT320 terminal font), the retro scheme's font; it has no bold.</summary>
+    public static SKTypeface Retro { get; }
+
     private static readonly SKTypeface UiRegular;
     private static readonly SKTypeface UiBold;
     private static readonly List<SKData> FontData = []; // SKTypeface.FromData needs the data kept alive
@@ -105,6 +108,7 @@ public static class Theme
         (UiRegular, UiBold, UiFamily) = ResolveUiFont();
         Mono = LoadBundledFont("DejaVuSansMono.ttf") ?? UiRegular;
         MonoBold = LoadBundledFont("DejaVuSansMono-Bold.ttf") ?? Mono;
+        Retro = LoadBundledFont("VT323-Regular.ttf") ?? Mono;
     }
 
     /// <summary>UI typeface for a CSS-style weight (≥ 600 is bold).</summary>

@@ -147,12 +147,12 @@ public sealed class OptionsEditor
         // ---- Appearance ----
         _schemeCaption = appearance.Add(new OptionCaption("Color scheme"));
         _scheme = appearance.Add(new SchemePicker(inheritWord));
-        _scheme.Changed += () => { _schemeCaption.Overridden = _scheme.Selected is not null; AppearanceChanged?.Invoke(); };
-        _schemeCaption.ResetClicked += () => { _scheme.Selected = null; _schemeCaption.Overridden = false; AppearanceChanged?.Invoke(); };
+        _scheme.Changed += () => { _schemeCaption.Overridden = _scheme.Selected is not null; ApplySchemeFont(); AppearanceChanged?.Invoke(); };
+        _schemeCaption.ResetClicked += () => { _scheme.Selected = null; _schemeCaption.Overridden = false; ApplySchemeFont(); AppearanceChanged?.Invoke(); };
         _familyCaption = appearance.Add(new OptionCaption("Font"));
         _family = appearance.Add(new Dropdown());
-        _family.SelectionChanged += _ => { _familyCaption.Overridden = SelectedFamily is not null; AppearanceChanged?.Invoke(); };
-        _familyCaption.ResetClicked += () => { _family.SelectedIndex = 0; _familyCaption.Overridden = false; AppearanceChanged?.Invoke(); };
+        _family.SelectionChanged += _ => { _familyCaption.Overridden = SelectedFamily is not null; _fontFromScheme = false; AppearanceChanged?.Invoke(); };
+        _familyCaption.ResetClicked += () => { _family.SelectedIndex = 0; _familyCaption.Overridden = false; _fontFromScheme = false; AppearanceChanged?.Invoke(); };
         _fontCaption = appearance.Add(new OptionCaption("Font size (px)"));
         _font = appearance.Add(new FontStepper());
         _font.Changed += () => { _fontCaption.Overridden = _font.Field.Text.Length > 0; AppearanceChanged?.Invoke(); };
@@ -208,6 +208,37 @@ public sealed class OptionsEditor
             _font.Value is { } size && size >= HostOptions.MinFontSize && size <= HostOptions.MaxFontSize ? size : _inherited.FontSize.Value);
 
     private string? SelectedFamily => _familyValues.Count > 0 ? _familyValues[Math.Clamp(_family.SelectedIndex, 0, _familyValues.Count - 1)] : null;
+
+    // A scheme that comes with its font (Retro CRT: VT323) selects it in the font list too. Picking another scheme
+    // before touching the font gives back the font chosen before.
+    private bool _fontFromScheme;
+    private string? _fontBeforeScheme;
+
+    private void ApplySchemeFont()
+    {
+        string? font = _scheme.Selected is { } name ? ColorScheme.Find(name).Font : null;
+        if (font is not null)
+        {
+            if (!_fontFromScheme)
+                _fontBeforeScheme = SelectedFamily;
+            SelectFamily(font);
+            _fontFromScheme = true;
+        }
+        else if (_fontFromScheme)
+        {
+            SelectFamily(_fontBeforeScheme);
+            _fontFromScheme = false;
+        }
+    }
+
+    private void SelectFamily(string? family)
+    {
+        if (family is not null && !_familyValues.Exists(f => string.Equals(f, family, StringComparison.OrdinalIgnoreCase)))
+            BuildFamilyOptions(family);
+        else
+            _family.SelectedIndex = family is null ? 0 : _familyValues.FindIndex(f => string.Equals(f, family, StringComparison.OrdinalIgnoreCase));
+        _familyCaption.Overridden = family is not null;
+    }
 
     private VaultData Vault => _view.Services.Vault.Current;
 
@@ -447,7 +478,7 @@ public sealed class OptionsEditor
     }
 
     private static string FamilyName(string family) =>
-        string.Equals(family, TerminalFonts.Bundled, StringComparison.OrdinalIgnoreCase) ? $"{TerminalFonts.Bundled} (built in)"
+        TerminalFonts.IsBuiltIn(family) ? $"{family} (built in)"
         : TerminalFonts.IsAvailable(family) ? family
         : $"{family} (not installed here)";
 

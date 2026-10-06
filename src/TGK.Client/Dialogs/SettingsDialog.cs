@@ -306,6 +306,7 @@ public sealed class SettingsDialog : TabbedDialog
             Gfx.StrokeRound(c, r, Theme.Radius, Theme.Border);
             int save = c.Save();
             c.ClipRect(SKRect.Inflate(r, -1, -1));
+            size = TerminalFonts.DrawSize(family, size);
             SKFont font = Gfx.Font(size, TerminalFonts.Get(family).Regular);
             float lineH = MathF.Ceiling(size * 1.35f);
             float y = 14 + lineH / 2f;

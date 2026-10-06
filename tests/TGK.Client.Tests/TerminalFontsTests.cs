@@ -24,6 +24,7 @@ public sealed class TerminalFontsTests
     public void BundledFont_IsAlwaysAvailable_AndFirst()
     {
         Assert.Equal(TerminalFonts.Bundled, TerminalFonts.Available[0]);
+        Assert.Equal(TerminalFonts.Retro, TerminalFonts.Available[1]);
         Assert.True(TerminalFonts.IsAvailable(null));
         Assert.True(TerminalFonts.IsAvailable(TerminalFonts.Bundled));
         Assert.False(TerminalFonts.IsAvailable("No Such Font 123"));

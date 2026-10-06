@@ -10,6 +10,18 @@ shows the current Unreleased section.
 
 ## [Unreleased]
 
+### Added
+
+- **Retro CRT color scheme**: a green phosphor monitor (every color a shade of green, told apart by brightness) with
+  its own font, VT323 (after the DEC VT320's), now bundled. Picking the scheme also picks the font (another scheme
+  gives back the font you had); bold text is drawn bolder, and VT323 is scaled so a font size looks alike in both
+  fonts.
+
+### Changed
+
+- **Color schemes**: the scheme shown on the first card (the default, or the one inherited from the group or the
+  defaults) is no longer offered a second time; TGK Dark no longer appears twice in Settings.
+
 ### Fixed
 
 - **Settings, New host / Edit host, group settings**: the first of these dialogs in a run no longer freezes the window

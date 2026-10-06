@@ -60,8 +60,8 @@ entirely on one machine.
   - Jump hosts (chains up to 4 hops), keep-alive, connect timeout, automatic reconnect.
   - Local, remote and dynamic (SOCKS) port forwarding, started with the session.
   - Startup command, environment variables, terminal type.
-  - Font (bundled or any installed monospace font), font size, color scheme (TGK Dark, Solarized, Dracula, Nord,
-    Gruvbox, One Dark), opt-in legacy algorithms for old devices.
+  - Font (bundled DejaVu Sans Mono or VT323, or any installed monospace font), font size, color scheme (TGK Dark,
+    Solarized, Dracula, Nord, Gruvbox, One Dark, Retro CRT), opt-in legacy algorithms for old devices.
 - Terminal settings (font, size, colors, scrollback, cursor, copy-on-select) are kept in the vault and follow you to
   every device.
 
@@ -170,4 +170,5 @@ End-to-end SSH tests against a local test server and GUI checks: [docs/DEV-TESTI
 
 [MIT](LICENSE). Third-party components: [Blossom](https://github.com/cretucosmin3/Blossom) (MIT),
 [SSH.NET](https://github.com/sshnet/SSH.NET) (MIT), SkiaSharp and Silk.NET (MIT), QRCoder (MIT), GLFW (zlib),
-DejaVu Sans Mono ([license](assets/fonts/DejaVu-LICENSE.txt)).
+DejaVu Sans Mono ([license](assets/fonts/DejaVu-LICENSE.txt)), VT323 (SIL Open Font License,
+[license](assets/fonts/VT323-LICENSE.txt)).

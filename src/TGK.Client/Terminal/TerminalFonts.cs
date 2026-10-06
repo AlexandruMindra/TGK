@@ -26,10 +26,25 @@ public static class TerminalFonts
     /// <summary>The bundled font's name (<see cref="EffectiveOptions.DefaultFontFamily"/>).</summary>
     public static string Bundled => EffectiveOptions.DefaultFontFamily;
 
+    /// <summary>The bundled retro font (VT323, after the DEC VT320's), the "Retro CRT" scheme's font.</summary>
+    public const string Retro = "VT323";
+
+    /// <summary>
+    /// The size to draw <paramref name="family"/> at for a font size of <paramref name="size"/>: VT323's letters fill
+    /// less of its size (cell 6 px wide at 14 px, where DejaVu Sans Mono's is 8), so it is drawn 1.3 times larger and a
+    /// size looks alike in both.
+    /// </summary>
+    public static float DrawSize(string? family, float size) =>
+        string.Equals(family, Retro, StringComparison.OrdinalIgnoreCase) ? MathF.Round(size * 1.3f * 2) / 2 : size;
+
+    /// <summary>Whether <paramref name="family"/> is one of the fonts that come with TGK (always available).</summary>
+    public static bool IsBuiltIn(string? family) =>
+        string.Equals(family, Bundled, StringComparison.OrdinalIgnoreCase) || string.Equals(family, Retro, StringComparison.OrdinalIgnoreCase);
+
     /// <summary>Lists the installed fonts on a background thread, so that dialogs offering them open at once.</summary>
     public static void WarmUp() => _ = Task.Run(() => _ = Available);
 
-    /// <summary>The bundled font first, then the installed monospace families by name.</summary>
+    /// <summary>The bundled fonts first, then the installed monospace families by name.</summary>
     public static IReadOnlyList<string> Available => AvailableLazy.Value;
 
     // Words in the names of terminal fonts ("Mono" and "Code" cover most of them; Nerd Fonts keep the base name).
@@ -61,7 +76,7 @@ public static class TerminalFonts
         {
             foreach (string family in SKFontManager.Default.GetFontFamilies())
             {
-                if (!string.Equals(family, Bundled, StringComparison.OrdinalIgnoreCase)
+                if (!IsBuiltIn(family)
                     && IsCandidate(family)
                     && IsMonospaceFamily(family))
                 {
@@ -73,21 +88,21 @@ public static class TerminalFonts
         {
             Blossom.Log.Warning($"Could not list the installed fonts: {ex.Message}");
         }
-        return [Bundled, .. families];
+        return [Bundled, Retro, .. families];
     });
 
     /// <summary>Whether <paramref name="family"/> can be used on this device (the bundled font always can).</summary>
     public static bool IsAvailable(string? family) =>
         family is null
-        || string.Equals(family, Bundled, StringComparison.OrdinalIgnoreCase)
+        || IsBuiltIn(family)
         || Available.Any(f => string.Equals(f, family, StringComparison.OrdinalIgnoreCase))
         || Resolve(family) is not null;
 
     /// <summary>Regular and bold faces of <paramref name="family"/>; the bundled font for null, the bundled name or a family not installed.</summary>
     public static (SKTypeface Regular, SKTypeface Bold) Get(string? family) =>
-        family is null || string.Equals(family, Bundled, StringComparison.OrdinalIgnoreCase)
-            ? (Theme.Mono, Theme.MonoBold)
-            : Resolve(family) ?? (Theme.Mono, Theme.MonoBold);
+        family is null || string.Equals(family, Bundled, StringComparison.OrdinalIgnoreCase) ? (Theme.Mono, Theme.MonoBold)
+        : string.Equals(family, Retro, StringComparison.OrdinalIgnoreCase) ? (Theme.Retro, Theme.Retro)
+        : Resolve(family) ?? (Theme.Mono, Theme.MonoBold);
 
     private static (SKTypeface Regular, SKTypeface Bold)? Resolve(string family)
     {

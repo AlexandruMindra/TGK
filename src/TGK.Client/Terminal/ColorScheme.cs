@@ -11,9 +11,11 @@ namespace TGK.Client.Terminal;
 /// </summary>
 public sealed class ColorScheme
 {
-    private ColorScheme(string name, uint[] ansi, uint foreground, uint background, uint cursor, SKColor selection, bool boldIsBright = true)
+    private ColorScheme(string name, uint[] ansi, uint foreground, uint background, uint cursor, SKColor selection, bool boldIsBright = true,
+        string? font = null)
     {
         Name = name;
+        Font = font;
         BoldIsBright = boldIsBright;
         Ansi = Array.ConvertAll(ansi, c => new SKColor(0xFF000000 | c));
         Foreground = new SKColor(0xFF000000 | foreground);
@@ -28,6 +30,9 @@ public sealed class ColorScheme
     public SKColor Background { get; }
     public SKColor Cursor { get; }
     public SKColor Selection { get; }
+
+    /// <summary>The font that comes with the scheme (picking the scheme in the settings also picks it), or null.</summary>
+    public string? Font { get; }
 
     /// <summary>
     /// Bold text in one of the 8 basic colors uses its bright variant (xterm's default). Off for Solarized, whose
@@ -76,6 +81,13 @@ public sealed class ColorScheme
             0x282C34, 0xE06C75, 0x98C379, 0xE5C07B, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xABB2BF,
             0x5C6370, 0xE06C75, 0x98C379, 0xE5C07B, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xFFFFFF,
         ], 0xABB2BF, 0x282C34, 0x528BFF, new SKColor(0x3E, 0x44, 0x51)),
+        // A green phosphor monitor (VT220, IBM 5151): every color a shade of green, told apart by brightness, with the
+        // VT320's font.
+        new("Retro CRT",
+        [
+            0x0C2412, 0x1FA347, 0x3DFF6E, 0x9BFF6A, 0x178A3A, 0x2FCB5A, 0x6BFFA0, 0xA8FFBE,
+            0x2A6B3A, 0x34D463, 0x7BFF9A, 0xCBFF9E, 0x26B04F, 0x54E37E, 0x9DFFC2, 0xE4FFEA,
+        ], 0x3DFF6E, 0x050F07, 0x9CFFB0, new SKColor(0x3D, 0xFF, 0x6E, 0x50), font: TerminalFonts.Retro),
     ];
 
     /// <summary>The scheme named <paramref name="name"/> (case-insensitive), or <see cref="TgkDark"/> for an unknown name.</summary>
