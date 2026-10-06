@@ -32,6 +32,9 @@ shows the current Unreleased section.
   for seconds (and no longer adds hundreds of MB of memory) on systems with many fonts installed, as is common on
   Linux. The terminal font list now opens only the fonts whose name suggests a terminal font, and is built in the
   background at startup; a font chosen on another device and installed here still works even if it is not listed.
+- **High-resolution displays**: TGK now follows the display's scale (Windows' Scale setting, e.g. 175% on a 4K
+  screen; Xft.dpi on Linux). Text and everything else were drawn at 100% there and looked tiny. The window opens at
+  the scaled size, and moving it to a display with another scale rescales the UI. macOS already scaled correctly.
 
 ## [0.3.0] - 2026-10-06
 
