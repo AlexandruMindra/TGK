@@ -27,8 +27,8 @@ entirely on one machine.
   "Check for updates" in the account menu asks right away. Builds run from source only offer the download page.
 - Built-in xterm-compatible terminal: 256 colors and truecolor, alternate screen (vim, htop, mc, tmux), scrollback,
   mouse reporting, bracketed paste, wide characters, selection with copy/paste.
-- Auth with private keys (OpenSSH/PEM, with passphrase), password or keyboard-interactive; host key verification
-  on first connect and on change.
+- Auth with private keys (OpenSSH, PEM/PKCS#8 or PuTTY, with passphrase), password or keyboard-interactive; host key
+  verification on first connect and on change.
 
 **Files (SFTP)**
 - A Files tab per host (right-click a host → Browse files, or from a terminal's menu): folders with back/forward/up, a
@@ -53,18 +53,26 @@ entirely on one machine.
 
 **Hosts**
 - Groups, search, tag colors, identities (username + password or private key) shared between hosts.
+- Keys & identities: generate a new key (Ed25519, or RSA 4096 for older servers) right in the vault, copy any key's
+  public half as an `authorized_keys` line, or load a key already on this device — TGK lists the ones in `~/.ssh`,
+  `~/.ssh/config` and saved PuTTY / WinSCP sessions (never searching the whole disk).
 - Per-host options with inheritance (built-in default ← global ← group ← host):
   - Jump hosts (chains up to 4 hops), keep-alive, connect timeout, automatic reconnect.
   - Local, remote and dynamic (SOCKS) port forwarding, started with the session.
   - Startup command, environment variables, terminal type.
   - Font (bundled or any installed monospace font), font size, color scheme (TGK Dark, Solarized, Dracula, Nord,
     Gruvbox, One Dark), opt-in legacy algorithms for old devices.
+- Terminal settings (font, size, colors, scrollback, cursor, copy-on-select) are kept in the vault and follow you to
+  every device.
 
 **Agents (MCP)**
-- Let Claude Code or any MCP client work on your saved hosts through TGK: run commands, read, search and edit files
-  (SFTP, with a fallback for servers without it). Off by default; per host or group you choose Read only, Ask (you
-  approve every change in TGK, with the exact command or a diff) or Full, plus allowed commands and protected paths.
-  The agent never sees passwords or keys; every call is shown live and kept in an audit log. See [docs/AGENTS.md](docs/AGENTS.md).
+- Let Claude Code or any MCP client work on your saved hosts through TGK: run commands, read, search and edit files,
+  copy files up and down (SFTP, with a fallback for servers without it). Off by default (Settings → Agents); per
+  host, group or for all hosts you choose Read only, Ask (you approve every change in TGK, with the exact command or a
+  diff) or Full, plus commands that may run without asking and protected paths (keys and other secrets out of the
+  box). Commands with sudo are always approved by you, and TGK supplies the password. The agent never sees passwords
+  or keys; every call is shown live, mirrored in an "Agent log" tab and kept in an audit log.
+  See [docs/AGENTS.md](docs/AGENTS.md).
 
 **Vault**
 - **Server mode:** sign up from the app, Google Authenticator (TOTP) required, stay signed in per device, see and
@@ -108,7 +116,8 @@ or the [nightly](https://github.com/AlexandruMindra/TGK/releases/tag/nightly) bu
 
 Once installed, TGK updates itself ("Update now" in the status bar). The macOS builds are not signed with an Apple
 Developer ID or notarized yet: the first time, right-click TGK in Applications and choose **Open**, or allow it in
-System Settings → Privacy & Security. If macOS says the app "is damaged", run `xattr -cr /Applications/TGK.app` once. Tested mainly on Linux; Windows is supported but less tested, macOS is new.
+System Settings → Privacy & Security. If macOS says the app "is damaged", run `xattr -cr /Applications/TGK.app` once.
+Tested mainly on Linux; Windows is supported but less tested, macOS is new.
 
 To build from source you need the [.NET 10 SDK](https://dotnet.microsoft.com/download).
 
