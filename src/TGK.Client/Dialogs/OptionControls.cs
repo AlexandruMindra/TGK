@@ -513,9 +513,10 @@ public sealed class SchemePicker : Control
     }
 
     // The inherited scheme chosen explicitly (as older versions allowed) shows on the first card.
+    // Compared through Find, which also knows schemes' earlier names.
     private bool IsSelected(int i) =>
-        i == 0 ? _selected is null || string.Equals(_inherited.Name, _selected, StringComparison.OrdinalIgnoreCase)
-            : string.Equals(SchemeAt(i).Name, _selected, StringComparison.OrdinalIgnoreCase);
+        i == 0 ? _selected is null || ColorScheme.Find(_selected) == _inherited
+            : _selected is not null && ColorScheme.Find(_selected) == SchemeAt(i);
 
     protected override void Paint(SKCanvas c)
     {

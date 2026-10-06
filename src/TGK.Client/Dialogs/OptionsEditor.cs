@@ -209,7 +209,7 @@ public sealed class OptionsEditor
 
     private string? SelectedFamily => _familyValues.Count > 0 ? _familyValues[Math.Clamp(_family.SelectedIndex, 0, _familyValues.Count - 1)] : null;
 
-    // A scheme that comes with its font (Retro CRT: VT323) selects it in the font list too. Picking another scheme
+    // A scheme that comes with its font (the retro ones: VT323) selects it in the font list too. Picking another scheme
     // before touching the font gives back the font chosen before.
     private bool _fontFromScheme;
     private string? _fontBeforeScheme;

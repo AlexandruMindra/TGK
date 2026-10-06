@@ -81,18 +81,42 @@ public sealed class ColorScheme
             0x282C34, 0xE06C75, 0x98C379, 0xE5C07B, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xABB2BF,
             0x5C6370, 0xE06C75, 0x98C379, 0xE5C07B, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xFFFFFF,
         ], 0xABB2BF, 0x282C34, 0x528BFF, new SKColor(0x3E, 0x44, 0x51)),
-        // A green phosphor monitor (VT220, IBM 5151): every color a shade of green, told apart by brightness, with the
-        // VT320's font.
-        new("Retro CRT",
+        // Retro schemes, each with the bundled VT323 font. Monitors: green and amber phosphor (VT220, IBM 5151 / 3180),
+        // every color a shade of the phosphor told apart by brightness. Home computers: the Commodore 64's 16 colors on
+        // its blue screen (Pepto's palette) and IBM CGA's on black, as at a DOS prompt. Synthwave '84 after Robb Owen's
+        // 80s neon theme.
+        new("Green CRT",
         [
             0x0C2412, 0x1FA347, 0x3DFF6E, 0x9BFF6A, 0x178A3A, 0x2FCB5A, 0x6BFFA0, 0xA8FFBE,
             0x2A6B3A, 0x34D463, 0x7BFF9A, 0xCBFF9E, 0x26B04F, 0x54E37E, 0x9DFFC2, 0xE4FFEA,
         ], 0x3DFF6E, 0x050F07, 0x9CFFB0, new SKColor(0x3D, 0xFF, 0x6E, 0x50), font: TerminalFonts.Retro),
+        new("Amber CRT",
+        [
+            0x2A1A05, 0xC25A12, 0xFFB000, 0xFFD27A, 0x9C5A0E, 0xD9822B, 0xFFC54D, 0xFFE2A8,
+            0x6B4510, 0xE0731E, 0xFFC233, 0xFFE9B8, 0xB8742A, 0xF0A04B, 0xFFD98A, 0xFFF4DE,
+        ], 0xFFB000, 0x120B02, 0xFFD27A, new SKColor(0xFF, 0xB0, 0x00, 0x50), font: TerminalFonts.Retro),
+        new("Commodore 64",
+        [
+            0x000000, 0x9F4E44, 0x5CAB5E, 0xC9D487, 0x50459B, 0xA057A3, 0x6ABFC6, 0xADADAD,
+            0x626262, 0xCB7E75, 0x9AE29B, 0xEDF171, 0x887ECB, 0xC77ACB, 0x9AE6EB, 0xFFFFFF,
+        ], 0x887ECB, 0x40318D, 0x887ECB, new SKColor(0x88, 0x7E, 0xCB, 0x60), font: TerminalFonts.Retro),
+        new("MS-DOS",
+        [
+            0x000000, 0xAA0000, 0x00AA00, 0xAA5500, 0x0000AA, 0xAA00AA, 0x00AAAA, 0xAAAAAA,
+            0x555555, 0xFF5555, 0x55FF55, 0xFFFF55, 0x5555FF, 0xFF55FF, 0x55FFFF, 0xFFFFFF,
+        ], 0xAAAAAA, 0x000000, 0xAAAAAA, new SKColor(0xAA, 0xAA, 0xAA, 0x50), font: TerminalFonts.Retro),
+        new("Synthwave '84",
+        [
+            0x241B30, 0xFE4450, 0x72F1B8, 0xFEDE5D, 0x6E95FF, 0xFF7EDB, 0x03EDF9, 0xE0D7EE,
+            0x495495, 0xFF6E7A, 0x9CFFD6, 0xFFF08A, 0x9AB6FF, 0xFFA6EA, 0x7CF6FF, 0xFFFFFF,
+        ], 0xF2E9FF, 0x241B30, 0xFF7EDB, new SKColor(0xFF, 0x7E, 0xDB, 0x50), font: TerminalFonts.Retro),
     ];
 
     /// <summary>The scheme named <paramref name="name"/> (case-insensitive), or <see cref="TgkDark"/> for an unknown name.</summary>
     public static ColorScheme Find(string? name)
     {
+        if (string.Equals(name, "Retro CRT", StringComparison.OrdinalIgnoreCase))
+            name = "Green CRT"; // its name in nightly builds before 0.4.0
         foreach (ColorScheme scheme in All)
         {
             if (string.Equals(scheme.Name, name, StringComparison.OrdinalIgnoreCase))
