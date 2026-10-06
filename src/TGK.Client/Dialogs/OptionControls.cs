@@ -528,9 +528,7 @@ public sealed class SchemePicker : Control
             Gfx.FillRound(c, r, Theme.Radius, scheme.Background);
             Gfx.StrokeRound(c, r, Theme.Radius, selected ? Theme.Accent : i == _hover ? Theme.TextMuted : Theme.BorderStrong, selected ? 2 : 1);
             string title = i == 0 ? $"{_inheritLabel} · {scheme.Name}" : scheme.Name;
-            // A scheme with its own font shows its name in it.
-            SKFont titleFont = scheme.Font is { } family ? Gfx.Font(Theme.FontXs + 5, TerminalFonts.Get(family).Regular) : Gfx.Font(Theme.FontXs, Theme.WeightSemibold);
-            Gfx.Text(c, title, r.Left + 10, r.Top + 15, titleFont, scheme.Foreground, TextAlignment.Left, r.Width - (selected ? 34 : 18));
+            Gfx.Text(c, title, r.Left + 10, r.Top + 15, Theme.FontXs, Theme.WeightSemibold, scheme.Foreground, TextAlignment.Left, r.Width - (selected ? 34 : 18));
             for (int k = 0; k < 6; k++)
                 Gfx.Circle(c, r.Left + 14 + k * 13, r.Bottom - 14, 4, scheme.Ansi[k + 1]);
             if (selected)

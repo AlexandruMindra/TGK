@@ -26,7 +26,7 @@ public static class TerminalFonts
     /// <summary>The bundled font's name (<see cref="EffectiveOptions.DefaultFontFamily"/>).</summary>
     public static string Bundled => EffectiveOptions.DefaultFontFamily;
 
-    /// <summary>The bundled retro font (VT323, after the DEC VT320's), the retro schemes' font.</summary>
+    /// <summary>The bundled retro font (VT323, after the DEC VT320's), suited to the retro color schemes.</summary>
     public const string Retro = "VT323";
 
     /// <summary>

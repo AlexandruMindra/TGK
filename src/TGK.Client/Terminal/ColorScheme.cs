@@ -11,11 +11,9 @@ namespace TGK.Client.Terminal;
 /// </summary>
 public sealed class ColorScheme
 {
-    private ColorScheme(string name, uint[] ansi, uint foreground, uint background, uint cursor, SKColor selection, bool boldIsBright = true,
-        string? font = null)
+    private ColorScheme(string name, uint[] ansi, uint foreground, uint background, uint cursor, SKColor selection, bool boldIsBright = true)
     {
         Name = name;
-        Font = font;
         BoldIsBright = boldIsBright;
         Ansi = Array.ConvertAll(ansi, c => new SKColor(0xFF000000 | c));
         Foreground = new SKColor(0xFF000000 | foreground);
@@ -30,9 +28,6 @@ public sealed class ColorScheme
     public SKColor Background { get; }
     public SKColor Cursor { get; }
     public SKColor Selection { get; }
-
-    /// <summary>The font that comes with the scheme (picking the scheme in the settings also picks it), or null.</summary>
-    public string? Font { get; }
 
     /// <summary>
     /// Bold text in one of the 8 basic colors uses its bright variant (xterm's default). Off for Solarized, whose
@@ -81,47 +76,40 @@ public sealed class ColorScheme
             0x282C34, 0xE06C75, 0x98C379, 0xE5C07B, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xABB2BF,
             0x5C6370, 0xE06C75, 0x98C379, 0xE5C07B, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xFFFFFF,
         ], 0xABB2BF, 0x282C34, 0x528BFF, new SKColor(0x3E, 0x44, 0x51)),
-        // Retro schemes, each with the bundled VT323 font. Monitors: green and amber phosphor (VT220, IBM 5151 / 3180),
-        // every color a shade of the phosphor told apart by brightness. Home computers: the Commodore 64's 16 colors on
-        // its blue screen (Pepto's palette) and IBM CGA's on black, as at a DOS prompt. Synthwave '84 after Robb Owen's
+        // Retro schemes (the bundled VT323 font suits them; it is chosen separately). Amber CRT: an amber phosphor monitor
+        // (IBM 3180, VT220), every color a shade of amber told apart by brightness. Commodore 64: its 16 colors on its blue
+        // screen (Pepto's palette). MS-DOS: IBM CGA's colors on black, as at a DOS prompt. Synthwave '84 after Robb Owen's
         // 80s neon theme. Teletype: ink on paper, as a printing terminal.
-        new("Green CRT",
-        [
-            0x0C2412, 0x1FA347, 0x3DFF6E, 0x9BFF6A, 0x178A3A, 0x2FCB5A, 0x6BFFA0, 0xA8FFBE,
-            0x2A6B3A, 0x34D463, 0x7BFF9A, 0xCBFF9E, 0x26B04F, 0x54E37E, 0x9DFFC2, 0xE4FFEA,
-        ], 0x3DFF6E, 0x050F07, 0x9CFFB0, new SKColor(0x3D, 0xFF, 0x6E, 0x50), font: TerminalFonts.Retro),
         new("Amber CRT",
         [
             0x2A1A05, 0xC25A12, 0xFFB000, 0xFFD27A, 0x9C5A0E, 0xD9822B, 0xFFC54D, 0xFFE2A8,
             0x6B4510, 0xE0731E, 0xFFC233, 0xFFE9B8, 0xB8742A, 0xF0A04B, 0xFFD98A, 0xFFF4DE,
-        ], 0xFFB000, 0x120B02, 0xFFD27A, new SKColor(0xFF, 0xB0, 0x00, 0x50), font: TerminalFonts.Retro),
+        ], 0xFFB000, 0x120B02, 0xFFD27A, new SKColor(0xFF, 0xB0, 0x00, 0x50)),
         new("Commodore 64",
         [
             0x000000, 0x9F4E44, 0x5CAB5E, 0xC9D487, 0x50459B, 0xA057A3, 0x6ABFC6, 0xADADAD,
             0x626262, 0xCB7E75, 0x9AE29B, 0xEDF171, 0x887ECB, 0xC77ACB, 0x9AE6EB, 0xFFFFFF,
-        ], 0x887ECB, 0x40318D, 0x887ECB, new SKColor(0x88, 0x7E, 0xCB, 0x60), font: TerminalFonts.Retro),
+        ], 0x887ECB, 0x40318D, 0x887ECB, new SKColor(0x88, 0x7E, 0xCB, 0x60)),
         new("MS-DOS",
         [
             0x000000, 0xAA0000, 0x00AA00, 0xAA5500, 0x0000AA, 0xAA00AA, 0x00AAAA, 0xAAAAAA,
             0x555555, 0xFF5555, 0x55FF55, 0xFFFF55, 0x5555FF, 0xFF55FF, 0x55FFFF, 0xFFFFFF,
-        ], 0xAAAAAA, 0x000000, 0xAAAAAA, new SKColor(0xAA, 0xAA, 0xAA, 0x50), font: TerminalFonts.Retro),
+        ], 0xAAAAAA, 0x000000, 0xAAAAAA, new SKColor(0xAA, 0xAA, 0xAA, 0x50)),
         new("Synthwave '84",
         [
             0x241B30, 0xFE4450, 0x72F1B8, 0xFEDE5D, 0x6E95FF, 0xFF7EDB, 0x03EDF9, 0xE0D7EE,
             0x495495, 0xFF6E7A, 0x9CFFD6, 0xFFF08A, 0x9AB6FF, 0xFFA6EA, 0x7CF6FF, 0xFFFFFF,
-        ], 0xF2E9FF, 0x241B30, 0xFF7EDB, new SKColor(0xFF, 0x7E, 0xDB, 0x50), font: TerminalFonts.Retro),
+        ], 0xF2E9FF, 0x241B30, 0xFF7EDB, new SKColor(0xFF, 0x7E, 0xDB, 0x50)),
         new("Teletype",
         [
             0x2B2620, 0xA6322B, 0x4F7A28, 0x9A6A12, 0x2F5A8C, 0x7A3E78, 0x2E7A73, 0x8A7F6E,
             0x6B6254, 0xC4453C, 0x5E9130, 0xB98318, 0x3C6FA8, 0x965092, 0x38928A, 0x1A1712,
-        ], 0x2B2620, 0xF1E8D2, 0x2B2620, new SKColor(0x2B, 0x26, 0x20, 0x38), font: TerminalFonts.Retro),
+        ], 0x2B2620, 0xF1E8D2, 0x2B2620, new SKColor(0x2B, 0x26, 0x20, 0x38)),
     ];
 
     /// <summary>The scheme named <paramref name="name"/> (case-insensitive), or <see cref="TgkDark"/> for an unknown name.</summary>
     public static ColorScheme Find(string? name)
     {
-        if (string.Equals(name, "Retro CRT", StringComparison.OrdinalIgnoreCase))
-            name = "Green CRT"; // its name in nightly builds before 0.4.0
         foreach (ColorScheme scheme in All)
         {
             if (string.Equals(scheme.Name, name, StringComparison.OrdinalIgnoreCase))

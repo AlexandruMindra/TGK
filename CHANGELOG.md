@@ -12,11 +12,11 @@ shows the current Unreleased section.
 
 ### Added
 
-- **Retro color schemes**: Green CRT and Amber CRT (phosphor monitors: every color a shade of the phosphor, told apart
-  by brightness), Commodore 64 (its 16 colors on the blue screen), MS-DOS (IBM CGA's colors on black) and
-  Synthwave '84 (80s neon) and Teletype (ink on paper), each with its own font, VT323 (after the DEC VT320's), now bundled. Picking one of them
-  also picks the font (another scheme gives back the font you had); bold text is drawn bolder, and VT323 is scaled
-  so a font size looks alike in both fonts.
+- **Retro color schemes**: Amber CRT (an amber phosphor monitor: every color a shade of amber, told apart by
+  brightness), Commodore 64 (its 16 colors on the blue screen), MS-DOS (IBM CGA's colors on black), Synthwave '84
+  (80s neon) and Teletype (ink on paper).
+- **VT323 font** (after the DEC VT320's) is bundled and offered with the terminal fonts; it suits the retro schemes.
+  It is scaled so a font size looks alike in it and in DejaVu Sans Mono, and bold text is drawn bolder.
 
 ### Changed
 

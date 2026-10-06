@@ -17,16 +17,11 @@ public sealed class ColorSchemeTests
     }
 
     [Fact]
-    public void RetroSchemes_ComeWithTheBundledRetroFont()
+    public void RetroSchemes_AreListed_AndTheRetroFontIsBuiltIn()
     {
-        foreach (string name in new[] { "Green CRT", "Amber CRT", "Commodore 64", "MS-DOS", "Synthwave '84", "Teletype" })
-        {
-            ColorScheme retro = ColorScheme.Find(name.ToLowerInvariant());
-            Assert.Equal(name, retro.Name);
-            Assert.Equal(TerminalFonts.Retro, retro.Font);
-        }
-        Assert.Equal("Green CRT", ColorScheme.Find("Retro CRT").Name); // its earlier name
-        Assert.Null(ColorScheme.TgkDark.Font);
+        foreach (string name in new[] { "Amber CRT", "Commodore 64", "MS-DOS", "Synthwave '84", "Teletype" })
+            Assert.Equal(name, ColorScheme.Find(name.ToLowerInvariant()).Name);
+        Assert.Equal(ColorScheme.TgkDark, ColorScheme.Find("Green CRT")); // removed: falls back to the default
 
         Assert.True(TerminalFonts.IsBuiltIn(TerminalFonts.Retro));
         Assert.True(TerminalFonts.IsAvailable(TerminalFonts.Retro));
