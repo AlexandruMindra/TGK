@@ -40,7 +40,6 @@ public static class AppWindow
             return;
         _hooked = true;
         _app = app;
-        DisplayScale.Install(app, () => Resized?.Invoke()); // first: it turns the view size Blossom just set into logical units
         Shell.ClientResized += (_, _) => Resized?.Invoke();
         if (OperatingSystem.IsMacOS())
             HookLiveResize();
