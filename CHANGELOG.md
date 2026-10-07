@@ -34,7 +34,8 @@ shows the current Unreleased section.
   background at startup; a font chosen on another device and installed here still works even if it is not listed.
 - **High-resolution displays**: TGK now follows the display's scale (Windows' Scale setting, e.g. 175% on a 4K
   screen; Xft.dpi on Linux). Text and everything else were drawn at 100% there and looked tiny. The window opens at
-  the scaled size, and moving it to a display with another scale rescales the UI. macOS already scaled correctly.
+  the scaled size, and moving it to a display with another scale, or changing the scale while TGK runs, rescales the
+  UI. macOS already scaled correctly. (Blossom 0.1.8, the UI library, now does this itself.)
 
 ## [0.3.0] - 2026-10-06
 
