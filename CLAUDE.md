@@ -13,5 +13,10 @@
   - `nightly` is a rolling pre-release rebuilt on every push to `main` (`X.Y.Z-nightly.N`); it is not a release.
   - Every user-visible change goes into `CHANGELOG.md` under `## [Unreleased]` in the same change; a release renames that
     section to `## [X.Y.Z] - date` (its text becomes the release notes; CI refuses a release without it).
+- **Windows code signing** (Authenticode via Azure Artifact Signing, `.github/workflows/build.yml`; setup in
+  `docs/RELEASING.md`, "Code signing") keeps SmartScreen from flagging TGK: keep it signing every Windows executable,
+  TGK assembly and the installer, after the last change to them (sign, then zip/pack, then sign the installer).
+  Never remove or weaken the signing or signature-check steps, never sign pull request builds, never put a
+  certificate, key or secret in the repo (only GitHub secrets/variables).
 - Installed clients update themselves from the release assets: keep their names and layout (`docs/RELEASING.md`,
   "Self-update contract").
