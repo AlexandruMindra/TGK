@@ -16,6 +16,10 @@
 7. **`nightly` is not a release.** Every push to `main` replaces the `nightly` pre-release (tag and files) with that
    commit's build, versioned `X.Y.Z-nightly.N` (X.Y.Z = the upcoming version, N = CI run number). Pull request
    builds are `X.Y.Z-ci.N` and are only kept as run artifacts.
+8. **Releases are cut only on the maintainer's word.** A coding agent may prepare a release (the CHANGELOG section,
+   the checks above) but creates and pushes the tag `vX.Y.Z`, and with it the GitHub release, only when the
+   maintainer asked for that release or approved it explicitly, for that version. Nightly builds are not affected:
+   they follow every push to `main`.
 
 Every binary also records its commit (`X.Y.Z+<sha>` in the informational version).
 
