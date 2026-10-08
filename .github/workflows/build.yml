@@ -108,6 +108,48 @@ jobs:
         run: |
           tar -czf dist/TGK-linux-x64.tar.gz -C publish TGK
           packaging/linux/build-appimage.sh publish/TGK "$VERSION" dist
+      # Windows code signing (Authenticode), so Windows and SmartScreen show the publisher instead of "Unknown
+      # publisher", and the reputation SmartScreen builds up follows the certificate rather than each new file.
+      # Azure Artifact Signing; on pushes to main and v* tags only, and only once it is set up (docs/RELEASING.md,
+      # "Code signing"). Without it, the Windows files are built unsigned and the step says so.
+      - name: Signing (Windows)
+        id: winsign
+        if: matrix.rid == 'win-x64'
+        shell: pwsh
+        env:
+          SIGNING_ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if (-not $env:SIGNING_ACCOUNT) {
+            Write-Output "::warning::Windows files are not signed: Artifact Signing is not set up (docs/RELEASING.md, Code signing)"
+            "enabled=false" >> $env:GITHUB_OUTPUT
+          } elseif ($env:EVENT -ne 'push') {
+            Write-Output "Windows files are signed only for pushes to main and v* tags."
+            "enabled=false" >> $env:GITHUB_OUTPUT
+          } else {
+            "enabled=true" >> $env:GITHUB_OUTPUT
+            # TGK's own executables and assemblies; the third-party ones keep their publishers' signatures.
+            $files = Get-ChildItem publish/TGK -File | Where-Object { $_.Name -match '^(TGK|tgk-).*\.(exe|dll)$' }
+            "files<<EOF" >> $env:GITHUB_OUTPUT
+            $files.FullName >> $env:GITHUB_OUTPUT
+            "EOF" >> $env:GITHUB_OUTPUT
+          }
+      - name: Sign app (Windows)
+        if: steps.winsign.outputs.enabled == 'true'
+        uses: azure/artifact-signing-action@v2
+        with:
+          azure-tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          azure-client-id: ${{ vars.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ steps.winsign.outputs.files }}
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: TGK
+          description-url: https://github.com/AlexandruMindra/TGK
       - name: Package (Windows)
         if: matrix.rid == 'win-x64'
         shell: pwsh
@@ -120,6 +162,33 @@ jobs:
           $numeric = $env:VERSION.Split('-')[0]
           & $iscc /Q "/DAppVersion=$env:VERSION" "/DNumericVersion=$numeric" "/DSourceDir=$PWD\publish\TGK" "/DOutputDir=$PWD\dist" packaging\windows\TGK.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Sign installer (Windows)
+        if: steps.winsign.outputs.enabled == 'true'
+        uses: azure/artifact-signing-action@v2
+        with:
+          azure-tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          azure-client-id: ${{ vars.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\dist\TGK-win-x64-setup.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: TGK
+          description-url: https://github.com/AlexandruMindra/TGK
+      # A signed build ships only valid signatures: the app (in the zip and the installer) and the installer itself.
+      - name: Check signatures (Windows)
+        if: steps.winsign.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem publish/TGK -File | Where-Object { $_.Name -match '^(TGK|tgk-).*\.(exe|dll)$' }) + @(Get-Item dist/TGK-win-x64-setup.exe)
+          $bad = $files | Where-Object { (Get-AuthenticodeSignature $_.FullName).Status -ne 'Valid' }
+          foreach ($f in $bad) { Write-Output "::error::Not validly signed: $($f.Name) ($((Get-AuthenticodeSignature $f.FullName).Status))" }
+          if ($bad) { exit 1 }
+          $signer = (Get-AuthenticodeSignature dist/TGK-win-x64-setup.exe).SignerCertificate.Subject
+          Write-Output "Signed $($files.Count) files: $signer"
       - name: Package (macOS)
         if: startsWith(matrix.rid, 'osx-')
         run: packaging/macos/build-app.sh publish/TGK "$VERSION" ${{ matrix.rid }} dist
