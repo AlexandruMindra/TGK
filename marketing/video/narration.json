@@ -1,0 +1,174 @@
+{
+  "_comment": "One entry per scene, in order. Each sentence is spoken separately so scenes can key animations to it (cues). 'tts' overrides the spoken text where the voice needs help with acronyms; 'text' is what the subtitles show.",
+  "voices": {
+    "en": { "model": "en_US-ryan-high", "lengthScale": 1.0 },
+    "ro": { "model": "ro_RO-mihai-medium", "lengthScale": 1.0 }
+  },
+  "scenes": [
+    { "id": "open", "minDur": 10.5, "lead": 0.9, "chapter": { "en": "Intro", "ro": "Intro" },
+      "en": [
+        { "text": "Forty servers. A dozen private keys." },
+        { "text": "Passwords scattered across notes, chats, and a spreadsheet nobody trusts." },
+        { "text": "There is a better way." }
+      ],
+      "ro": [
+        { "text": "Patruzeci de servere. O duzină de chei private." },
+        { "text": "Parole împrăștiate prin notițe, conversații și un tabel în care nu mai are nimeni încredere." },
+        { "text": "Există o cale mai bună." }
+      ] },
+
+    { "id": "logo", "minDur": 8.5, "lead": 1.6, "chapter": { "en": "Meet TGK", "ro": "Acesta este TGK" },
+      "en": [
+        { "text": "Meet TGK.", "tts": "Meet T. G. K." },
+        { "text": "Your servers, your keys, your sessions, in one end-to-end encrypted vault, on every device you use." }
+      ],
+      "ro": [
+        { "text": "Acesta este TGK.", "tts": "Acesta este Te Ge Ca." },
+        { "text": "Serverele, cheile și sesiunile tale, într-un singur seif criptat end-to-end, pe toate dispozitivele tale.", "tts": "Serverele, cheile și sesiunile tale, într-un singur seif criptat, end tu end, pe toate dispozitivele tale." }
+      ] },
+
+    { "id": "sessions", "minDur": 13, "chapter": { "en": "Sessions & tabs", "ro": "Sesiuni și taburi" },
+      "en": [
+        { "text": "TGK works like a browser for your infrastructure.", "tts": "T. G. K. works like a browser for your infrastructure." },
+        { "text": "Every tab is a live SSH session.", "tts": "Every tab is a live S. S. H. session." },
+        { "text": "Type an address, or start typing a name, and your saved hosts are one keystroke away." }
+      ],
+      "ro": [
+        { "text": "TGK funcționează ca un browser pentru infrastructura ta.", "tts": "Te Ge Ca funcționează ca un brauzăr pentru infrastructura ta." },
+        { "text": "Fiecare tab este o sesiune SSH activă.", "tts": "Fiecare tab este o sesiune, es es haș, activă." },
+        { "text": "Scrii o adresă sau începi să tastezi un nume, iar serverele salvate sunt la o tastă distanță." }
+      ] },
+
+    { "id": "split", "minDur": 12, "chapter": { "en": "Split view", "ro": "Ecran împărțit" },
+      "en": [
+        { "text": "Need to watch several machines at once? Split the view." },
+        { "text": "Side by side, stacked, or grids of four and six." },
+        { "text": "Every pane stays its own session: drag it in, drag it out, resize it, maximize it." }
+      ],
+      "ro": [
+        { "text": "Vrei să urmărești mai multe mașini deodată? Împarte ecranul." },
+        { "text": "Alăturat, unul sub altul, sau în grile de patru și de șase." },
+        { "text": "Fiecare panou rămâne o sesiune separată: îl tragi înăuntru, îl scoți afară, îl redimensionezi, îl maximizezi." }
+      ] },
+
+    { "id": "terminal", "minDur": 14, "chapter": { "en": "Terminal & color schemes", "ro": "Terminal și scheme de culori" },
+      "en": [
+        { "text": "The built-in terminal is fully xterm-compatible: truecolor, vim, htop, tmux, mouse support.", "tts": "The built-in terminal is fully x-term compatible: true color, vim, h-top, t-mux, and mouse support." },
+        { "text": "And you choose the look: from Dracula and Nord, to Amber CRT, Commodore 64 and Synthwave '84.", "tts": "And you choose the look: from Dracula and Nord, to Amber C. R. T., Commodore sixty-four, and Synthwave eighty-four." }
+      ],
+      "ro": [
+        { "text": "Terminalul integrat este complet compatibil xterm: truecolor, vim, htop, tmux, suport pentru mouse.", "tts": "Terminalul integrat este complet compatibil, ics term: tru color, vim, eici top, ti mux, suport pentru maus." },
+        { "text": "Iar aspectul îl alegi tu: de la Dracula și Nord, până la Amber CRT, Commodore 64 și Synthwave '84.", "tts": "Iar aspectul îl alegi tu: de la Dracula și Nord, până la Amber, ce re te, Comodor șaizeci și patru și Sintuei optzeci și patru." }
+      ] },
+
+    { "id": "files", "minDur": 16, "chapter": { "en": "Files over SFTP", "ro": "Fișiere prin SFTP" },
+      "en": [
+        { "text": "Every host also opens as a file browser, over SFTP.", "tts": "Every host also opens as a file browser, over S. F. T. P." },
+        { "text": "Drag and drop to upload, download with full progress, edit configs and follow logs right inside TGK.", "tts": "Drag and drop to upload, download with full progress, edit configs and follow logs, right inside T. G. K." },
+        { "text": "Open a second pane and move files between servers, even when the servers can't reach each other." }
+      ],
+      "ro": [
+        { "text": "Fiecare server se deschide și ca explorator de fișiere, prin SFTP.", "tts": "Fiecare server se deschide și ca explorator de fișiere, prin es ef te pe." },
+        { "text": "Încarci prin drag and drop, descarci cu progres complet, editezi configurări și urmărești loguri direct în TGK.", "tts": "Încarci prin dreg end drop, descarci cu progres complet, editezi configurări și urmărești loguri direct în Te Ge Ca." },
+        { "text": "Deschizi un al doilea panou și muți fișiere între servere, chiar și când serverele nu se văd între ele." }
+      ] },
+
+    { "id": "hosts", "minDur": 15, "chapter": { "en": "Hosts, keys & inheritance", "ro": "Servere, chei și moștenire" },
+      "en": [
+        { "text": "Organize hosts in groups, share identities, and generate Ed25519 keys inside the vault.", "tts": "Organize hosts in groups, share identities, and generate E. D. two five five one nine keys, inside the vault." },
+        { "text": "Settings inherit: from the defaults, to the group, to the host." },
+        { "text": "Jump-host chains, port forwarding, startup commands: configured once, applied everywhere." }
+      ],
+      "ro": [
+        { "text": "Organizezi serverele în grupuri, partajezi identități și generezi chei Ed25519 direct în seif.", "tts": "Organizezi serverele în grupuri, partajezi identități și generezi chei, E de doi cinci cinci unu nouă, direct în seif." },
+        { "text": "Setările se moștenesc: de la valorile implicite, la grup, la server." },
+        { "text": "Lanțuri de jump host, port forwarding, comenzi de pornire: configurate o dată, aplicate peste tot.", "tts": "Lanțuri de giamp houst, port forvarding, comenzi de pornire: configurate o dată, aplicate peste tot." }
+      ] },
+
+    { "id": "agents", "minDur": 22, "chapter": { "en": "AI agents (MCP)", "ro": "Agenți AI (MCP)" },
+      "en": [
+        { "text": "And TGK is ready for AI.", "tts": "And T. G. K. is ready for A. I." },
+        { "text": "Let Claude Code, or any MCP client, work on your servers: run commands, search logs, edit files, under rules you control.", "tts": "Let Claude Code, or any M. C. P. client, work on your servers: run commands, search logs, edit files, under rules you control." },
+        { "text": "Read only, ask, or full access." },
+        { "text": "Every change waits for your approval, with the exact command, or a diff." },
+        { "text": "The agent never sees a password or a key, and every call is recorded in an audit log." }
+      ],
+      "ro": [
+        { "text": "Iar TGK este pregătit pentru inteligența artificială.", "tts": "Iar Te Ge Ca este pregătit pentru inteligența artificială." },
+        { "text": "Lași Claude Code sau orice client MCP să lucreze pe serverele tale: rulează comenzi, caută în loguri, editează fișiere, după reguli stabilite de tine.", "tts": "Lași Clod Coud, sau orice client em ce pe, să lucreze pe serverele tale: rulează comenzi, caută în loguri, editează fișiere, după reguli stabilite de tine." },
+        { "text": "Doar citire, cu aprobare, sau acces complet." },
+        { "text": "Fiecare modificare îți așteaptă aprobarea, cu comanda exactă sau cu diferențele din fișier." },
+        { "text": "Agentul nu vede niciodată o parolă sau o cheie, iar fiecare apel este înregistrat într-un jurnal de audit." }
+      ] },
+
+    { "id": "security", "minDur": 20, "chapter": { "en": "Zero-knowledge security", "ro": "Securitate zero-knowledge" },
+      "en": [
+        { "text": "Security is the foundation, not a feature." },
+        { "text": "Your password never leaves your device." },
+        { "text": "Six hundred thousand rounds of PBKDF2 derive your keys, and every host and identity is sealed separately, with AES-256-GCM.", "tts": "Six hundred thousand rounds of P. B. K. D. F. 2 derive your keys, and every host and identity is sealed separately, with A. E. S. 256, G. C. M." },
+        { "text": "The server stores only opaque, encrypted blobs." },
+        { "text": "Zero knowledge: not even the administrator can read your vault." }
+      ],
+      "ro": [
+        { "text": "Securitatea este fundația, nu o opțiune." },
+        { "text": "Parola ta nu părăsește niciodată dispozitivul." },
+        { "text": "Șase sute de mii de iterații PBKDF2 derivă cheile, iar fiecare server și fiecare identitate sunt sigilate separat, cu AES-256-GCM.", "tts": "Șase sute de mii de iterații, pe be ca de ef doi, derivă cheile, iar fiecare server și fiecare identitate sunt sigilate separat, cu a e es 256, ge ce em." },
+        { "text": "Serverul stochează doar date criptate, opace." },
+        { "text": "Zero knowledge: nici măcar administratorul nu îți poate citi seiful.", "tts": "Ziro nolegi: nici măcar administratorul nu îți poate citi seiful." }
+      ] },
+
+    { "id": "sync", "minDur": 15, "chapter": { "en": "Self-hosted sync or local vault", "ro": "Sincronizare proprie sau seif local" },
+      "en": [
+        { "text": "Run your own lightweight sync server, with mandatory two-factor authentication and per-device sessions." },
+        { "text": "Or keep everything on one machine, in a local vault." },
+        { "text": "Switch any time. Changes sync in the background, and keep working offline." }
+      ],
+      "ro": [
+        { "text": "Rulezi propriul server de sincronizare, ușor, cu autentificare în doi pași obligatorie și sesiuni pe fiecare dispozitiv." },
+        { "text": "Sau păstrezi totul pe un singur calculator, într-un seif local." },
+        { "text": "Treci dintr-un mod în altul oricând. Modificările se sincronizează în fundal și poți lucra și offline.", "tts": "Treci dintr-un mod în altul oricând. Modificările se sincronizează în fundal și poți lucra și of lain." }
+      ] },
+
+    { "id": "platforms", "minDur": 10, "chapter": { "en": "Windows, Linux & macOS", "ro": "Windows, Linux și macOS" },
+      "en": [
+        { "text": "One app for Windows, Linux and macOS." },
+        { "text": "It updates itself, and verifies every download against GitHub's checksum before installing." }
+      ],
+      "ro": [
+        { "text": "O singură aplicație pentru Windows, Linux și macOS.", "tts": "O singură aplicație pentru Uindous, Linux și mac o es." },
+        { "text": "Se actualizează singură și verifică fiecare descărcare cu suma de control de pe GitHub, înainte de instalare.", "tts": "Se actualizează singură și verifică fiecare descărcare cu suma de control de pe ghit hab, înainte de instalare." }
+      ] },
+
+    { "id": "benefits", "minDur": 12, "chapter": { "en": "Why teams choose TGK", "ro": "De ce TGK pentru echipe" },
+      "en": [
+        { "text": "For teams, that means: no SaaS lock-in, no per-seat licences, an open source codebase you can audit, least-privilege access for automation, and a complete audit trail.", "tts": "For teams, that means: no sass lock-in. No per-seat licences. An open source codebase you can audit. Least-privilege access for automation. And a complete audit trail." }
+      ],
+      "ro": [
+        { "text": "Pentru echipe, asta înseamnă: fără dependență de un furnizor SaaS, fără licențe per utilizator, cod sursă deschis pe care îl poți audita, acces minim necesar pentru automatizări și un jurnal de audit complet.", "tts": "Pentru echipe, asta înseamnă: fără dependență de un furnizor de cloud. Fără licențe per utilizator. Cod sursă deschis, pe care îl poți audita. Acces minim necesar pentru automatizări. Și un jurnal de audit complet." }
+      ] },
+
+    { "id": "community", "minDur": 17, "chapter": { "en": "Missing a feature? Build it", "ro": "Îți lipsește ceva? Construiește" },
+      "en": [
+        { "text": "Missing a feature you need?" },
+        { "text": "TGK is open source, under the MIT license. Build it yourself, and send a pull request.", "tts": "T. G. K. is open source, under the M. I. T. license. Build it yourself, and send a pull request." },
+        { "text": "Or open a request on GitHub. If it helps many people, we build it together." },
+        { "text": "Every change lands in the nightly build as soon as it's merged." }
+      ],
+      "ro": [
+        { "text": "Îți lipsește o funcționalitate?" },
+        { "text": "TGK este open source, sub licența MIT. O construiești singur și trimiți un pull request.", "tts": "Te Ge Ca este oupăn sors, sub licența em ai ti. O construiești singur și trimiți un pul ricuest." },
+        { "text": "Sau deschizi o cerere pe GitHub. Dacă ajută mai mulți oameni, o construim împreună.", "tts": "Sau deschizi o cerere pe ghit hab. Dacă ajută mai mulți oameni, o construim împreună." },
+        { "text": "Fiecare schimbare ajunge în versiunea nightly imediat ce este integrată.", "tts": "Fiecare schimbare ajunge în versiunea naitli, imediat ce este integrată." }
+      ] },
+
+    { "id": "outro", "minDur": 20, "lead": 0.8, "chapter": { "en": "Download", "ro": "Descarcă" },
+      "en": [
+        { "text": "TGK. Every server. One vault.", "tts": "T. G. K.  Every server. One vault." },
+        { "text": "Download it free, for Windows, Linux and macOS, on GitHub." }
+      ],
+      "ro": [
+        { "text": "TGK. Toate serverele. Un singur seif.", "tts": "Te Ge Ca.  Toate serverele. Un singur seif." },
+        { "text": "Descarcă-l gratuit pentru Windows, Linux și macOS, de pe GitHub.", "tts": "Descarcă-l gratuit pentru Uindous, Linux și mac o es, de pe ghit hab." }
+      ] }
+  ]
+}
