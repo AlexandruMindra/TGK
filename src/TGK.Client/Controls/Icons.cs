@@ -23,8 +23,8 @@ public static class Icons
             return;
         float scale = size / ViewBox;
         var matrix = SKMatrix.CreateScale(scale, scale);
-        matrix.TransX = MathF.Round(cx - size / 2f);
-        matrix.TransY = MathF.Round(cy - size / 2f);
+        matrix.TransX = Gfx.SnapX(c, cx - size / 2f);
+        matrix.TransY = Gfx.SnapY(c, cy - size / 2f);
         c.DrawPicture(picture, in matrix, Tint(color));
     }
 

@@ -45,7 +45,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Blossom" Version="0.1.8" />
+    <PackageReference Include="Blossom" Version="0.1.9" />
     <PackageReference Include="QRCoder" Version="1.8.0" />
   </ItemGroup>
 

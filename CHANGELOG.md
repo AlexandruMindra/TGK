@@ -36,6 +36,10 @@ shows the current Unreleased section.
   screen; Xft.dpi on Linux). Text and everything else were drawn at 100% there and looked tiny. The window opens at
   the scaled size, and moving it to a display with another scale, or changing the scale while TGK runs, rescales the
   UI. macOS already scaled correctly. (Blossom 0.1.8, the UI library, now does this itself.)
+- **Sharper text and lines**: text in the UI and the terminal is now drawn with subpixel antialiasing (like ClearType
+  on Windows) instead of grayscale, which looked blurry next to other apps. At a fractional display scale (e.g. 125%)
+  borders, separators, the text cursor and icons are aligned to whole screen pixels, so a 1px line is no longer
+  smeared over two. (Blossom 0.1.9; macOS keeps grayscale text, as macOS itself does.)
 
 ## [0.3.0] - 2026-10-06
 

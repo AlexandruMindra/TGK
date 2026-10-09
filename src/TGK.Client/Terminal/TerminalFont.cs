@@ -170,7 +170,7 @@ public sealed class TerminalFont : IDisposable
     private static SKFont CreateFont(SKTypeface face, float size, bool italic, bool embolden = false) => new(face, size)
     {
         Subpixel = true,
-        Edging = SKFontEdging.Antialias,
+        Edging = SKFontEdging.SubpixelAntialias,
         Hinting = SKFontHinting.Slight,
         SkewX = italic ? ItalicSkew : 0,
         Embolden = embolden,

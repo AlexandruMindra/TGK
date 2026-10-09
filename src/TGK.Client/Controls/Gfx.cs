@@ -34,9 +34,10 @@ public static class Gfx
     {
         if (!FontCache.TryGetValue((size, face), out SKFont? font))
         {
+            // LCD (ClearType-like) text; Skia falls back to grayscale where the surface has no pixel geometry (macOS)
             font = new SKFont(face, size)
             {
-                Edging = SKFontEdging.Antialias,
+                Edging = SKFontEdging.SubpixelAntialias,
                 Subpixel = true,
                 Hinting = SKFontHinting.Slight,
             };
@@ -152,7 +153,7 @@ public static class Gfx
     public static void FillRect(SKCanvas c, SKRect r, SKColor color)
     {
         Fill.Color = color;
-        c.DrawRect(r, Fill);
+        c.DrawRect(Snap(c, r), Fill);
     }
 
     public static void FillRound(SKCanvas c, SKRect r, float radius, SKColor color)
@@ -160,14 +161,14 @@ public static class Gfx
         if (color.Alpha == 0)
             return;
         Fill.Color = color;
-        c.DrawRoundRect(r, radius, radius, Fill);
+        c.DrawRoundRect(Snap(c, r), radius, radius, Fill);
     }
 
     /// <summary>Rounded rect with only the top corners rounded (tabs).</summary>
     public static void FillTopRound(SKCanvas c, SKRect r, float radius, SKColor color)
     {
         using var rr = new SKRoundRect();
-        rr.SetRectRadii(r, [new SKPoint(radius, radius), new SKPoint(radius, radius), SKPoint.Empty, SKPoint.Empty]);
+        rr.SetRectRadii(Snap(c, r), [new SKPoint(radius, radius), new SKPoint(radius, radius), SKPoint.Empty, SKPoint.Empty]);
         Fill.Color = color;
         c.DrawRoundRect(rr, Fill);
     }
@@ -177,18 +178,56 @@ public static class Gfx
     {
         if (color.Alpha == 0)
             return;
+        width = SnapWidth(c, width);
         Stroke.Color = color;
         Stroke.StrokeWidth = width;
-        var inset = SKRect.Inflate(r, -width / 2f, -width / 2f);
+        var inset = SKRect.Inflate(Snap(c, r), -width / 2f, -width / 2f);
         c.DrawRoundRect(inset, Math.Max(0, radius - width / 2f), Math.Max(0, radius - width / 2f), Stroke);
     }
 
     public static void Line(SKCanvas c, float x0, float y0, float x1, float y1, SKColor color, float width = 1)
     {
+        width = SnapWidth(c, width);
+        // A horizontal or vertical line covers whole device pixels across its width
+        if (y0 == y1)
+            y0 = y1 = SnapY(c, y0 - width / 2f) + width / 2f;
+        else if (x0 == x1)
+            x0 = x1 = SnapX(c, x0 - width / 2f) + width / 2f;
         Stroke.Color = color;
         Stroke.StrokeWidth = width;
         c.DrawLine(x0, y0, x1, y1, Stroke);
     }
+
+    // At a fractional display scale (e.g. 125%, applied by Blossom as a canvas scale) logical coordinates fall between
+    // device pixels, so a 1px border would be smeared over two rows. These round edges and widths to device pixels.
+
+    /// <summary><paramref name="r"/> with its edges moved to the nearest device pixel boundaries.</summary>
+    public static SKRect Snap(SKCanvas c, SKRect r) =>
+        IsAxisAligned(c.TotalMatrix) ? new SKRect(SnapX(c, r.Left), SnapY(c, r.Top), SnapX(c, r.Right), SnapY(c, r.Bottom)) : r;
+
+    /// <summary><paramref name="x"/> moved to the nearest device pixel boundary.</summary>
+    public static float SnapX(SKCanvas c, float x)
+    {
+        SKMatrix m = c.TotalMatrix;
+        return IsAxisAligned(m) ? (MathF.Round(x * m.ScaleX + m.TransX) - m.TransX) / m.ScaleX : x;
+    }
+
+    /// <summary><paramref name="y"/> moved to the nearest device pixel boundary.</summary>
+    public static float SnapY(SKCanvas c, float y)
+    {
+        SKMatrix m = c.TotalMatrix;
+        return IsAxisAligned(m) ? (MathF.Round(y * m.ScaleY + m.TransY) - m.TransY) / m.ScaleY : y;
+    }
+
+    /// <summary>A stroke width that is a whole number of device pixels (at least one).</summary>
+    private static float SnapWidth(SKCanvas c, float width)
+    {
+        SKMatrix m = c.TotalMatrix;
+        return IsAxisAligned(m) && m.ScaleX == m.ScaleY ? MathF.Max(1, MathF.Round(width * m.ScaleX)) / m.ScaleX : width;
+    }
+
+    private static bool IsAxisAligned(SKMatrix m) =>
+        m.SkewX == 0 && m.SkewY == 0 && m.ScaleX > 0 && m.ScaleY > 0 && m.Persp0 == 0 && m.Persp1 == 0;
 
     public static void Circle(SKCanvas c, float cx, float cy, float radius, SKColor color)
     {
