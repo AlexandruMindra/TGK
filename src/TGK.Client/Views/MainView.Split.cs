@@ -543,6 +543,7 @@ public sealed partial class MainView
         items.AddRange(PaneMenuItems(tab));
         items.Add(MenuItem.Separator);
         items.Add(new MenuItem { Text = "New tab", Icon = "plus", Hint = "Ctrl+Shift+T", Action = NewTab });
+        items.Add(new MenuItem { Text = "New local terminal", Icon = "terminal", Hint = LocalTerminalHint, Action = OpenLocalTerminal });
         items.Add(new MenuItem { Text = "Close tab", Icon = "x", Hint = tab == active ? "Ctrl+Shift+W" : null, Action = () => CloseTab(tab) });
         Menu.Show(items, x, y);
     }

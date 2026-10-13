@@ -17,6 +17,15 @@ shows the current Unreleased section.
   (80s neon) and Teletype (ink on paper).
 - **VT323 font** (after the DEC VT320's) is bundled and offered with the terminal fonts; it suits the retro schemes.
   It is scaled so a font size looks alike in it and in DejaVu Sans Mono, and bold text is drawn bolder.
+- **Full screen**: `F11` (or "Full screen" in the account menu) makes TGK cover the whole monitor it is on, without
+  the window's title bar and the system taskbar; `F11` again puts the window back as it was (size, place, maximized).
+  F11 is now TGK's own key: it no longer reaches the terminal.
+- **Local terminal**: a tab with a shell of this computer, next to your SSH sessions (in a split view too): "Local
+  terminal" on the new-tab page, `Ctrl+Shift+Enter`, or "New local terminal" in a tab's menu. Linux and macOS run your
+  shell ($SHELL) in a real terminal (vim, htop, Ctrl+C, job control); Windows runs PowerShell 7 or Windows PowerShell,
+  or Command Prompt, WSL or Git Bash (ConPTY, Windows 10 1809 or later). Settings → Terminal picks the shell, on each
+  device. It uses your default terminal settings and starts in your home folder; `exit` closes the tab. "Reopen my
+  tabs" reopens it as a shell of the device you sign in on. Agents never see local terminals.
 
 ### Changed
 

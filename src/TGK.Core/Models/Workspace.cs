@@ -103,6 +103,9 @@ public sealed class WorkspaceTab
     /// <summary>The <see cref="Kind"/> of a file browser tab for this computer's files (no host).</summary>
     public const string LocalFilesKind = "local-files";
 
+    /// <summary>The <see cref="Kind"/> of a terminal running a shell of the computer it is reopened on (no host).</summary>
+    public const string LocalTerminalKind = "local-terminal";
+
     public Guid? HostId { get; set; }
 
     /// <summary>Host name or address of an unsaved (quick-connect) host.</summary>
@@ -122,7 +125,7 @@ public sealed class WorkspaceTab
     public string? Path { get; set; }
 
     [JsonIgnore]
-    public bool IsNewTabPage => HostId is null && Host is null && Kind != LocalFilesKind;
+    public bool IsNewTabPage => HostId is null && Host is null && Kind is not (LocalFilesKind or LocalTerminalKind);
 
     [JsonIgnore]
     public bool IsFiles => Kind == FilesKind;

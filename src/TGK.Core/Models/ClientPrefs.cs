@@ -46,6 +46,9 @@ public sealed class ClientPrefs
     /// </summary>
     public bool AgentsEnabled { get; set; }
 
+    /// <summary>The shell local terminals run (<c>LocalShells</c>: a path on Unix, a name on Windows); null for the default one.</summary>
+    public string? LocalShell { get; set; }
+
     /// <summary>The file browser shows hidden files (names starting with a dot).</summary>
     public bool FilesShowHidden { get; set; }
 

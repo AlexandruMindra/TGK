@@ -357,6 +357,15 @@ public sealed partial class MainView : TgkView
     /// <summary>Opens <paramref name="host"/> in <paramref name="tab"/>, replacing its content (used by the new-tab page).</summary>
     public void ConnectInTab(TabContent tab, HostEntry host) => ReplaceTab(tab, App.SessionTabFactory(host));
 
+    /// <summary>The shortcut that opens a local terminal (shown in menus).</summary>
+    public const string LocalTerminalHint = "Ctrl+Shift+Enter";
+
+    /// <summary>Opens a terminal running a shell of this computer in a new tab.</summary>
+    public void OpenLocalTerminal() => OpenTab(new LocalTerminalTabContent());
+
+    /// <summary>Replaces <paramref name="tab"/> (a new-tab page) with a local terminal.</summary>
+    public void OpenLocalTerminalIn(TabContent tab) => ReplaceTab(tab, new LocalTerminalTabContent());
+
     /// <summary>"Connect": reuse the active new-tab page if there is one, otherwise open a new tab.</summary>
     public void Connect(HostEntry host)
     {
@@ -461,6 +470,8 @@ public sealed partial class MainView : TgkView
             home.Refresh();
         foreach (SessionTabContent session in _tabs.OfType<SessionTabContent>())
             session.OnVaultChanged();
+        foreach (LocalTerminalTabContent local in _tabs.OfType<LocalTerminalTabContent>())
+            local.OnVaultChanged();
         SyncChrome();
     }
 
@@ -603,6 +614,7 @@ public sealed partial class MainView : TgkView
             MenuItem.Separator,
             new() { Text = "Keys & identities", Icon = "key", Action = ShowIdentities },
             new() { Text = "Settings", Icon = "settings", Hint = "Ctrl+,", Action = ShowSettings },
+            new() { Text = "Full screen", Icon = "maximize", Hint = "F11", IsChecked = Platform.AppWindow.IsFullScreen, Action = App.ToggleFullScreen },
         };
         if (local)
         {
@@ -662,6 +674,14 @@ public sealed partial class MainView : TgkView
     public void ShowIdentities() => new IdentitiesDialog(this).Open();
 
     public void ShowSettings() => new SettingsDialog(this).Open();
+
+    /// <summary>Settings, on page <paramref name="tab"/> (e.g. <see cref="SettingsDialog.TerminalTab"/>).</summary>
+    public void ShowSettings(int tab)
+    {
+        var settings = new SettingsDialog(this);
+        settings.Open();
+        settings.ShowTab(tab);
+    }
 
     public void ShowDevices() => new DevicesDialog(this).Open();
 
@@ -819,6 +839,14 @@ public sealed partial class MainView : TgkView
         Add(ctrl, Key.PageDown, () => CycleTab(1), repeats: true);
         Add(ctrl, Key.PageUp, () => CycleTab(-1), repeats: true);
         Add(ctrl, Key.Comma, ShowSettings);
+        // A local terminal: in place of an untouched new-tab page, as a typed address would be, else in a new tab.
+        Add(ctrlShift, Key.Enter, () =>
+        {
+            if (ActiveTab is HomeTabContent { IsBlank: true } home)
+                OpenLocalTerminalIn(home);
+            else
+                OpenLocalTerminal();
+        });
         // Split view (Terminator's keys): split right / down, maximize the pane, Alt+arrows move between panes.
         bool SplitReady() => Ready() && ActiveTab?.Split is not null;
         Add(ctrlShift, Key.E, () => SplitPane(SplitOrientation.Horizontal));
@@ -862,6 +890,10 @@ public sealed partial class MainView : TgkView
                         OpenTab(App.SessionTabFactory(host), activate: false);
                 }
                 ApplyLayout(LayoutPreset.MainLeft);
+                break;
+            case "local-terminal":
+                // A shell of this computer in a tab.
+                OpenLocalTerminal();
                 break;
             case "update":
                 // The status bar chip for a (made-up) newer version, with its menu.

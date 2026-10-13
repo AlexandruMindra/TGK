@@ -3,7 +3,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using Blossom;
 using Blossom.Core;
+using Silk.NET.Input;
 using TGK.Client.Agents;
+using TGK.Client.Input;
 using TGK.Client.Main;
 using TGK.Client.Platform;
 using TGK.Client.Views;
@@ -52,6 +54,7 @@ public sealed class TgkApplication : Application
             SetActiveView(_login);
         }
         AppWindow.Resized += () => (ActiveView as TgkView)?.FitToWindow();
+        KeyboardHub.Shortcuts.Register(KeyModifiers.None, Key.F11, ToggleFullScreen); // everywhere, as in browsers
         if (services.Prefs.AgentsEnabled && services.Dev.Scene is null)
             UiThread.Post(() => _ = Agents.ApplyAsync(true));
     }
@@ -124,6 +127,17 @@ public sealed class TgkApplication : Application
         {
             Log.Warning($"Could not restore the saved session: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Full screen on or off (F11, the account menu). There are no window buttons in full screen, so entering it says
+    /// how to leave.
+    /// </summary>
+    public void ToggleFullScreen()
+    {
+        AppWindow.ToggleFullScreen();
+        if (AppWindow.IsFullScreen)
+            (ActiveView as TgkView)?.ShowToast("Full screen · press F11 to exit");
     }
 
     // The server ended this device's session (revoked elsewhere, expired, account disabled): close the sessions and

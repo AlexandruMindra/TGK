@@ -133,6 +133,8 @@ public sealed partial class MainView
     {
         if (saved.Kind == WorkspaceTab.LocalFilesKind && saved.HostId is null && saved.Host is null)
             return FilesTabContent.Local(saved.Path);
+        if (saved.Kind == WorkspaceTab.LocalTerminalKind && saved.HostId is null && saved.Host is null)
+            return new LocalTerminalTabContent();
         HostEntry? host = saved.HostId is { } id ? Services.Vault.Current.FindHost(id)
             : saved.Host is { Length: > 0 } address ? new HostEntry { Host = address, Port = saved.Port, Username = saved.Username ?? "" }
             : null;

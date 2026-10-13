@@ -17,7 +17,7 @@ namespace TGK.Client.Main;
 /// The new-tab page: a quick-connect field (<c>user@host[:port]</c>), then Recent and All hosts as cards. Typing in the
 /// field also searches the saved hosts by name, user and/or host (<see cref="QuickConnect.Search"/>): the cards show the
 /// matches, ↓/↑ pick one and Enter connects to it. Connecting from here replaces this page with the session, like
-/// navigating in a browser tab.
+/// navigating in a browser tab; so does "Local terminal" (a shell of this computer).
 /// </summary>
 public sealed class HomeTabContent : TabContent
 {
@@ -26,7 +26,7 @@ public sealed class HomeTabContent : TabContent
     private readonly VisualElement _page;
     private readonly Label _heading, _subheading, _hint;
     private readonly TextField _quick;
-    private readonly Button _connect;
+    private readonly Button _connect, _local;
     private readonly Label _recentCaption, _allCaption, _emptyText;
     private readonly HostCardGrid _recent, _all;
     private readonly Button _newHost;
@@ -62,6 +62,8 @@ public sealed class HomeTabContent : TabContent
         _quick.KeyPreview = OnQuickKey;
         _connect = Add(new Button("Connect", ButtonVariant.Primary, "bolt") { FontSize = Theme.FontMd });
         _connect.Clicked += Connect;
+        _local = Add(new Button("Local terminal", ButtonVariant.Secondary, "terminal") { FontSize = Theme.FontMd });
+        _local.Clicked += () => Host.OpenLocalTerminalIn(this);
         _hint = Add(new Label("", Theme.FontSm, Theme.TextMuted));
         _recentCaption = Add(new Label("RECENT", Theme.FontXs, Theme.TextSecondary, Theme.WeightSemibold));
         _recent = Add(new HostCardGrid(main, showLastUsed: true));
@@ -197,11 +199,22 @@ public sealed class HomeTabContent : TabContent
         y += 32;
         _subheading.Transform.SetLocalFrame(x, y, colW, 20);
         y += 36;
-        _quick.Transform.SetLocalFrame(x, y, colW - ConnectW - 10, QuickH);
-        _connect.Transform.SetLocalFrame(x + colW - ConnectW, y, ConnectW, QuickH);
+        // "Local terminal" beside Connect, or under the hint when that would leave the field too narrow.
+        float localW = MathF.Ceiling(_local.PreferredWidth) + 8;
+        bool localBeside = colW - ConnectW - localW - 20 >= 320;
+        float quickW = colW - ConnectW - 10 - (localBeside ? localW + 10 : 0);
+        _quick.Transform.SetLocalFrame(x, y, quickW, QuickH);
+        _connect.Transform.SetLocalFrame(x + quickW + 10, y, ConnectW, QuickH);
+        if (localBeside)
+            _local.Transform.SetLocalFrame(x + colW - localW, y, localW, QuickH);
         y += QuickH + 8;
         _hint.Transform.SetLocalFrame(x + 2, y, colW, 18);
         y += 18 + 36;
+        if (!localBeside)
+        {
+            _local.Transform.SetLocalFrame(x, y - 24, localW, 34);
+            y += 34 + 12;
+        }
 
         VaultData vault = Host.Services.Vault.Current;
         int columns = HostCardGrid.ColumnsFor(colW);

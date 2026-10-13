@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
@@ -10,6 +11,7 @@ using TGK.Client.Main;
 using TGK.Client.Terminal;
 using TGK.Client.Views;
 using TGK.Core.Models;
+using TGK.Core.Pty;
 using TGK.Core.Services;
 
 namespace TGK.Client.Dialogs;
@@ -40,6 +42,9 @@ public sealed class SettingsDialog : TabbedDialog
     private readonly SegmentedControl _cursor;
     private readonly Checkbox _blink, _copyOnSelect;
     private readonly TerminalPreview _preview;
+    private readonly Label _shellCaption, _shellHint;
+    private readonly Dropdown _shell;
+    private readonly IReadOnlyList<LocalShell> _shells;
     private readonly OptionsEditor _defaults;
     private readonly Checkbox _restoreTabs;
     private readonly Label _restoreHint, _restoreSaved;
@@ -112,6 +117,19 @@ public sealed class SettingsDialog : TabbedDialog
         _preview = page.Add(new TerminalPreview(this));
         _cursor.SelectionChanged += _ => _preview.InvalidatePaint();
         _defaults.AppearanceChanged += _preview.InvalidatePaint;
+
+        // The shell of local terminals: this device's own choice, from the shells found on it.
+        _shells = LocalShells.Available();
+        _shellCaption = page.Add(Form.Caption("Local terminal shell (this device)"));
+        _shell = page.Add(new Dropdown
+        {
+            Options = _shells.Count == 0 ? ["No shell found"]
+                : _shells.Select(s => OperatingSystem.IsWindows() || s.Name == s.Path ? s.Name : $"{s.Name}  ·  {s.Path}").ToList(),
+        });
+        string? chosen = LocalShells.Find(view.Services.Prefs.LocalShell)?.Id;
+        _shell.SelectedIndex = Math.Max(0, _shells.ToList().FindIndex(s => s.Id == chosen));
+        _shellHint = page.Add(new Label($"What \"Local terminal\" runs ({MainView.LocalTerminalHint}, or on the new-tab page): a shell of this computer, in your home folder.",
+            Theme.FontSm, Theme.TextMuted) { MaxLines = 2 });
         page.Layout = LayoutTerminal;
 
         FormPage startup = PageAt(StartupTab);
@@ -259,7 +277,11 @@ public sealed class SettingsDialog : TabbedDialog
         _blink.Transform.SetLocalFrame(0, y, _blink.PreferredWidth, 22);
         _copyOnSelect.Transform.SetLocalFrame(col + 16, y, _copyOnSelect.PreferredWidth, 22);
         y += 22 + Form.RowGap + 4;
-        return Form.Place(_previewCaption, _preview, 0, y, width, 84);
+        y = Form.Place(_previewCaption, _preview, 0, y, width, 84) + Form.RowGap + 4;
+        y = Form.Place(_shellCaption, _shell, 0, y, width) + 6;
+        float hintH = _shellHint.MeasureHeight(width);
+        _shellHint.Transform.SetLocalFrame(0, y, width, hintH);
+        return y + hintH;
     }
 
     protected override void Accept()
@@ -286,6 +308,10 @@ public sealed class SettingsDialog : TabbedDialog
             main.SetCheckForUpdates(_checkUpdates.Checked);
             main.SetUpdateChannel(SelectedChannel);
         }
+        // The default shell is stored as "not set", so it follows $SHELL (or a newly installed PowerShell 7).
+        string? shell = _shells.Count == 0 || _shell.SelectedIndex <= 0 ? null : _shells[Math.Min(_shell.SelectedIndex, _shells.Count - 1)].Id;
+        if (shell != View.Services.Prefs.LocalShell)
+            View.Services.UpdatePrefs(p => p.LocalShell = shell);
         bool agentsOn = _agentsOn.Checked;
         if (agentsOn != View.Services.Prefs.AgentsEnabled)
             View.Services.UpdatePrefs(p => p.AgentsEnabled = agentsOn);

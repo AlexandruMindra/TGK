@@ -5,6 +5,8 @@ using Blossom.Core;
 using Silk.NET.GLFW;
 using Silk.NET.Windowing;
 using TGK.Client.Controls;
+using GlfwMonitor = Silk.NET.GLFW.Monitor;
+using GlfwVideoMode = Silk.NET.GLFW.VideoMode;
 
 namespace TGK.Client.Platform;
 
@@ -145,6 +147,104 @@ public static class AppWindow
         glfw.SetWindowCloseCallback(handle, onClose);
         onClose?.Invoke(handle);
         glfw.PostEmptyEvent();
+    }
+
+    /// <summary>Whether the window covers its whole monitor, without the desktop's title bar and taskbar.</summary>
+    public static bool IsFullScreen { get; private set; }
+
+    private static (int X, int Y, int Width, int Height, bool Maximized) _windowed; // what leaving full screen restores
+
+    /// <summary>Switches between full screen and the window as it was before.</summary>
+    public static void ToggleFullScreen() => SetFullScreen(!IsFullScreen);
+
+    /// <summary>
+    /// Makes the window cover the monitor it is (mostly) on, with no title bar and above the taskbar, or puts it back
+    /// where and how it was. On Windows it becomes a borderless window the size of the monitor, which the taskbar makes
+    /// way for while it is in front (as browsers do): GLFW's own full screen there keeps the window above every other
+    /// one, or minimizes it whenever it loses the focus. Elsewhere it is GLFW's full screen in the monitor's current
+    /// video mode (so the mode does not change; on X11 the window manager's full screen state), which does not
+    /// minimize itself on Linux when another window takes the focus. Goes through GLFW's current context, the app
+    /// window on the UI thread.
+    /// </summary>
+    public static unsafe void SetFullScreen(bool on)
+    {
+        Glfw glfw = GlfwProvider.GLFW.Value;
+        WindowHandle* handle = glfw.GetCurrentContext();
+        if (handle is null || on == IsFullScreen)
+            return;
+        if (on)
+        {
+            bool maximized = glfw.GetWindowAttrib(handle, WindowAttributeGetter.Maximized);
+            if (maximized)
+                glfw.RestoreWindow(handle); // the size to come back to is the window's normal one
+            glfw.GetWindowPos(handle, out int x, out int y);
+            glfw.GetWindowSize(handle, out int width, out int height);
+            GlfwMonitor* monitor = MonitorOf(glfw, x, y, width, height);
+            if (monitor is null)
+            {
+                Log.Warning("Full screen: no monitor found.");
+                if (maximized)
+                    glfw.MaximizeWindow(handle);
+                return;
+            }
+            _windowed = (x, y, width, height, maximized);
+            GlfwVideoMode* mode = glfw.GetVideoMode(monitor);
+            if (OperatingSystem.IsWindows())
+            {
+                glfw.GetMonitorPos(monitor, out int mx, out int my);
+                glfw.SetWindowAttrib(handle, WindowAttributeSetter.Decorated, false);
+                glfw.SetWindowPos(handle, mx, my);
+                glfw.SetWindowSize(handle, mode->Width, mode->Height);
+            }
+            else
+            {
+                if (OperatingSystem.IsLinux())
+                    glfw.SetWindowAttrib(handle, WindowAttributeSetter.AutoIconify, false);
+                glfw.SetWindowMonitor(handle, monitor, 0, 0, mode->Width, mode->Height, mode->RefreshRate);
+            }
+        }
+        else
+        {
+            (int x, int y, int width, int height, bool maximized) = _windowed;
+            if (OperatingSystem.IsWindows())
+            {
+                glfw.SetWindowAttrib(handle, WindowAttributeSetter.Decorated, true);
+                glfw.SetWindowPos(handle, x, y);
+                glfw.SetWindowSize(handle, width, height);
+            }
+            else
+            {
+                glfw.SetWindowMonitor(handle, null, x, y, width, height, Glfw.DontCare);
+                if (OperatingSystem.IsLinux())
+                    glfw.SetWindowAttrib(handle, WindowAttributeSetter.AutoIconify, true);
+            }
+            if (maximized)
+                glfw.MaximizeWindow(handle);
+        }
+        IsFullScreen = on;
+    }
+
+    /// <summary>The monitor that holds most of the window's area (the primary one if it is on none).</summary>
+    private static unsafe GlfwMonitor* MonitorOf(Glfw glfw, int x, int y, int width, int height)
+    {
+        GlfwMonitor** monitors = glfw.GetMonitors(out int count);
+        GlfwMonitor* best = glfw.GetPrimaryMonitor();
+        long bestArea = 0;
+        for (int i = 0; i < count; i++)
+        {
+            GlfwVideoMode* mode = glfw.GetVideoMode(monitors[i]);
+            if (mode is null)
+                continue;
+            glfw.GetMonitorPos(monitors[i], out int mx, out int my);
+            long w = Math.Min(x + width, mx + mode->Width) - Math.Max(x, mx);
+            long h = Math.Min(y + height, my + mode->Height) - Math.Max(y, my);
+            if (w > 0 && h > 0 && w * h > bestArea)
+            {
+                best = monitors[i];
+                bestArea = w * h;
+            }
+        }
+        return best;
     }
 
     /// <summary>

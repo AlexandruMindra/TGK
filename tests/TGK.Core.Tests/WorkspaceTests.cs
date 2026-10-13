@@ -109,6 +109,25 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
+    public void LocalTabs_AreNotNewTabPages_AndRoundTrip()
+    {
+        var workspace = new Workspace
+        {
+            RestoreTabs = true,
+            Tabs = [new WorkspaceTab { Kind = WorkspaceTab.LocalTerminalKind }, new WorkspaceTab { Kind = WorkspaceTab.LocalFilesKind }, new WorkspaceTab()],
+        };
+        Assert.Null(workspace.Validate());
+        Assert.False(workspace.Tabs[0].IsNewTabPage);
+        Assert.False(workspace.Tabs[1].IsNewTabPage);
+        Assert.True(workspace.Tabs[2].IsNewTabPage);
+
+        string json = System.Text.Json.JsonSerializer.Serialize(workspace, TgkJson.Options);
+        Workspace back = System.Text.Json.JsonSerializer.Deserialize<Workspace>(json, TgkJson.Options)!;
+        Assert.Equal(WorkspaceTab.LocalTerminalKind, back.Tabs[0].Kind);
+        Assert.False(back.Tabs[0].IsFiles);
+    }
+
+    [Fact]
     public void Validate_RejectsLayoutsNestedTooDeep()
     {
         var workspace = new Workspace { Tabs = [new WorkspaceTab(), new WorkspaceTab()] };

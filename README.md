@@ -17,6 +17,10 @@ entirely on one machine.
   resize, `Alt+arrows` to move between panes, `Ctrl+Shift+X` to maximize one; each pane stays a tab of its own and can
   be dragged in or out of the split view. Drag a pane's title bar to rearrange: next to another pane on any side, onto
   a pane to swap them, onto the tab strip to make it a tab again.
+- Full screen (`F11`, or the account menu): TGK covers the whole monitor, without the title bar and the taskbar.
+- Local terminal (`Ctrl+Shift+Enter`, or "Local terminal" on the new-tab page): a shell of this computer in a tab, beside
+  your sessions — your shell on Linux and macOS; PowerShell, Command Prompt, WSL or Git Bash on Windows (Settings →
+  Terminal).
 - Reopen my tabs (Settings → Startup, off by default): your tabs and split views are saved in the vault when you close
   TGK, sign out or lock it (and as you work), and reopened on whichever device you sign in next. Only which hosts were
   open is saved, never passwords; a session connects when you open its tab.

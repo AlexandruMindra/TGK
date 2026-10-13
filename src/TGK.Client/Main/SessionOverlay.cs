@@ -62,7 +62,8 @@ public sealed class SessionOverlay : Control
     public void ShowFailed(string title, string message, string? secondary, bool error = true) =>
         Show(OverlayMode.Failed, title, message, error, "Retry", secondary);
 
-    public void ShowEnded(string message, bool error) => Show(OverlayMode.Ended, "", message, error, "Reconnect", null);
+    /// <param name="primary">The button's text: Reconnect for a session, Restart for a local shell.</param>
+    public void ShowEnded(string message, bool error, string primary = "Reconnect") => Show(OverlayMode.Ended, "", message, error, primary, null);
 
     /// <param name="waiting">Counting down to the next attempt ("Reconnect now" is offered); false while an attempt runs.</param>
     public void ShowReconnecting(string message, bool waiting) =>
