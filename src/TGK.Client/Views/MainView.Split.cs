@@ -46,7 +46,7 @@ public sealed partial class MainView
     {
         TabContent? active = ActiveTab;
         PaneLayout<TabContent>? shown = active?.Split;
-        var area = new SKRect(PanePad, PanePad, Math.Max(PanePad, w - PanePad), Math.Max(PanePad, h - PanePad));
+        SKRect area = PaneArea(w, h);
         var arranged = new HashSet<PaneLayout<TabContent>>();
         int headers = 0, dividers = 0;
         SKRect? focus = null;

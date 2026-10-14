@@ -176,8 +176,8 @@ public sealed partial class MainView : TgkView
             return;
         if (!_sidebarPeek && _peekOpenAt >= 0 && now >= _peekOpenAt)
             SetSidebarPeek(true);
-        else if (_sidebarPeek && _peekCloseAt >= 0 && now >= _peekCloseAt && !HasModal && !Menu.IsOpen)
-            SetSidebarPeek(false);
+        else if (_sidebarPeek && _peekCloseAt >= 0 && now >= _peekCloseAt && !HasModal && !Menu.IsOpen && _dragged is not HostEntry)
+            SetSidebarPeek(false); // not while a host is dragged from it: its list has the pointer until the drop
     }
 
     private void SetSidebarPeek(bool peek)

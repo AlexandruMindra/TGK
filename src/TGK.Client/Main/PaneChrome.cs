@@ -11,7 +11,7 @@ namespace TGK.Client.Main;
 /// <summary>
 /// The title bar of a pane in a split view: status dot, title, maximize/restore and close. The pane with the keyboard
 /// is highlighted. A click focuses the pane, a double-click maximizes or restores it, a right-click opens the pane menu
-/// and a middle-click closes it. Dragging the title bar moves the pane (see <see cref="MainView.PaneDropAt"/>).
+/// and a middle-click closes it. Dragging the title bar moves the pane (see <see cref="MainView.UpdatePaneDrag"/>).
 /// </summary>
 public sealed class PaneHeader : Control
 {

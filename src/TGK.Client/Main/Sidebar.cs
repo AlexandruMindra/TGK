@@ -122,11 +122,12 @@ public sealed class Sidebar : Control, IKeyInput
 
 /// <summary>
 /// The grouped host list, custom-drawn as one element inside the sidebar's scroll container. Click selects,
-/// double-click / Enter connects in a new tab, right-click opens the host menu, arrows move the selection.
+/// double-click / Enter connects in a new tab, right-click opens the host menu, arrows move the selection. A host
+/// dragged onto the content area opens where it is dropped (see <see cref="MainView.UpdateHostDrag"/>).
 /// </summary>
 public sealed class HostList : Control, IKeyInput
 {
-    private const float GroupH = 30, HostH = 46, TopPad = 2;
+    private const float GroupH = 30, HostH = 46, TopPad = 2, DragThreshold = 6;
     private const int DoubleClickMs = 400;
     private readonly MainView _main;
     private readonly List<Row> _rows = [];
@@ -135,13 +136,17 @@ public sealed class HostList : Control, IKeyInput
     private Guid? _selected;
     private long _lastClickMs;
     private int _lastClickRow = -1;
+    private HostEntry? _pressed; // pressed with the left button (a drag once moved DragThreshold px)
+    private bool _dragging;
+    private System.Numerics.Vector2 _pressedAt;
 
     public HostList(MainView main)
     {
         _main = main;
         ReceivesKeyboard = true;
-        Events.OnMouseMove += (_, e) => SetHover(RowAt(e.Relative.Y));
+        Events.OnMouseMove += OnMove;
         Events.OnMouseDown += OnDown;
+        Events.OnMouseUp += OnUp;
         OnFocused += _ => InvalidatePaint();
         OnFocusLost += _ => InvalidatePaint();
     }
@@ -296,6 +301,43 @@ public sealed class HostList : Control, IKeyInput
         }
         _lastClickRow = index;
         _lastClickMs = now;
+        _pressed = host;
+        _pressedAt = e.Global;
+        CapturePointer();
+    }
+
+    private void OnMove(object? sender, MouseEventArgs e)
+    {
+        if (_pressed is { } host)
+        {
+            if (!_dragging && System.Numerics.Vector2.Distance(e.Global, _pressedAt) >= DragThreshold)
+            {
+                _dragging = true;
+                _lastClickRow = -1; // not the first click of a double-click any more
+                Cursor = StandardCursor.Hand;
+            }
+            if (_dragging)
+            {
+                e.Handled = true;
+                _main.UpdateHostDrag(host, e.Global.X, e.Global.Y);
+                return;
+            }
+        }
+        SetHover(RowAt(e.Relative.Y));
+    }
+
+    private void OnUp(object? sender, MouseEventArgs e)
+    {
+        if (e.Button != 0 || _pressed is not { } host)
+            return;
+        e.Handled = true;
+        bool dragged = _dragging;
+        _pressed = null;
+        _dragging = false;
+        Cursor = null;
+        ReleasePointer();
+        if (dragged)
+            _main.EndHostDrag(host);
     }
 
     private void ToggleGroup(Row row)

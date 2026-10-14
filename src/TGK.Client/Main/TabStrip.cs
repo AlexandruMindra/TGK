@@ -103,7 +103,7 @@ public sealed class TabStrip : Control
     /// Tabs can be dragged: between two tabs moves the tab there (into a split view when both neighbours are its panes,
     /// out of its split view otherwise); onto the middle of another tab shows it beside that one (see
     /// <see cref="MainView.DropTab"/>); down into the content area, next to a pane on screen (see
-    /// <see cref="MainView.PaneDropAt"/>).
+    /// <see cref="MainView.UpdatePaneDrag"/>).
     /// </summary>
     private sealed class TabsArea : Control
     {

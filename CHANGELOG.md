@@ -26,9 +26,17 @@ shows the current Unreleased section.
   or Command Prompt, WSL or Git Bash (ConPTY, Windows 10 1809 or later). Settings → Terminal picks the shell, on each
   device. It uses your default terminal settings and starts in your home folder; `exit` closes the tab. "Reopen my
   tabs" reopens it as a shell of the device you sign in on. Agents never see local terminals.
+- **Drag a saved host from the sidebar** onto the content area to open it right where you drop it: beside a pane, in
+  a new split view, in place of a new-tab page, or onto the tab strip for a new tab.
 
 ### Changed
 
+- **Split view drag and drop**: dragging a tab, a pane's title bar or a saved host over the content area now shows
+  buttons where it can go. The arrows at a pane's outer edges put it beside that pane only; the arrows at the ends of a
+  divider put it beside everything that divider separates (e.g. a full-height pane right of two stacked ones); the +
+  in the middle of a divider puts it between the two panes. The middle of a pane swaps two panes of a split view, or
+  fills a new-tab page. While the pointer is on a button, the panes show how the split view will look after the drop,
+  the new pane growing in from its side. Dropping anywhere else does nothing.
 - **Update check**: TGK now asks GitHub for a newer version on every start, in the background as it starts (nothing
   waits for the answer; the last one shows until it arrives), instead of at most twice a day and only 45 seconds after
   the window opened. A new nightly build is seen at the next start.
