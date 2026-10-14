@@ -38,6 +38,48 @@ public enum LayoutPreset
 }
 
 /// <summary>
+/// The area over which a drop is picked up: <see cref="Rect"/>. Where zones overlap, the one with the higher
+/// <see cref="Priority"/> wins, then the one whose anchor (the segment <see cref="From"/>–<see cref="To"/>: an edge, a
+/// divider or a single point) is nearer.
+/// </summary>
+public readonly record struct PaneDropZone(SKRect Rect, int Priority, SKPoint From, SKPoint To)
+{
+    /// <summary>The middle of a pane (swap, take its place): below everything else.</summary>
+    public const int PanePriority = 0;
+    /// <summary>Along a pane's outer edge.</summary>
+    public const int EdgePriority = 1;
+    /// <summary>Along a divider, between the two children it separates.</summary>
+    public const int GapPriority = 2;
+    /// <summary>The end of a divider, beside its whole split.</summary>
+    public const int EndPriority = 3;
+
+    /// <summary>Distance from <paramref name="p"/> to the anchor.</summary>
+    public float Distance(SKPoint p)
+    {
+        SKPoint d = To - From;
+        float length = d.X * d.X + d.Y * d.Y;
+        float t = length <= 0 ? 0 : Math.Clamp(((p.X - From.X) * d.X + (p.Y - From.Y) * d.Y) / length, 0, 1);
+        return SKPoint.Distance(p, new SKPoint(From.X + d.X * t, From.Y + d.Y * t));
+    }
+
+    /// <summary>The index of the zone among <paramref name="zones"/> that picks up point <paramref name="p"/>, or -1.</summary>
+    public static int Pick(IReadOnlyList<PaneDropZone> zones, SKPoint p)
+    {
+        int best = -1;
+        for (int i = 0; i < zones.Count; i++)
+        {
+            PaneDropZone zone = zones[i];
+            if (!zone.Rect.Contains(p.X, p.Y))
+                continue;
+            if (best < 0 || zone.Priority > zones[best].Priority
+                || (zone.Priority == zones[best].Priority && zone.Distance(p) < zones[best].Distance(p)))
+                best = i;
+        }
+        return best;
+    }
+}
+
+/// <summary>
 /// The panes of a split view: a tree whose leaves are the items shown (tabs, in the app) and whose inner nodes split
 /// their area among their children, side by side or stacked, by weight. Pure layout logic, no UI: <see cref="Arrange"/>
 /// turns it into pane and divider rectangles for an area.
@@ -85,8 +127,8 @@ public sealed class PaneLayout<T> where T : class
         public static Placement Between(Split split, int gap) => new(split, PaneDirection.Right, gap);
     }
 
-    /// <summary>A place offered for a dropped pane, with the point its button is drawn at.</summary>
-    public readonly record struct DropSpot(Placement Placement, SKPoint Center);
+    /// <summary>A place offered for a dropped pane, and the area of the screen that picks it up.</summary>
+    public readonly record struct DropSpot(Placement Placement, PaneDropZone Zone);
 
     private T? _zoomed;
 
@@ -288,18 +330,20 @@ public sealed class PaneLayout<T> where T : class
 
     /// <summary>
     /// The places offered for dropping <paramref name="dragged"/> (null, or not a pane of this layout: a new pane) into
-    /// the layout as arranged in <paramref name="area"/>, each with the point of its button, <paramref name="inset"/> px
-    /// in from the edge it belongs to:
+    /// the layout as arranged in <paramref name="area"/>, each with the zone that picks it up (see
+    /// <see cref="PaneDropZone"/>), <paramref name="band"/> px deep at most, and never more than
+    /// <see cref="MaxBandShare"/> of a pane:
     /// <list type="bullet">
-    /// <item>each edge of a pane that does not face another child of its own split: beside that pane;</item>
-    /// <item>the middle of every divider: between the two children it separates;</item>
-    /// <item>the ends of every divider, those that do not face another child of the split's own parent: beside the
-    /// whole split, on that side (a pane across all of the split).</item>
+    /// <item>along each edge of a pane that does not face another child of its own split: beside that pane;</item>
+    /// <item>along every divider, on both sides (<see cref="NearShare"/> of the band into a neighbour that is a split):
+    /// between the two children it separates;</item>
+    /// <item>at the ends of every divider (those that do not face another child of the split's own parent), the part
+    /// of the divider's zone next to the outer edge: beside the whole split, on that side (a pane across all of it).</item>
     /// </list>
-    /// So an edge shared by two children of a split is offered once, by the middle of the divider between them. A
-    /// maximized pane offers its four edges. Nothing is offered beside the dragged pane itself or next to it.
+    /// So an edge shared by two children of a split is offered once, by the divider between them. A maximized pane
+    /// offers its four edges. Nothing is offered beside the dragged pane itself or next to it.
     /// </summary>
-    public IReadOnlyList<DropSpot> DropSpots(SKRect area, float gap, float inset, T? dragged)
+    public IReadOnlyList<DropSpot> DropSpots(SKRect area, float gap, float band, T? dragged)
     {
         var spots = new List<DropSpot>();
         Leaf? moving = dragged is null ? null : FindLeaf(dragged);
@@ -309,17 +353,26 @@ public sealed class PaneLayout<T> where T : class
             if (leaf != moving)
             {
                 foreach (PaneDirection side in Sides)
-                    spots.Add(new DropSpot(Placement.Beside(leaf, side), EdgePoint(area, side, inset)));
+                    spots.Add(new DropSpot(Placement.Beside(leaf, side), EdgeZone(area, side, band)));
             }
             return spots;
         }
-        CollectSpots(Root, area, gap, inset, moving, spots);
+        CollectSpots(Root, area, gap, band, moving, spots);
         return spots;
     }
 
+    /// <summary>The largest share of a pane's width (or height) a drop zone along its edge takes.</summary>
+    public const float MaxBandShare = 0.3f;
+
+    /// <summary>
+    /// How far, as a share of the band, a divider's zone reaches into a neighbour that is itself split: the panes there
+    /// have zones of their own along that divider, from there on in.
+    /// </summary>
+    public const float NearShare = 0.4f;
+
     private static readonly PaneDirection[] Sides = [PaneDirection.Up, PaneDirection.Left, PaneDirection.Right, PaneDirection.Down];
 
-    private static void CollectSpots(Node node, SKRect r, float gap, float inset, Leaf? moving, List<DropSpot> spots)
+    private static void CollectSpots(Node node, SKRect r, float gap, float band, Leaf? moving, List<DropSpot> spots)
     {
         if (node is Leaf leaf)
         {
@@ -328,28 +381,50 @@ public sealed class PaneLayout<T> where T : class
             foreach (PaneDirection side in Sides)
             {
                 if (!FacesSibling(leaf, side))
-                    spots.Add(new DropSpot(Placement.Beside(leaf, side), EdgePoint(r, side, inset)));
+                    spots.Add(new DropSpot(Placement.Beside(leaf, side), EdgeZone(r, side, band)));
             }
             return;
         }
         var split = (Split)node;
         (SKRect[] children, SKRect[] gaps, _) = Divide(split, r, gap);
         for (int i = 0; i < children.Length; i++)
-            CollectSpots(split.Children[i], children[i], gap, inset, moving, spots);
+            CollectSpots(split.Children[i], children[i], gap, band, moving, spots);
         bool across = split.Orientation == SplitOrientation.Horizontal;
         PaneDirection start = across ? PaneDirection.Up : PaneDirection.Left, end = across ? PaneDirection.Down : PaneDirection.Right;
         for (int i = 0; i < gaps.Length; i++)
         {
+            // The divider's zone reaches into both neighbours (less into a split, whose panes have zones along this
+            // divider of their own); its ends are the parts next to the outer edges.
+            SKRect g = gaps[i];
+            float before = Math.Min(split.Children[i] is Leaf ? band : band * NearShare, MaxBandShare * Extent(children[i], across));
+            float after = Math.Min(split.Children[i + 1] is Leaf ? band : band * NearShare, MaxBandShare * Extent(children[i + 1], across));
+            SKRect zone = across ? new SKRect(g.Left - before, g.Top, g.Right + after, g.Bottom) : new SKRect(g.Left, g.Top - before, g.Right, g.Bottom + after);
+            float depth = Math.Min(band, MaxBandShare * Extent(g, !across));
             if (split.Children[i] != moving && split.Children[i + 1] != moving)
-                spots.Add(new DropSpot(Placement.Between(split, i), new SKPoint(gaps[i].MidX, gaps[i].MidY)));
+            {
+                SKPoint from = across ? new SKPoint(g.MidX, g.Top) : new SKPoint(g.Left, g.MidY);
+                SKPoint to = across ? new SKPoint(g.MidX, g.Bottom) : new SKPoint(g.Right, g.MidY);
+                spots.Add(new DropSpot(Placement.Between(split, i), new PaneDropZone(zone, PaneDropZone.GapPriority, from, to)));
+            }
             if (!FacesSibling(split, start))
-                spots.Add(new DropSpot(Placement.Beside(split, start), EdgePoint(gaps[i], start, inset)));
+            {
+                SKRect at = across ? zone with { Bottom = zone.Top + depth } : zone with { Right = zone.Left + depth };
+                SKPoint point = across ? new SKPoint(g.MidX, g.Top) : new SKPoint(g.Left, g.MidY);
+                spots.Add(new DropSpot(Placement.Beside(split, start), new PaneDropZone(at, PaneDropZone.EndPriority, point, point)));
+            }
             if (!FacesSibling(split, end))
-                spots.Add(new DropSpot(Placement.Beside(split, end), EdgePoint(gaps[i], end, inset)));
+            {
+                SKRect at = across ? zone with { Top = zone.Bottom - depth } : zone with { Left = zone.Right - depth };
+                SKPoint point = across ? new SKPoint(g.MidX, g.Bottom) : new SKPoint(g.Right, g.MidY);
+                spots.Add(new DropSpot(Placement.Beside(split, end), new PaneDropZone(at, PaneDropZone.EndPriority, point, point)));
+            }
         }
     }
 
-    // Whether `side` of `node` faces another child of its own split (the middle of the divider between them is offered).
+    // Width of `r` when `across`, else its height.
+    private static float Extent(SKRect r, bool across) => across ? r.Width : r.Height;
+
+    // Whether `side` of `node` faces another child of its own split (the divider between them is offered instead).
     private static bool FacesSibling(Node node, PaneDirection side)
     {
         if (node.Parent is not { } parent || parent.Orientation != Axis(side))
@@ -358,13 +433,19 @@ public sealed class PaneLayout<T> where T : class
         return side is PaneDirection.Left or PaneDirection.Up ? index > 0 : index < parent.Children.Count - 1;
     }
 
-    private static SKPoint EdgePoint(SKRect r, PaneDirection side, float inset) => side switch
+    // The band along `side` of pane `r`.
+    private static PaneDropZone EdgeZone(SKRect r, PaneDirection side, float band)
     {
-        PaneDirection.Left => new SKPoint(r.Left + inset, r.MidY),
-        PaneDirection.Right => new SKPoint(r.Right - inset, r.MidY),
-        PaneDirection.Up => new SKPoint(r.MidX, r.Top + inset),
-        _ => new SKPoint(r.MidX, r.Bottom - inset),
-    };
+        float depth = Math.Min(band, MaxBandShare * Extent(r, side is PaneDirection.Left or PaneDirection.Right));
+        (SKRect zone, SKPoint from, SKPoint to) = side switch
+        {
+            PaneDirection.Left => (r with { Right = r.Left + depth }, new SKPoint(r.Left, r.Top), new SKPoint(r.Left, r.Bottom)),
+            PaneDirection.Right => (r with { Left = r.Right - depth }, new SKPoint(r.Right, r.Top), new SKPoint(r.Right, r.Bottom)),
+            PaneDirection.Up => (r with { Bottom = r.Top + depth }, new SKPoint(r.Left, r.Top), new SKPoint(r.Right, r.Top)),
+            _ => (r with { Top = r.Bottom - depth }, new SKPoint(r.Left, r.Bottom), new SKPoint(r.Right, r.Bottom)),
+        };
+        return new PaneDropZone(zone, PaneDropZone.EdgePriority, from, to);
+    }
 
     private static SplitOrientation Axis(PaneDirection side) =>
         side is PaneDirection.Left or PaneDirection.Right ? SplitOrientation.Horizontal : SplitOrientation.Vertical;

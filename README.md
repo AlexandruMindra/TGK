@@ -16,10 +16,9 @@ entirely on one machine.
   button in the tab strip), or split any pane right / down (`Ctrl+Shift+E` / `Ctrl+Shift+O`). Drag the dividers to
   resize, `Alt+arrows` to move between panes, `Ctrl+Shift+X` to maximize one; each pane stays a tab of its own and can
   be dragged in or out of the split view. Drag a pane's title bar, a tab or a saved host from the sidebar over the
-  panes and drop it on one of the buttons that appear: an arrow at a pane's edge puts it beside that pane, an arrow at
-  the end of a divider beside the whole group, the + on a divider between two panes, the middle of a pane swaps them;
-  the split view shows how it will look before you let go. A title bar dropped on the tab strip makes the pane a tab
-  again.
+  panes: near a pane's edge it goes beside that pane, along a divider between two panes, at a divider's outer end
+  beside the whole group, in the middle of a pane it swaps them; the split view shows how it will look before you let
+  go. A title bar dropped on the tab strip makes the pane a tab again.
 - Full screen (`F11`, or the account menu): TGK covers the whole monitor, without the title bar and the taskbar.
 - Local terminal (`Ctrl+Shift+Enter`, or "Local terminal" on the new-tab page): a shell of this computer in a tab, beside
   your sessions — your shell on Linux and macOS; PowerShell, Command Prompt, WSL or Git Bash on Windows (Settings →

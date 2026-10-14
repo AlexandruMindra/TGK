@@ -263,7 +263,7 @@ public class PaneLayoutTests
 
     // ---- drop spots and Insert ----
 
-    private const float Inset = 20;
+    private const float Band = 80;
 
     private static PaneLayout<string>.Leaf LeafOf(PaneLayout<string> layout, string item)
     {
@@ -283,40 +283,82 @@ public class PaneLayoutTests
     }
 
     private static PaneLayout<string>.DropSpot SpotFor(PaneLayout<string> layout, string description, string? dragged = null) =>
-        layout.DropSpots(Area, Gap, Inset, dragged).Single(s => Describe(s.Placement) == description);
+        layout.DropSpots(Area, Gap, Band, dragged).Single(s => Describe(s.Placement) == description);
+
+    // The spot whose zone picks up point (x, y), if any.
+    private static PaneLayout<string>.DropSpot? SpotAt(PaneLayout<string> layout, float x, float y, string? dragged = null)
+    {
+        var spots = layout.DropSpots(Area, Gap, Band, dragged);
+        int index = PaneDropZone.Pick(spots.Select(s => s.Zone).ToList(), new SKPoint(x, y));
+        return index < 0 ? null : spots[index];
+    }
+
+    private static string? DescribeAt(PaneLayout<string> layout, float x, float y, string? dragged = null) =>
+        SpotAt(layout, x, y, dragged) is { } spot ? Describe(spot.Placement) : null;
 
     [Fact]
     public void Stacked_panes_offer_their_outer_edges_and_the_dividers_ends_and_middle()
     {
         var layout = PaneLayout<string>.FromPreset(LayoutPreset.Rows2, ["a", "b"]);
 
-        var spots = layout.DropSpots(Area, Gap, Inset, null);
+        var spots = layout.DropSpots(Area, Gap, Band, null);
 
         Assert.Equal(["a Up", "a Left", "a Right", "b Left", "b Right", "b Down", "between 0", "split Left", "split Right"],
             spots.Select(s => Describe(s.Placement)));
-        Assert.Equal(new SKPoint(500, 20), spots[0].Center);
-        Assert.Equal(new SKPoint(980, 148.5f), spots[2].Center);
-        Assert.Equal(new SKPoint(500, 300), spots[6].Center); // the divider is 297..303
-        Assert.Equal(new SKPoint(20, 300), spots[7].Center);
+        Assert.Equal(new SKRect(0, 0, 1000, 80), spots[0].Zone.Rect);
+        Assert.Equal(new SKRect(920, 0, 1000, 297), spots[2].Zone.Rect);
+        Assert.Equal(new SKRect(0, 217, 1000, 383), spots[6].Zone.Rect); // the divider is 297..303
+        Assert.Equal(new SKRect(920, 217, 1000, 383), spots[8].Zone.Rect);
+    }
+
+    [Theory]
+    [InlineData(990, 100, "a Right")]
+    [InlineData(990, 290, "split Right")] // the end of the divider wins over the edge and the divider
+    [InlineData(500, 290, "between 0")]
+    [InlineData(500, 590, "b Down")]
+    [InlineData(20, 10, "a Up")] // a corner goes to the nearer edge
+    [InlineData(10, 40, "a Left")]
+    [InlineData(500, 150, null)] // the middle of a pane is left to the caller (swap, take its place)
+    public void Zones_pick_the_spot_under_the_pointer(float x, float y, string? expected)
+    {
+        var layout = PaneLayout<string>.FromPreset(LayoutPreset.Rows2, ["a", "b"]);
+
+        Assert.Equal(expected, DescribeAt(layout, x, y));
     }
 
     [Fact]
     public void In_a_grid_a_shared_edge_is_offered_once_by_the_divider_between()
     {
-        // (a | b) / (c | d): the rows' dividers end at the outer edges only; their inner ends would meet the middle
-        // of the divider between the rows, which is offered instead.
+        // (a | b) / (c | d): the rows' dividers end at the outer edges only; their inner ends would meet the divider
+        // between the rows, which is offered instead.
         var layout = PaneLayout<string>.FromPreset(LayoutPreset.Grid2x2, ["a", "b", "c", "d"]);
+        var root = (PaneLayout<string>.Split)layout.Root;
 
-        var spots = layout.DropSpots(Area, Gap, Inset, null).Select(s => (Describe(s.Placement), s.Center)).ToList();
+        var spots = layout.DropSpots(Area, Gap, Band, null).Select(s => Describe(s.Placement)).ToList();
 
         Assert.Equal(19, spots.Count); // 3 edges per pane, a + and both ends for the rows' divider, a + and one end for each row's
-        Assert.Contains(("between 0", new SKPoint(500, 300)), spots);
-        Assert.Contains(("split Up", new SKPoint(500, 20)), spots);
-        Assert.Contains(("split Down", new SKPoint(500, 580)), spots);
-        Assert.Contains(("a Down", new SKPoint(248.5f, 277)), spots);
-        Assert.Single(spots, s => s.Item1 == "split Up");
-        Assert.Single(spots, s => s.Item1 == "split Down");
-        Assert.DoesNotContain(spots, s => s.Item1 == "a Right"); // a faces b: the row's + instead
+        Assert.Single(spots, s => s == "split Up");
+        Assert.Single(spots, s => s == "split Down");
+        Assert.DoesNotContain("a Right", spots); // a faces b: the row's divider instead
+        Assert.Same(root, SpotAt(layout, 500, 300)?.Placement.Node);
+        Assert.Same(root.Children[0], SpotAt(layout, 500, 150)?.Placement.Node);
+        Assert.Equal("split Up", DescribeAt(layout, 500, 20));
+    }
+
+    [Fact]
+    public void A_panes_edge_along_a_divider_of_another_split_keeps_a_zone_beyond_the_dividers()
+    {
+        // (a | b) / (c | d): a's lower edge faces the divider between the rows, which reaches only a little into the
+        // rows; beyond it, a's own edge splits just a.
+        var grid = PaneLayout<string>.FromPreset(LayoutPreset.Grid2x2, ["a", "b", "c", "d"]);
+        Assert.Equal("between 0", DescribeAt(grid, 250, 285));
+        Assert.Equal("a Down", DescribeAt(grid, 250, 240));
+
+        // a | (b / c): the same for b's left edge along the divider between a and the stack.
+        var main = PaneLayout<string>.FromPreset(LayoutPreset.MainLeft, ["a", "b", "c"]);
+        Assert.Equal("between 0", DescribeAt(main, 520, 150));
+        Assert.Equal("b Left", DescribeAt(main, 560, 150));
+        Assert.Equal("between 0", DescribeAt(main, 440, 150)); // a faces the stack: the divider takes a's whole band
     }
 
     [Fact]
@@ -404,7 +446,7 @@ public class PaneLayoutTests
         var layout = PaneLayout<string>.FromPreset(LayoutPreset.Columns3, ["a", "b", "c"]);
         var b = LeafOf(layout, "b");
 
-        var spots = layout.DropSpots(Area, Gap, Inset, "b");
+        var spots = layout.DropSpots(Area, Gap, Band, "b");
 
         Assert.DoesNotContain(spots, s => s.Placement.Node == b);
         Assert.DoesNotContain(spots, s => s.Placement.IsBetween); // both gaps are next to b
@@ -445,10 +487,10 @@ public class PaneLayoutTests
         var layout = PaneLayout<string>.FromPreset(LayoutPreset.Columns3, ["a", "b", "c"]);
         layout.Zoomed = "b";
 
-        var spots = layout.DropSpots(Area, Gap, Inset, null);
+        var spots = layout.DropSpots(Area, Gap, Band, null);
 
         Assert.Equal(["b Up", "b Left", "b Right", "b Down"], spots.Select(s => Describe(s.Placement)));
-        Assert.Equal(new SKPoint(980, 300), spots[2].Center);
+        Assert.Equal(new SKRect(920, 0, 1000, 600), spots[2].Zone.Rect);
         layout.Insert("d", spots[2].Placement);
         Assert.Null(layout.Zoomed);
         Assert.Equal(["a", "b", "d", "c"], layout.Items);

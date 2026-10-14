@@ -24,22 +24,22 @@ public enum PaneDropKind
     NewTab,
 }
 
-/// <param name="Center">Content-local center of the drop's button (none for <see cref="PaneDropKind.OwnTab"/> and <see cref="PaneDropKind.NewTab"/>).</param>
-public readonly record struct PaneDrop(PaneDropKind Kind, TabContent? Target, TabLayout.Placement? Placement, SKPoint Center)
+/// <param name="Zone">Content-local area that picks the drop up (none for <see cref="PaneDropKind.OwnTab"/> and <see cref="PaneDropKind.NewTab"/>).</param>
+public readonly record struct PaneDrop(PaneDropKind Kind, TabContent? Target, TabLayout.Placement? Placement, PaneDropZone Zone)
 {
-    public static readonly PaneDrop None = new(PaneDropKind.None, null, null, SKPoint.Empty);
+    public static readonly PaneDrop None = new(PaneDropKind.None, null, null, default);
 }
 
 // Drag and drop onto the content area: a pane's title bar, a tab from the tab strip or a saved host from the sidebar.
-// While dragging, the panes on screen show buttons where it can go (see PaneLayout.DropSpots): at a pane's outer edges
-// beside that pane, at the ends of a divider beside that whole split, in the middle of a divider between its two
-// panes; in the middle of a pane of its own split view to swap the two, in the middle of a new-tab page to take its
-// place. The button under the pointer previews the layout after the drop. Without a split view on screen the active
-// tab counts as the one pane, so a drop at its edge starts a split view. A title bar dragged onto the tab strip makes
-// the pane a tab of its own; a host dragged there opens in a new tab.
+// Nothing is drawn until the pointer is in one of the drop zones (see PaneLayout.DropSpots): along a pane's outer edge
+// beside that pane, at the ends of a divider beside that whole split, along a divider between its two panes; inside a
+// pane of its own split view to swap the two, inside a new-tab page to take its place. The zone under the pointer
+// previews the layout after the drop. Without a split view on screen the active tab counts as the one pane, so a drop
+// at its edge starts a split view. A title bar dragged onto the tab strip makes the pane a tab of its own; a host
+// dragged there opens in a new tab.
 public sealed partial class MainView
 {
-    private const float ButtonInset = 26, HitRadius = 28, KeepRadius = 38, ChipOffset = 14;
+    private const float DropBand = 80, ChipOffset = 14;
 
     private PaneDropOverlay? _dropOverlay;
     private DragChip? _dragChip;
@@ -113,14 +113,11 @@ public sealed partial class MainView
         BuildDrops(dragged, w, h);
         _drop = cx < 0 || cx >= w || cy >= h ? PaneDrop.None
             : cy < 0 ? StripDrop(dragged, cy)
-            : NearestDrop(cx, cy);
+            : PaneDropZone.Pick(_drops.Select(d => d.Zone).ToList(), new SKPoint(cx, cy)) is >= 0 and int picked ? _drops[picked]
+            : PaneDrop.None;
 
-        bool show = _drops.Count > 0 || _drop.Kind != PaneDropKind.None;
-        _dropOverlay.Visible = show;
-        if (!show)
-            return;
+        _dropOverlay.Visible = true;
         _dropOverlay.Transform.SetLocalFrame(0, 0, w, h);
-        _dropOverlay.SetButtons(_drops.Select(d => new DropButton(d.Center, IconOf(d))).ToList(), _drops.IndexOf(_drop));
         string? label = _drop.Kind switch
         {
             PaneDropKind.OwnTab => "Move to its own tab",
@@ -154,8 +151,8 @@ public sealed partial class MainView
             ?? (_dropLayout is { Count: 1 } solo && solo.Items[0] == active ? solo : new TabLayout(active));
         _dropLayout = layout;
         SKRect area = PaneArea(w, h);
-        foreach (TabLayout.DropSpot spot in layout.DropSpots(area, PaneGap, ButtonInset, tab))
-            _drops.Add(new PaneDrop(PaneDropKind.Insert, null, spot.Placement, spot.Center));
+        foreach (TabLayout.DropSpot spot in layout.DropSpots(area, PaneGap, DropBand, tab))
+            _drops.Add(new PaneDrop(PaneDropKind.Insert, null, spot.Placement, spot.Zone));
         foreach (TabLayout.PaneRect pane in PanesOnScreen(area))
         {
             if (pane.Item == tab)
@@ -163,8 +160,10 @@ public sealed partial class MainView
             PaneDropKind kind = tab?.Split is { } own && own == pane.Item.Split ? PaneDropKind.Swap
                 : pane.Item is HomeTabContent && (tab is null || pane.Item.Split is not null) ? PaneDropKind.Replace
                 : PaneDropKind.None;
+            // The whole pane, where no edge or divider zone is.
+            var middle = new SKPoint(pane.Rect.MidX, pane.Rect.MidY);
             if (kind != PaneDropKind.None)
-                _drops.Add(new PaneDrop(kind, pane.Item, null, new SKPoint(pane.Rect.MidX, pane.Rect.MidY)));
+                _drops.Add(new PaneDrop(kind, pane.Item, null, new PaneDropZone(pane.Rect, PaneDropZone.PanePriority, middle, middle)));
         }
     }
 
@@ -175,40 +174,11 @@ public sealed partial class MainView
             return PaneDrop.None;
         return dragged switch
         {
-            TabContent { Split: not null } tab => new PaneDrop(PaneDropKind.OwnTab, tab, null, SKPoint.Empty),
-            HostEntry => new PaneDrop(PaneDropKind.NewTab, null, null, SKPoint.Empty),
+            TabContent { Split: not null } tab => new PaneDrop(PaneDropKind.OwnTab, tab, null, default),
+            HostEntry => new PaneDrop(PaneDropKind.NewTab, null, null, default),
             _ => PaneDrop.None,
         };
     }
-
-    // The drop whose button is under content point (`cx`, `cy`). The one already chosen stays chosen a little farther
-    // out, so the choice does not flicker between neighbours.
-    private PaneDrop NearestDrop(float cx, float cy)
-    {
-        PaneDrop best = PaneDrop.None;
-        float bestDistance = float.MaxValue;
-        foreach (PaneDrop drop in _drops)
-        {
-            float distance = SKPoint.Distance(drop.Center, new SKPoint(cx, cy));
-            if (distance <= (drop == _drop ? KeepRadius : HitRadius) && distance < bestDistance)
-                (best, bestDistance) = (drop, distance);
-        }
-        return best;
-    }
-
-    private static string IconOf(PaneDrop drop) => drop.Kind switch
-    {
-        PaneDropKind.Swap => "swap",
-        PaneDropKind.Replace => "drop-in",
-        _ when drop.Placement is { IsBetween: true } => "plus",
-        _ => drop.Placement?.Side switch
-        {
-            PaneDirection.Left => "chevron-left",
-            PaneDirection.Right => "chevron-right",
-            PaneDirection.Up => "chevron-up",
-            _ => "chevron-down",
-        },
-    };
 
     // The rectangle the panes of a split view share in a content area of `w` × `h`.
     private static SKRect PaneArea(float w, float h) =>

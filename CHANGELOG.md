@@ -31,12 +31,12 @@ shows the current Unreleased section.
 
 ### Changed
 
-- **Split view drag and drop**: dragging a tab, a pane's title bar or a saved host over the content area now shows
-  buttons where it can go. The arrows at a pane's outer edges put it beside that pane only; the arrows at the ends of a
-  divider put it beside everything that divider separates (e.g. a full-height pane right of two stacked ones); the +
-  in the middle of a divider puts it between the two panes. The middle of a pane swaps two panes of a split view, or
-  fills a new-tab page. While the pointer is on a button, the panes show how the split view will look after the drop,
-  the new pane growing in from its side. Dropping anywhere else does nothing.
+- **Split view drag and drop**: while a tab, a pane's title bar or a saved host is dragged over the panes, the split
+  view shows how it will look if you let go there, the new pane growing in from its side. Near a pane's outer edge it
+  goes beside that pane only; along a divider, between the two panes it separates; at the outer end of a divider,
+  beside everything that divider separates (e.g. a full-height pane right of two stacked ones); in the middle of a pane
+  it swaps two panes of a split view, or fills a new-tab page. Nothing is drawn elsewhere, and dropping there does
+  nothing.
 - **Update check**: TGK now asks GitHub for a newer version on every start, in the background as it starts (nothing
   waits for the answer; the last one shows until it arrives), instead of at most twice a day and only 45 seconds after
   the window opened. A new nightly build is seen at the next start.

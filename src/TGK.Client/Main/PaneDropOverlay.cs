@@ -5,9 +5,6 @@ using TGK.Client.Controls;
 
 namespace TGK.Client.Main;
 
-/// <summary>A button of <see cref="PaneDropOverlay"/>: a place to drop, drawn as <see cref="Icon"/> at <see cref="Center"/>.</summary>
-public readonly record struct DropButton(SKPoint Center, string Icon);
-
 /// <summary>
 /// A pane of the layout <see cref="PaneDropOverlay"/> previews: <see cref="Key"/> (a tab, or what is dragged) at
 /// <see cref="Rect"/>. A pane that was not in the previous preview starts at <see cref="From"/>; the pane being dropped
@@ -16,14 +13,12 @@ public readonly record struct DropButton(SKPoint Center, string Icon);
 public readonly record struct PreviewPane(object Key, string Title, SKRect Rect, SKRect From, bool Dropped);
 
 /// <summary>
-/// Shown over the content area while a tab, a pane or a saved host is dragged over it: dims the panes and shows a button
-/// for every place it can be dropped. While the pointer is on one, the panes are drawn as they will be after the drop,
-/// the dropped one highlighted; panes glide to their new places and a new pane grows from the edge it comes in at.
-/// Click-through; content-local coordinates.
+/// Over the content area while a tab, a pane or a saved host is dragged over it. Draws nothing until the pointer is in
+/// a drop zone; then the panes are drawn as they will be after the drop, the dropped one highlighted: panes glide to
+/// their new places and a new pane grows from the edge it comes in at. Click-through; content-local coordinates.
 /// </summary>
 public sealed class PaneDropOverlay : Control
 {
-    public const float ButtonSize = 32;
     private const float TauMs = 55; // each frame moves 1 - e^(-dt/τ) of the way to the target
     private const float Radius = Theme.RadiusLg;
 
@@ -47,25 +42,14 @@ public sealed class PaneDropOverlay : Control
     }
 
     private readonly List<Ghost> _ghosts = [];
-    private IReadOnlyList<DropButton> _buttons = [];
-    private int _hovered = -1;
     private string? _label;
-    private float _appear, _preview, _previewTarget;
+    private float _preview, _previewTarget;
     private long _lastTick = -1;
     private bool _ticking;
 
     public PaneDropOverlay()
     {
         IsClickthrough = true;
-    }
-
-    /// <summary>The buttons to show, <paramref name="hovered"/> (an index, or -1) under the pointer.</summary>
-    public void SetButtons(IReadOnlyList<DropButton> buttons, int hovered)
-    {
-        _buttons = buttons;
-        _hovered = hovered;
-        Animate();
-        InvalidatePaint();
     }
 
     /// <summary>
@@ -112,10 +96,8 @@ public sealed class PaneDropOverlay : Control
     public void Reset()
     {
         _ghosts.Clear();
-        _buttons = [];
-        _hovered = -1;
         _label = null;
-        _appear = _preview = _previewTarget = 0;
+        _preview = _previewTarget = 0;
         InvalidatePaint();
     }
 
@@ -139,7 +121,7 @@ public sealed class PaneDropOverlay : Control
         long now = UiClock.NowMs;
         float k = 1 - MathF.Exp(-Math.Clamp(now - _lastTick, 0, 100) / TauMs);
         _lastTick = now;
-        bool moving = Approach(ref _appear, 1, k) | Approach(ref _preview, _previewTarget, k);
+        bool moving = Approach(ref _preview, _previewTarget, k);
         for (int i = _ghosts.Count - 1; i >= 0; i--)
         {
             Ghost g = _ghosts[i];
@@ -178,15 +160,11 @@ public sealed class PaneDropOverlay : Control
 
     protected override void Paint(SKCanvas c)
     {
-        // The panes dimmed while dragging, all but hidden while a preview shows the layout after the drop.
-        Gfx.FillRect(c, new SKRect(0, 0, W, H), Theme.AppBg.WithAlpha((byte)(_appear * (80 + 150 * _preview))));
+        // The panes all but hidden while the preview shows the layout after the drop.
+        if (_preview > 0)
+            Gfx.FillRect(c, new SKRect(0, 0, W, H), Theme.AppBg.WithAlpha((byte)(230 * _preview)));
         foreach (Ghost ghost in _ghosts)
             InLayer(c, ghost.Alpha, () => DrawGhost(c, ghost));
-        InLayer(c, _appear, () =>
-        {
-            for (int i = 0; i < _buttons.Count; i++)
-                DrawButton(c, _buttons[i], i == _hovered);
-        });
     }
 
     // Draws with `alpha` applied to everything `draw` paints.
@@ -212,8 +190,7 @@ public sealed class PaneDropOverlay : Control
             return;
         float radius = Math.Min(Radius, Math.Min(r.Width, r.Height) / 2f);
         bool roomy = r.Width > 48 && r.Height > 28;
-        // Titles sit below the middle, where a button may be (swap, take the place of, between).
-        float titleY = r.Height > 120 ? r.MidY + 34 : r.MidY;
+        float titleY = r.MidY;
         if (g.Dropped)
         {
             Gfx.FillRound(c, r, radius, Theme.Mix(Theme.AppBg, Theme.Accent, 0.16f));
@@ -240,18 +217,6 @@ public sealed class PaneDropOverlay : Control
         Gfx.Text(c, label, cx, cy, Theme.FontBase, Theme.WeightSemibold, Theme.TextOnAccent, TextAlignment.Center);
     }
 
-    private static void DrawButton(SKCanvas c, DropButton button, bool hovered)
-    {
-        float half = ButtonSize / 2f;
-        var r = new SKRect(button.Center.X - half, button.Center.Y - half, button.Center.X + half, button.Center.Y + half);
-        Gfx.Shadow(c, r, Theme.Radius + 2, 10, 2, new SKColor(0, 0, 0, 120));
-        Gfx.FillRound(c, r, Theme.Radius + 2, hovered ? Theme.Mix(Theme.SurfaceRaised, Theme.Accent, 0.22f) : Theme.SurfaceRaised);
-        if (hovered)
-            Gfx.StrokeRound(c, r, Theme.Radius + 2, Theme.Accent, 2);
-        else
-            Gfx.StrokeRound(c, r, Theme.Radius + 2, new SKColor(255, 255, 255, 150), 1.5f);
-        Icons.Draw(c, button.Icon, button.Center.X, button.Center.Y, 18, hovered ? Theme.AccentHover : Theme.TextPrimary);
-    }
 }
 
 /// <summary>A saved host dragged from the sidebar: its name in a pill that follows the pointer. Click-through.</summary>
