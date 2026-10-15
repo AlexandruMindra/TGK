@@ -279,7 +279,7 @@ public sealed class HostList : Control, IKeyInput
             if (e.Button == 0)
                 ToggleGroup(row);
             else if (e.Button == 1)
-                _main.ShowGroupMenu(row.Group, e.Global.X, e.Global.Y);
+                _main.ShowGroupMenu(row.Group, e.Global.X, e.Global.Y, ungrouped: row.Group is null);
             return;
         }
         if (row.Host is not { } host)

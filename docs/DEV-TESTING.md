@@ -61,6 +61,8 @@ export TGK_E2E_SSH_KEY=<keydir>/client_key                   # optional: enables
 export TGK_E2E_SSH_LEGACY='<user>:<password>@127.0.0.1:2223'  # optional: a server offering only legacy key exchange
                                                              # (e.g. diffie-hellman-group14-sha1) for the "Legacy algorithms" test
 export TGK_E2E_SSH_NOSFTP='test:test@127.0.0.1:2224'         # optional: the server started with --no-sftp
+export TGK_E2E_SSH_SUDO='test:test@127.0.0.1:2225'           # optional: a server started by a (non-root) user whose
+export TGK_E2E_SUDO_PASSWORD=<that user's sudo password>     # sudo asks for a password, for the sudo prompts
 dotnet test tests/TGK.Core.Tests --filter Category=E2E
 ```
 
@@ -70,7 +72,7 @@ their targets, permissions, uploads and downloads of folders with conflicts and 
 back, jump hosts, copies and moves between two hosts through the local buffer and within one host, and the direct
 copy from host to host, which needs an `ssh` client at `/usr/bin/ssh` on the test server's machine and, with
 `TGK_E2E_SSH_KEY`, also signs in to host B with a key that has a passphrase; the editor's reads and saves, and its sudo
-access when the test server's user has passwordless sudo) and the agent tests: `RemoteConnectionEndToEndTests` (commands, SFTP and the fallback through commands)
+access when the test server's user has passwordless sudo) and the agent tests: `RemoteConnectionEndToEndTests` (commands, SFTP and the fallback through commands; sudo asking for its password with `TGK_E2E_SSH_SUDO`)
 and `AgentEndToEndTests`, which starts the real `tgk-mcp` from an MCP client and calls every tool through an
 `AgentEndpoint` (approvals, read-only access and hanging up are checked too; the tests that need no SSH server always
 run).
@@ -98,7 +100,7 @@ The client has developer flags for driving UI states without a mouse (harmless u
 | Flag | Effect |
 |---|---|
 | `--dev-login` | Sign in to the mock vault as `demo` (never restores a kept session). |
-| `--scene=<name>` | Open a UI state. Login screen: `login`, `login-totp` (authenticator reset), `register`, `register-totp` (these never restore a kept session). Signed in, on a kept session if one is restored, else the mock vault: `main`, `split` (a split view: the new-tab page and two sessions), `tabs-overflow` (more tabs than fit in the strip), `update` (the status bar's "new version available" chip), `host-editor` (also `host-editor-connection`, `host-editor-tunnels`, `host-editor-appearance`: the host editor on that tab), `group-settings`, `connection-defaults` (Settings on the synced connection defaults), `identities`, `settings`, `hostkey`, `hostkey-changed`, `password-prompt`, `menu`, `devices`, `change-password`, `local-terminal` (a shell of this computer in a tab). The mock vault's sample hosts include a group-level jump host (Production → bastion), a tunnel (db-primary) and a color scheme (homelab). |
+| `--scene=<name>` | Open a UI state. Login screen: `login`, `login-totp` (authenticator reset), `register`, `register-totp` (these never restore a kept session). Signed in, on a kept session if one is restored, else the mock vault: `main`, `split` (a split view: the new-tab page and two sessions), `tabs-overflow` (more tabs than fit in the strip), `update` (the status bar's "new version available" chip), `host-editor` (also `host-editor-connection`, `host-editor-tunnels`, `host-editor-appearance`: the host editor on that tab), `group-settings`, `connection-defaults` (Settings on the synced connection defaults), `identities`, `settings`, `hostkey`, `hostkey-changed`, `password-prompt`, `menu`, `devices`, `change-password`, `local-terminal` (a shell of this computer in a tab), `run-command` (a command ready to run on the first group's hosts). The mock vault's sample hosts include a group-level jump host (Production → bastion), a tunnel (db-primary) and a color scheme (homelab). |
 | `--dev-connect=<user>[:<password>]@<host>[:<port>]` | After sign-in, open a session tab to that address (no password: the prompt appears). |
 | `--dev-send=<text>` | Typed into the `--dev-connect` session once connected; `\r`, `\n`, `\t`, `\e` and `\\` are unescaped. |
 | `--dev-files[=<folder>]` | `--dev-connect` opens a Files tab (SFTP) instead of a terminal, at that remote folder (else home). |

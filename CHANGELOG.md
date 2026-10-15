@@ -28,6 +28,17 @@ shows the current Unreleased section.
   tabs" reopens it as a shell of the device you sign in on. Agents never see local terminals.
 - **Drag a saved host from the sidebar** onto the content area to open it right where you drop it: beside a pane, in
   a new split view, in place of a new-tab page, or onto the tab strip for a new tab.
+- **Run a command on many hosts**: right-click a group in the sidebar → *Run a command on all hosts…* (also on
+  *Ungrouped*, or right-click a host → *Run a command…*) opens a tab that runs one command on all the checked hosts at
+  once, 10 at a time; its list has every saved host by group, to check or uncheck hosts and whole groups. Each host is
+  reached as a terminal would be (jump hosts, saved credentials, host-key checks); the command runs without a terminal
+  and with its input closed, so one that waits for input ends instead of hanging. The list shows each host's progress
+  and exit code, and each host's output appears beside it as it finishes (errors in red, colors kept, other escape
+  sequences dropped), or one host's output alone when you click it. *As root (sudo)* runs it through sudo (the saved
+  password is tried first), *Stop after* sets a time limit, *Stop* ends the run. What the vault lacks (passwords, sudo
+  passwords, unknown host keys) is asked one prompt at a time; "Use it for the other hosts of this tab too" spares
+  typing the same password again. Typed passwords are kept in memory only, until the tab closes. ↑ / ↓ in the command
+  field recall the commands run before.
 
 ### Changed
 

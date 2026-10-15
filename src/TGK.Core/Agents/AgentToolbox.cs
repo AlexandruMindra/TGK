@@ -285,36 +285,27 @@ public sealed class AgentToolbox : IDisposable
         return new ToolOutcome(sb.ToString(), result.TimedOut);
     }
 
-    /// <summary>
-    /// Runs <paramref name="line"/> through sudo. A passwordless sudo runs it directly (never sending a password it
-    /// could read); otherwise the password goes to sudo on stdin, with cached credentials ignored so that sudo always
-    /// consumes it. A wrong password is asked for again (twice at most).
-    /// </summary>
+    /// <summary>Runs <paramref name="line"/> through sudo (<see cref="Sudo.RunAsync"/>), asking the user for the password.</summary>
     private async Task<CommandResult> RunSudoAsync(Call call, ConnectionPool.Lease lease, string line, TimeSpan timeout, CancellationToken ct)
     {
-        string wrapped = $"sh -c {RemotePath.Quote(line)}";
-        CommandResult probe = await lease.Connection.RunAsync("sudo -n true", TimeSpan.FromSeconds(15), ct: ct).ConfigureAwait(false);
-        if (probe.ExitCode == 0)
-            return await lease.Connection.RunAsync($"sudo -n -- {wrapped} </dev/null", timeout, ct: ct).ConfigureAwait(false);
-        if (probe.Stderr.Contains("not found", StringComparison.OrdinalIgnoreCase))
-            throw new ToolException($"{call.Host!.DisplayName} has no sudo.");
-
-        VaultData vault = Vault();
-        SshConnectRequest request = SshConnectRequest.ForHost(vault, call.Host!);
-        string? error = null;
-        for (int attempt = 0; attempt < 3; attempt++)
+        SshConnectRequest? request = null;
+        try
         {
-            string password = await _host.SudoPasswordAsync(call.Host!, request, error, ct).ConfigureAwait(false)
-                ?? throw new ToolException("The user did not give the sudo password.", denied: true);
-            byte[] input = Encoding.UTF8.GetBytes(password + "\n");
-            CommandResult result = await lease.Connection.RunAsync($"sudo -S -k -p '' -- {wrapped}", timeout, input: input, ct: ct).ConfigureAwait(false);
-            bool wrong = result.ExitCode != 0 && (result.Stderr.Contains("incorrect password", StringComparison.OrdinalIgnoreCase)
-                || result.Stderr.Contains("Sorry, try again", StringComparison.Ordinal));
-            if (!wrong)
-                return result;
-            error = $"sudo did not accept the password for {request.Username}@{request.Host}.";
+            return await Sudo.RunAsync(lease.Connection, line, timeout, (error, token) =>
+            {
+                request ??= SshConnectRequest.ForHost(Vault(), call.Host!);
+                return _host.SudoPasswordAsync(call.Host!, request, error, token);
+            }, ct).ConfigureAwait(false);
         }
-        throw new ToolException("sudo did not accept the password.");
+        catch (SudoException ex)
+        {
+            throw ex.Failure switch
+            {
+                SudoFailure.Missing => new ToolException($"{call.Host!.DisplayName} has no sudo."),
+                SudoFailure.Declined => new ToolException("The user did not give the sudo password.", denied: true),
+                _ => new ToolException("sudo did not accept the password."),
+            };
+        }
     }
 
     private async Task<ToolOutcome> ReadFileAsync(Call call, CancellationToken ct)

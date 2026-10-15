@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net.Sockets;
+using System.Reflection;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -177,7 +179,10 @@ public sealed class RemoteConnection : IDisposable
     /// Stops it after <paramref name="timeout"/>; keeps at most <paramref name="maxOutput"/> bytes per stream (the rest
     /// is read and dropped, so a chatty command cannot fill memory).
     /// </summary>
-    /// <param name="input">Written to the command's stdin, which is then closed; null for no input.</param>
+    /// <param name="input">
+    /// Written to the command's stdin, which is then closed (empty: closed at once, so a command reading it gets
+    /// end-of-file); null leaves stdin open.
+    /// </param>
     /// <param name="keepBytes">Also return stdout as bytes (<see cref="CommandResult.StdoutBytes"/>).</param>
     /// <exception cref="SshSessionException">The connection is gone (<see cref="SshErrorKind.ConnectionLost"/>).</exception>
     public async Task<CommandResult> RunAsync(string command, TimeSpan timeout, int maxOutput = DefaultMaxOutput, byte[]? input = null,
@@ -215,7 +220,10 @@ public sealed class RemoteConnection : IDisposable
                 try
                 {
                     await using Stream stdin = cmd.CreateInputStream();
-                    await stdin.WriteAsync(input, limit.Token).ConfigureAwait(false);
+                    if (input.Length > 0)
+                        await stdin.WriteAsync(input, limit.Token).ConfigureAwait(false);
+                    else
+                        EndInput(cmd);
                 }
                 catch (Exception ex) when (ex is SshException or IOException or ObjectDisposedException or OperationCanceledException or InvalidOperationException)
                 {
@@ -467,6 +475,29 @@ public sealed class RemoteConnection : IDisposable
             // The channel closed: what arrived is the output.
         }
         return new Captured(kept.ToArray(), truncated);
+    }
+
+    // SSH.NET (2026.0.0) ends a command's input when its input stream is disposed, but only once data was written to
+    // it: with nothing to send, the end is sent on the command's channel directly.
+    private static readonly FieldInfo? CommandChannel = typeof(SshCommand).GetField("_channel", BindingFlags.NonPublic | BindingFlags.Instance);
+
+    /// <summary>Sends end-of-file on <paramref name="cmd"/>'s stdin (logs when this SSH.NET has no way to).</summary>
+    private static void EndInput(SshCommand cmd)
+    {
+        object? channel = CommandChannel?.GetValue(cmd);
+        if (channel?.GetType().GetMethod("SendEof", BindingFlags.Public | BindingFlags.Instance, Type.EmptyTypes) is not { } sendEof)
+        {
+            CoreLog.Warn("Could not end a command's input: SSH.NET's SshCommand changed.");
+            return;
+        }
+        try
+        {
+            sendEof.Invoke(channel, null);
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException is not null)
+        {
+            ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+        }
     }
 
     private static string Decode(byte[] bytes) => Encoding.UTF8.GetString(bytes);

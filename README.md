@@ -19,6 +19,11 @@ entirely on one machine.
   panes: near a pane's edge it goes beside that pane, along a divider between two panes, at a divider's outer end
   beside the whole group, in the middle of a pane it swaps them; the split view shows how it will look before you let
   go. A title bar dropped on the tab strip makes the pane a tab again.
+- Run a command on many hosts: right-click a group → *Run a command on all hosts…* (or a host → *Run a command…*) and
+  check the hosts to run it on, from any group. It runs on all of them at once (10 at a time), through each host's jump
+  hosts with its credentials, optionally as root (sudo), with a time limit and a Stop button. The list shows how each
+  host is doing; each host's output appears beside it when it is done (one host's alone when you click it). Passwords
+  the vault lacks are asked once, can be used for the other hosts too, and are kept only until the tab closes.
 - Full screen (`F11`, or the account menu): TGK covers the whole monitor, without the title bar and the taskbar.
 - Local terminal (`Ctrl+Shift+Enter`, or "Local terminal" on the new-tab page): a shell of this computer in a tab, beside
   your sessions — your shell on Linux and macOS; PowerShell, Command Prompt, WSL or Git Bash on Windows (Settings →

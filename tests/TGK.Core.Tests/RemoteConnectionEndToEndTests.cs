@@ -56,6 +56,11 @@ public sealed class RemoteConnectionEndToEndTests : IAsyncLifetime
         CommandResult echoed = await c.RunAsync("cat", Timeout, input: Encoding.UTF8.GetBytes("hello ✓"), ct: Ct);
         Assert.Equal("hello ✓", echoed.Stdout);
 
+        // No input: stdin ends at once, so a command waiting for input does not hang.
+        CommandResult ended = await c.RunAsync("read line; echo \"[$line] $?\"", TimeSpan.FromSeconds(5), input: [], ct: Ct);
+        Assert.False(ended.TimedOut);
+        Assert.Equal("[] 1\n", ended.Stdout);
+
         CommandResult flood = await c.RunAsync("head -c 300000 /dev/zero | tr '\\0' x", Timeout, maxOutput: 1000, ct: Ct);
         Assert.Equal(0, flood.ExitCode);
         Assert.True(flood.Truncated);
@@ -154,6 +159,33 @@ public sealed class RemoteConnectionEndToEndTests : IAsyncLifetime
         var directory = await Assert.ThrowsAsync<RemoteFileException>(() => files.ReadAsync($"{_dir}/sub", 1 << 20, Ct));
         Assert.Contains("is a directory", directory.Message);
         await Assert.ThrowsAsync<RemoteFileException>(() => files.ReadAsync($"{_dir}/missing", 1 << 20, Ct));
+    }
+
+    [Fact]
+    public async Task Sudo_AsksAgainAfterAWrongPassword_AndRunsAsRoot()
+    {
+        // A server whose user needs a password for sudo (TGK_E2E_SUDO_PASSWORD), e.g. scripts/e2e-sshd.py started by a
+        // user with a password-protected sudo rule.
+        string? sudoPassword = Environment.GetEnvironmentVariable("TGK_E2E_SUDO_PASSWORD");
+        Assert.SkipWhen(string.IsNullOrEmpty(sudoPassword), "TGK_E2E_SUDO_PASSWORD is not set");
+        using RemoteConnection c = await ConnectAsync("TGK_E2E_SSH_SUDO");
+
+        var errors = new System.Collections.Generic.List<string?>();
+        CommandResult result = await Sudo.RunAsync(c, "id -u; read line; echo \"[$line]\"", Timeout, (error, _) =>
+        {
+            errors.Add(error);
+            return Task.FromResult<string?>(errors.Count == 1 ? "not-the-password" : sudoPassword);
+        }, Ct);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal("0\n[]\n", result.Stdout); // root, and stdin ended after the password
+        Assert.Equal(2, errors.Count);
+        Assert.Null(errors[0]);
+        Assert.StartsWith("sudo did not accept the password for ", errors[1]);
+
+        SudoException declined = await Assert.ThrowsAsync<SudoException>(() => Sudo.RunAsync(c, "id -u", Timeout, (_, _) => Task.FromResult<string?>(null), Ct));
+        Assert.Equal(SudoFailure.Declined, declined.Failure);
+        SudoException refused = await Assert.ThrowsAsync<SudoException>(() => Sudo.RunAsync(c, "id -u", Timeout, (_, _) => Task.FromResult<string?>("wrong"), Ct));
+        Assert.Equal(SudoFailure.Refused, refused.Failure);
     }
 
     private static async Task<RemoteConnection> ConnectAsync(string variable)

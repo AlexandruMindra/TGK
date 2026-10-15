@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using TGK.Client.Controls;
@@ -16,6 +17,7 @@ public sealed class PromptDialog : DialogBase
     private readonly Label _caption;
     private readonly TextField _field;
     private readonly Label _error;
+    private readonly Checkbox? _option;
     private readonly TaskCompletionSource<string?> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly bool _allowEmpty;
     private CancellationTokenRegistration _cancelRegistration;
@@ -25,8 +27,10 @@ public sealed class PromptDialog : DialogBase
     /// keyboard has been quiet for <see cref="UnsolicitedEnterGuardMs"/>, so an Enter meant for that place can't send
     /// what was typed there.
     /// </param>
+    /// <param name="option">A check box under the field (e.g. to use the answer for more than this), unchecked; see <see cref="OptionChecked"/>.</param>
     public PromptDialog(TgkView view, string title, string? subtitle, string? message, string caption, string okText,
-        bool isPassword = false, string? error = null, string initialText = "", bool allowEmpty = false, bool guardEnter = false)
+        bool isPassword = false, string? error = null, string initialText = "", bool allowEmpty = false, bool guardEnter = false,
+        string? option = null)
         : base(view, title, 440)
     {
         Subtitle = subtitle;
@@ -36,6 +40,8 @@ public sealed class PromptDialog : DialogBase
         _caption = AddBody(Form.Caption(caption));
         _field = AddBody(new TextField { IsPassword = isPassword, Text = initialText });
         _error = AddBody(new Label(error ?? "", Theme.FontSm, Theme.Danger) { MaxLines = 3, Visible = error is not null });
+        if (option is not null)
+            _option = AddBody(new Checkbox(option));
         _field.HasError = error is not null;
         _field.Changed += _ => _field.HasError = false;
         AddButton("Cancel", ButtonVariant.Secondary, Cancel);
@@ -50,6 +56,9 @@ public sealed class PromptDialog : DialogBase
             _cancelRegistration = ct.Register(() => UiThread.Post(Cancel));
         return _result.Task;
     }
+
+    /// <summary>The check box given as <c>option</c> was checked when the dialog was accepted.</summary>
+    public bool OptionChecked => _option?.Checked ?? false;
 
     protected override float LayoutBody(float left, float top, float width)
     {
@@ -66,6 +75,11 @@ public sealed class PromptDialog : DialogBase
             float eh = _error.MeasureHeight(width);
             _error.Transform.SetLocalFrame(left, y + 8, width, eh);
             y += 8 + eh;
+        }
+        if (_option is not null)
+        {
+            _option.Transform.SetLocalFrame(left, y + 12, Math.Min(width, _option.PreferredWidth), 22);
+            y += 12 + 22;
         }
         return y - top;
     }

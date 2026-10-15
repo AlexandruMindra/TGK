@@ -354,6 +354,9 @@ public sealed partial class MainView : TgkView
             ShowToast("To upload files, drop them on a Files tab (right-click a host → Browse files).", ToastKind.Info);
     }
 
+    /// <summary>Opens a tab that runs one command on several saved hosts, with <paramref name="hosts"/> checked.</summary>
+    public void OpenRunCommand(IEnumerable<HostEntry> hosts) => OpenTab(new RunCommandTabContent(hosts.Select(h => h.Id)));
+
     /// <summary>Opens <paramref name="host"/> in <paramref name="tab"/>, replacing its content (used by the new-tab page).</summary>
     public void ConnectInTab(TabContent tab, HostEntry host) => ReplaceTab(tab, App.SessionTabFactory(host));
 
@@ -472,6 +475,8 @@ public sealed partial class MainView : TgkView
             session.OnVaultChanged();
         foreach (LocalTerminalTabContent local in _tabs.OfType<LocalTerminalTabContent>())
             local.OnVaultChanged();
+        foreach (RunCommandTabContent run in _tabs.OfType<RunCommandTabContent>())
+            run.OnVaultChanged();
         SyncChrome();
     }
 
@@ -513,6 +518,7 @@ public sealed partial class MainView : TgkView
             new MenuItem { Text = "Connect", Icon = "terminal", Action = () => Connect(host) },
             new MenuItem { Text = "Connect in new tab", Icon = "plus", Action = () => ConnectInNewTab(host) },
             new MenuItem { Text = "Browse files", Icon = "folder", Action = () => OpenFiles(host) },
+            new MenuItem { Text = "Run a command…", Icon = "bolt", Action = () => OpenRunCommand([host]) },
             MenuItem.Separator,
             new MenuItem { Text = "Edit…", Icon = "edit", Hint = "F2", Action = () => EditHost(host) },
             new MenuItem { Text = "Duplicate", Icon = "copy", Action = () => DuplicateHost(host) },
@@ -538,10 +544,22 @@ public sealed partial class MainView : TgkView
             RunVault(() => Services.Vault.DeleteGroupAsync(group.Id));
     }
 
-    /// <summary>Context menu for a group header (null: the "Ungrouped" section or the empty list).</summary>
-    public void ShowGroupMenu(HostGroup? group, float x, float y)
+    /// <summary>
+    /// Context menu for a group header (null: the "Ungrouped" section, when <paramref name="ungrouped"/>, or the empty
+    /// list).
+    /// </summary>
+    public void ShowGroupMenu(HostGroup? group, float x, float y, bool ungrouped = false)
     {
         var items = new List<MenuItem>();
+        VaultData vault = Services.Vault.Current;
+        List<HostEntry> hosts = group is not null ? vault.Hosts.Where(h => h.GroupId == group.Id).ToList()
+            : ungrouped ? vault.Hosts.Where(h => vault.FindGroup(h.GroupId) is null).ToList()
+            : [];
+        if (hosts.Count > 0)
+        {
+            items.Add(new MenuItem { Text = "Run a command on all hosts…", Icon = "bolt", Action = () => OpenRunCommand(hosts) });
+            items.Add(MenuItem.Separator);
+        }
         if (group is not null)
         {
             items.Add(new MenuItem { Text = "Group settings…", Icon = "settings", Action = () => EditGroup(group) });
@@ -894,6 +912,12 @@ public sealed partial class MainView : TgkView
             case "local-terminal":
                 // A shell of this computer in a tab.
                 OpenLocalTerminal();
+                break;
+            case "run-command" when vault.Groups.OrderBy(g => g.SortOrder).FirstOrDefault(g => vault.Hosts.Any(h => h.GroupId == g.Id)) is { } runGroup:
+                // A command ready to run on the first group's hosts.
+                OpenRunCommand(vault.Hosts.Where(h => h.GroupId == runGroup.Id));
+                if (ActiveTab is RunCommandTabContent run)
+                    run.CommandField.Text = "uptime";
                 break;
             case "update":
                 // The status bar chip for a (made-up) newer version, with its menu.
