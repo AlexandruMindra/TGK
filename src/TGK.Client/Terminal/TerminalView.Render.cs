@@ -276,18 +276,25 @@ public sealed partial class TerminalView
         }
     }
 
-    // A thin thumb on the right edge while scrolled back into history.
+    // A thin thumb on the right edge while scrolled back into history, wider while pointed at or dragged.
     private void PaintScrollbar(SKCanvas c)
     {
-        int history = Emulator.ScrollbackCount;
-        if (_offset <= 0 || history <= 0)
+        bool active = _thumbDrag || _scrollbarHover;
+        if (Emulator.ScrollbackCount <= 0 || (_offset <= 0 && !active))
             return;
+        (float top, float height) = ScrollThumb();
+        float x = Cols * _font.CellWidth + PadX - 6, w = active ? 7 : 4;
+        _thumb.Color = _palette.Foreground.WithAlpha(active ? (byte)140 : (byte)90);
+        c.DrawRoundRect(new SKRect(x + 4 - w, top, x + 4, top + height), w / 2, w / 2, _thumb);
+    }
+
+    // The scrollbar thumb, from the top of the grid; the track is the height of the rows.
+    private (float Top, float Height) ScrollThumb()
+    {
+        int history = Emulator.ScrollbackCount;
         float trackH = Rows * _font.CellHeight;
-        float thumbH = Math.Max(24, trackH * Rows / (history + Rows));
-        float top = (trackH - thumbH) * (history - _offset) / history;
-        float x = Cols * _font.CellWidth + PadX - 6;
-        _thumb.Color = _palette.Foreground.WithAlpha(90);
-        c.DrawRoundRect(new SKRect(x, top, x + 4, top + thumbH), 2, 2, _thumb);
+        float thumbH = Math.Min(trackH, Math.Max(24, trackH * Rows / (history + Rows)));
+        return (history > 0 ? (trackH - thumbH) * (history - _offset) / history : 0, thumbH);
     }
 
     // The application's DECSCUSR choice wins over the user's default once it differs from the reset state.

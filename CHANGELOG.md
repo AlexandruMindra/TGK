@@ -56,6 +56,9 @@ shows the current Unreleased section.
 
 ### Fixed
 
+- **Terminal scrollbar**: its thumb can now be dragged to scroll through the history, and a click on the scrollbar
+  jumps there; before, only the mouse wheel scrolled. Pointing at the right edge of a terminal with history shows the
+  scrollbar (wider), also when it is not scrolled back.
 - **Settings, New host / Edit host, group settings**: the first of these dialogs in a run no longer freezes the window
   for seconds (and no longer adds hundreds of MB of memory) on systems with many fonts installed, as is common on
   Linux. The terminal font list now opens only the fonts whose name suggests a terminal font, and is built in the

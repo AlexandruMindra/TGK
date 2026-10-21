@@ -10,8 +10,9 @@ using TermMouseButton = TGK.Terminal.MouseButton;
 
 namespace TGK.Client.Terminal;
 
-// Mouse: selection (drag, double-click word, triple-click line, Shift+click extends), wheel scrollback, the context
-// menu, and mouse reporting to applications that enabled it (Shift forces local selection instead).
+// Mouse: selection (drag, double-click word, triple-click line, Shift+click extends), wheel scrollback, the scrollbar
+// (drag the thumb, click the track), the context menu, and mouse reporting to applications that enabled it (Shift
+// forces local selection instead).
 public sealed partial class TerminalView
 {
     private const int MultiClickMs = 400;
@@ -37,6 +38,11 @@ public sealed partial class TerminalView
     private (float X, float Y) _pointer;
     private long _nextAutoScroll;
 
+    // Scrollbar: dragging its thumb (grabbed this far below the thumb's top), and the pointer over its strip.
+    private bool _thumbDrag;
+    private float _thumbGrab;
+    private bool _scrollbarHover;
+
     // Mouse reporting state: the button held down (for motion reports) and the last reported cell.
     private TermMouseButton _reportButton = TermMouseButton.None;
     private (int Col, int Row) _lastReportCell = (-1, -1);
@@ -49,6 +55,7 @@ public sealed partial class TerminalView
         Events.OnMouseMove += OnMouseMove;
         Events.OnMouseUp += OnMouseUp;
         Events.OnScroll += OnScroll;
+        Events.OnMouseLeave += _ => SetScrollbarHover(false);
     }
 
     public void SelectAll()
@@ -104,6 +111,12 @@ public sealed partial class TerminalView
     {
         e.Handled = true;
         _pointer = (e.Relative.X, e.Relative.Y);
+        if (e.Button == 0 && OnScrollbar())
+        {
+            BeginThumbDrag();
+            CapturePointer();
+            return;
+        }
         if (ReportsMouse && ToReportButton(e.Button) is { } button)
         {
             _reportButton = button;
@@ -130,6 +143,15 @@ public sealed partial class TerminalView
     private void OnMouseMove(object sender, MouseEventArgs e)
     {
         _pointer = (e.Relative.X, e.Relative.Y);
+        if (_thumbDrag)
+        {
+            if (ParentView?.Events.IsMouseButtonDown(0) == true)
+                DragThumb();
+            else
+                EndThumbDrag(); // the button was released where we could not see it (pointer capture lost)
+            return;
+        }
+        SetScrollbarHover(OnScrollbar());
         if (_reportButton != TermMouseButton.None || (ReportsMouse && Emulator.Modes.MouseTracking == MouseTrackingMode.AnyEvent))
         {
             Report(_reportButton, MouseEventKind.Motion);
@@ -142,6 +164,12 @@ public sealed partial class TerminalView
     private void OnMouseUp(object sender, MouseEventArgs e)
     {
         _pointer = (e.Relative.X, e.Relative.Y);
+        if (_thumbDrag)
+        {
+            if (e.Button == 0)
+                EndThumbDrag();
+            return;
+        }
         if (_reportButton != TermMouseButton.None)
         {
             Report(_reportButton, MouseEventKind.Release);
@@ -201,6 +229,49 @@ public sealed partial class TerminalView
     {
         if (_offset > 0)
             _offset = (int)Math.Min(_offset + linesAdded, Emulator.ScrollbackCount);
+    }
+
+    // ---- scrollbar ----
+
+    // The strip right of the grid, while there is history to scroll through.
+    private bool OnScrollbar() => Emulator.ScrollbackCount > 0 && _pointer.X >= PadX + Cols * _font.CellWidth
+        && _pointer.Y >= PadY && _pointer.Y < PadY + Rows * _font.CellHeight;
+
+    private void SetScrollbarHover(bool hover)
+    {
+        if (hover == _scrollbarHover)
+            return;
+        _scrollbarHover = hover;
+        InvalidatePaint();
+    }
+
+    // Grabbing the thumb keeps the point under the pointer; a click on the track first centers the thumb there.
+    private void BeginThumbDrag()
+    {
+        (float top, float height) = ScrollThumb();
+        float y = _pointer.Y - PadY;
+        _thumbGrab = y >= top && y <= top + height ? y - top : height / 2;
+        _thumbDrag = true;
+        DragThumb();
+        InvalidatePaint();
+    }
+
+    private void DragThumb()
+    {
+        int history = Emulator.ScrollbackCount;
+        (_, float height) = ScrollThumb();
+        float travel = Rows * _font.CellHeight - height;
+        if (history <= 0 || travel <= 0)
+            return;
+        float fraction = Math.Clamp((_pointer.Y - PadY - _thumbGrab) / travel, 0, 1);
+        ScrollViewport(history - (int)MathF.Round(fraction * history) - _offset);
+    }
+
+    private void EndThumbDrag()
+    {
+        _thumbDrag = false;
+        SetScrollbarHover(OnScrollbar());
+        InvalidatePaint();
     }
 
     // ---- selection ----
