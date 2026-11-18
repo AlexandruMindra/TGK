@@ -22,7 +22,7 @@ has() {
   printf '%s\n' "$input"
   [[ "$input" == *"$1"* ]]
 }
-trap 'echo "FAIL: line $LINENO: $BASH_COMMAND" >&2' ERR
+trap 'echo "FAIL: line $LINENO: $BASH_COMMAND" >&2; journalctl -u tgk-server -n 40 --no-pager >&2 || true' ERR
 
 publish() { # version
   dotnet publish src/TGK.Server -c Release -r "$rid" --self-contained -p:PublishSingleFile=true \

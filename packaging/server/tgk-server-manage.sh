@@ -430,7 +430,11 @@ EOF
     systemctl daemon-reload
     systemctl restart tgk-server || true
   fi
-  wait_healthy "$version" || die "tgk-server did not answer at $(health_url); see: journalctl -u tgk-server"
+  if ! wait_healthy "$version"; then
+    systemctl status tgk-server --no-pager -l >&2 || true
+    journalctl -u tgk-server -n 40 --no-pager >&2 || true
+    die "tgk-server did not answer at $(health_url) (its log is above)."
+  fi
 
   log ""
   log "tgk-server $version is running on ${TGK_URLS} (database $TGK_DB)."
