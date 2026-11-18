@@ -152,6 +152,7 @@ User=tgk
 ExecStart=/opt/tgk/tgk-server serve --urls http://127.0.0.1:5080 --db /var/lib/tgk/tgk.db --trust-proxy
 Restart=on-failure
 StateDirectory=tgk
+WorkingDirectory=/var/lib/tgk
 # The single-file build unpacks its native libraries here (the service user has no home directory).
 Environment=DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/lib/tgk/.bundle
 NoNewPrivileges=true

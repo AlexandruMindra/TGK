@@ -94,7 +94,10 @@ public static class ServerApp
     /// <param name="hostArgs">Extra <c>--Key=Value</c> ASP.NET configuration (the test host passes its settings this way).</param>
     public static WebApplication Build(ServerOptions options, string[] hostArgs)
     {
-        var builder = WebApplication.CreateBuilder(hostArgs);
+        // No reloading of appsettings files on change: it watches the content root, the working directory, recursively;
+        // under systemd that is "/", and watching the whole file system takes minutes and hundreds of MB before
+        // the server listens. tgk-server takes its settings from the command line and the environment only.
+        var builder = WebApplication.CreateBuilder(["--hostBuilder:reloadConfigOnChange=false", .. hostArgs]);
         builder.Logging.ClearProviders();
         builder.Logging.AddSimpleConsole(o =>
         {

@@ -268,6 +268,7 @@ Restart=on-failure
 RestartSec=5
 StateDirectory=tgk
 StateDirectoryMode=0700
+WorkingDirectory=$DATA
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

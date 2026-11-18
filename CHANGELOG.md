@@ -27,6 +27,11 @@ shows the current Unreleased section.
 
 - **tgk-server** no longer needs the ICU library (`libicu`), which minimal containers lack.
 
+### Fixed
+
+- **tgk-server under systemd** (or any start from `/`): it no longer watches the whole file system for settings
+  files before listening, which took minutes and hundreds of MB of memory; it now starts in a moment.
+
 ## [0.4.0] - 2026-11-18
 
 ### Added
