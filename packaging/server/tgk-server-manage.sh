@@ -125,7 +125,7 @@ wait_healthy() { # version
   local expected="${1%%[-+]*}" url body
   url=$(health_url)
   for _ in $(seq 1 30); do
-    if body=$(curl -fsS --max-time 3 "$url" 2>/dev/null) && echo "$body" | grep -q "\"version\":\"$expected\""; then
+    if body=$(curl -fsS --max-time 3 "$url" 2>/dev/null) && [[ "$body" == *"\"version\":\"$expected\""* ]]; then
       return 0
     fi
     sleep 1
@@ -223,6 +223,7 @@ cmd_update() {
   restore_snapshot "$snap"
   switch_to "$current"
   echo "$target" > "$PREFIX/FAILED"
+  systemctl reset-failed tgk-server 2> /dev/null || true # the failed restarts must not hit the start limit
   systemctl start tgk-server
   wait_healthy "$current" || die "the rollback to $current did not start either; see: journalctl -u tgk-server"
   die "update to $target failed and was rolled back; $current is running again."
@@ -346,7 +347,7 @@ cmd_install() {
   done
   need_root
   [ -d /run/systemd/system ] || die "systemd is not running here; tgk-server-manage needs it (for an LXC: a systemd-based template such as Debian or Ubuntu)."
-  if ldd --version 2>&1 | grep -qi musl; then
+  if ldd --version 2>&1 | grep -i musl > /dev/null; then
     die "this system uses musl (e.g. Alpine); tgk-server needs glibc: use a Debian, Ubuntu, Fedora or similar container."
   fi
   rid > /dev/null

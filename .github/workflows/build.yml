@@ -223,8 +223,17 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
+      # On failure the log's last lines become an annotation, readable on the run's summary page.
       - name: Install, update and roll back tgk-server
-        run: sudo env "PATH=$PATH" "DOTNET_ROOT=${DOTNET_ROOT:-}" bash scripts/test-server-install.sh
+        run: |
+          set +e
+          sudo env "PATH=$PATH" "DOTNET_ROOT=${DOTNET_ROOT:-}" bash scripts/test-server-install.sh 2>&1 | tee server-install.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            msg=$(tail -n 60 server-install.log | sed -e 's/%/%25/g' -e 's/\r//g' | awk '{ printf "%s%%0A", $0 }')
+            echo "::error title=server-install failed::$msg"
+          fi
+          exit "$status"
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
