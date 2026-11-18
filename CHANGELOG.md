@@ -71,6 +71,12 @@ shows the current Unreleased section.
   on Windows) instead of grayscale, which looked blurry next to other apps. At a fractional display scale (e.g. 125%)
   borders, separators, the text cursor and icons are aligned to whole screen pixels, so a 1px line is no longer
   smeared over two. (Blossom 0.1.9; macOS keeps grayscale text, as macOS itself does.)
+- **Files**: the folder shown now updates by itself when its contents change elsewhere (e.g. a file created from a
+  terminal or by another program): while the pane is on screen it is listed again every few seconds in the
+  background, and right away when you come back to it. Selection, cursor and scroll stay put; very large folders
+  are checked less often. Before, only Refresh (F5) showed such changes.
+- **Sign-in screen**: a note now says that these fields are the TGK account's and that SSH passwords and private keys
+  are set for each host after signing in; the password-only form was taken for the SSH login.
 
 ## [0.3.0] - 2026-10-06
 

@@ -193,6 +193,7 @@ public sealed partial class FilesTabContent : TabContent, IKeyInput
         EndDrag();
         CancelAttempt();
         _listing?.Cancel();
+        CancelPoll();
         CloseConnection();
         _edits.Dispose();
     }
@@ -203,6 +204,7 @@ public sealed partial class FilesTabContent : TabContent, IKeyInput
     {
         TransferQueue? queue = _queue;
         FilesSession? session = _session;
+        CancelPoll();
         if (session is not null && _onLost is not null)
             session.Connection.Lost -= _onLost;
         _queue = null;
@@ -526,6 +528,7 @@ public sealed partial class FilesTabContent : TabContent, IKeyInput
         if (session != _session || _closing)
             return;
         _listing?.Cancel();
+        CancelPoll();
         _loading = false;
         SetStatus(TabStatus.Failed, $"{_address} · Connection lost");
         _overlay.ShowEnded($"{reason} Press Enter or click Reconnect.", true);
@@ -682,6 +685,8 @@ public sealed partial class FilesTabContent : TabContent, IKeyInput
         if (_fs is not { } fs)
             return;
         _listing?.Cancel();
+        CancelPoll();
+        _listingVersion++;
         var cts = _listing = new CancellationTokenSource();
         _loading = true;
         bool sameFolder = path == _path;
@@ -697,6 +702,7 @@ public sealed partial class FilesTabContent : TabContent, IKeyInput
                 return;
             _path = path;
             _list.SetEntries(entries, select, keepSelection && sameFolder);
+            _nextPollMs = UiClock.NowMs + MinPollMs; // just listed
             Host.WorkspaceChanged();
         }
         catch (OperationCanceledException)
@@ -859,6 +865,7 @@ public sealed partial class FilesTabContent : TabContent, IKeyInput
 
     private void OnTick()
     {
+        PollFolder();
         if (_transfers.IsBusy)
         {
             _transfers.Refresh();

@@ -37,7 +37,7 @@ public sealed class LoginView : TgkView
     private Label _serverCaption = null!, _userCaption = null!, _passwordCaption = null!, _confirmCaption = null!, _inviteCaption = null!, _codeCaption = null!;
     private TextField _server = null!, _user = null!, _password = null!, _confirm = null!, _invite = null!, _code = null!, _setupCode = null!;
     private Label _userHint = null!, _keyCaption = null!, _setupCodeCaption = null!;
-    private Label _localNote = null!, _masterCaption = null!, _masterConfirmCaption = null!;
+    private Label _modeNote = null!, _masterCaption = null!, _masterConfirmCaption = null!;
     private TextField _master = null!, _masterConfirm = null!;
     private PasswordMeter _meter = null!, _masterMeter = null!;
     private SegmentedControl _mode = null!;
@@ -80,7 +80,7 @@ public sealed class LoginView : TgkView
         _notice = Add(new Notice());
         _mode = Add(new SegmentedControl("Server account", "This device only"));
         _mode.SelectionChanged += OnModeSelected;
-        _localNote = Add(new Label("", Theme.FontSm, Theme.TextSecondary) { MaxLines = 3 });
+        _modeNote = Add(new Label("", Theme.FontSm, Theme.TextSecondary) { MaxLines = 3 });
         _masterCaption = Add(Form.Caption("Master password"));
         _master = Add(new TextField { IsPassword = true });
         _masterMeter = Add(new PasswordMeter());
@@ -260,14 +260,18 @@ public sealed class LoginView : TgkView
         SetVisible(register, _userHint, _meter, _confirmCaption, _confirm, _inviteCaption, _invite);
         SetVisible(signIn, _codeCaption, _code);
         SetVisible(auth, _qr, _keyCaption, _key, _setupCodeCaption, _setupCode);
-        SetVisible(!server, _localNote, _masterCaption, _master, _keepUnlocked);
+        SetVisible(!server, _masterCaption, _master, _keepUnlocked);
         SetVisible(create, _masterMeter, _masterConfirmCaption, _masterConfirm);
+        _modeNote.Visible = signIn || !server;
         _mode.Visible = signIn || !server;
         _mode.SelectedIndex = server ? 0 : 1;
         _footer.Visible = server;
-        _localNote.Text = create
-            ? "Your hosts and keys stay on this computer, encrypted with this password. It can't be recovered if forgotten."
-            : "Your hosts and keys are stored on this computer. Enter the master password to unlock them.";
+        // The sign-in fields are the TGK account's, not a host's: SSH passwords and keys are set per host.
+        _modeNote.Text = signIn
+            ? "This is your TGK account, which syncs your hosts between devices. SSH passwords and private keys are set for each host after you sign in."
+            : create
+                ? "Your hosts and keys stay on this computer, encrypted with this password. It can't be recovered if forgotten."
+                : "Your hosts and keys are stored on this computer. Enter the master password to unlock them.";
         _masterCaption.Text = create ? "Choose a master password" : "Master password";
         _notice.Visible = signIn && _notice.Text.Length > 0;
         _user.Placeholder = register ? "Choose a username" : "Your username";
@@ -701,6 +705,13 @@ public sealed class LoginView : TgkView
             y += noticeH + 16;
         }
 
+        if (_modeNote.Visible)
+        {
+            float noteH = _modeNote.MeasureHeight(Inner);
+            _modeNote.Transform.SetLocalFrame(x, y - 4, Inner, noteH);
+            y += noteH + 12;
+        }
+
         switch (_step)
         {
             case Step.SignIn:
@@ -719,9 +730,6 @@ public sealed class LoginView : TgkView
                 y = Check(_keep, y);
                 break;
             case Step.LocalCreate or Step.LocalUnlock:
-                float noteH = _localNote.MeasureHeight(Inner);
-                _localNote.Transform.SetLocalFrame(x, y - 4, Inner, noteH);
-                y += noteH + 12;
                 y = Row(_masterCaption, _master, y);
                 if (_step == Step.LocalCreate)
                 {
