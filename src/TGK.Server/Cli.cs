@@ -197,15 +197,14 @@ public static class Cli
     /// </summary>
     private static int Backup(string dbPath, string target, TextWriter output, TextWriter error)
     {
-        string source = Path.GetFullPath(dbPath);
+        string source = Path.GetFullPath(dbPath), destination = Path.GetFullPath(target);
+        if (destination == source)
+            throw new UsageException("The backup must go to another file than the database.");
         if (!File.Exists(source))
         {
             error.WriteLine($"No database at {source}.");
             return 1;
         }
-        string destination = Path.GetFullPath(target);
-        if (destination == source)
-            throw new UsageException("The backup must go to another file than the database.");
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
         string partial = destination + ".partial";
         File.Delete(partial);
