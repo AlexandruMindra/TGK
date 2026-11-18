@@ -229,13 +229,21 @@ cmd_update() {
   die "update to $target failed and was rolled back; $current is running again."
 }
 
+# daily/ is written by the service user (the online backup runs as it), updates/ by root; the parent only lets the
+# service user through.
+backup_dirs() {
+  mkdir -p "$BACKUPS/daily" "$BACKUPS/updates"
+  chown "root:$SERVICE_USER" "$BACKUPS"
+  chmod 750 "$BACKUPS"
+  chown "$SERVICE_USER:" "$BACKUPS/daily"
+  chmod 700 "$BACKUPS/daily" "$BACKUPS/updates"
+}
+
 cmd_backup() {
   need_root
   load_config
   [ -f "$TGK_DB" ] || { log "No database yet ($TGK_DB): nothing to back up."; return 0; }
-  mkdir -p "$BACKUPS/daily"
-  chown "$SERVICE_USER:" "$BACKUPS/daily"
-  chmod 700 "$BACKUPS/daily"
+  backup_dirs
   local file
   file="$BACKUPS/daily/tgk-$(date +%Y-%m-%d).db"
   as_service "$PREFIX/current/tgk-server" backup "$file"
@@ -364,9 +372,10 @@ cmd_install() {
   done
 
   id "$SERVICE_USER" > /dev/null 2>&1 || useradd --system --no-create-home --home-dir "$DATA" --shell /usr/sbin/nologin "$SERVICE_USER"
-  mkdir -p "$PREFIX/releases" "$DATA" "$BACKUPS/daily" "$BACKUPS/updates" "$CONFIG_DIR"
-  chown "$SERVICE_USER:" "$DATA" "$BACKUPS/daily"
-  chmod 700 "$DATA" "$BACKUPS" "$BACKUPS/daily" "$BACKUPS/updates"
+  mkdir -p "$PREFIX/releases" "$DATA" "$CONFIG_DIR"
+  chown "$SERVICE_USER:" "$DATA"
+  chmod 700 "$DATA"
+  backup_dirs
 
   if [ ! -f "$CONFIG" ]; then
     cat > "$CONFIG" <<EOF
