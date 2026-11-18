@@ -48,6 +48,23 @@ changing the archive layout breaks updating for every installed client (they fal
 The other assets — `TGK-win-x64-setup.exe` and `TGK-osx-*.dmg` — are for first installs only. Packaging scripts:
 `packaging/` (macOS bundle and disk image, AppImage, Inno Setup script).
 
+## Server packages
+
+Installed servers update themselves too: `tgk-server-manage` (`packaging/server/tgk-server-manage.sh`, see
+[SERVER.md](SERVER.md)) installs every new stable release, so every release (and the nightly) must keep publishing:
+
+- `tgk-server-linux-x64` and `tgk-server-linux-arm64`: the self-contained single-file server, whose `--version`
+  prints the release's version (`X.Y.Z`);
+- `tgk-server-manage.sh`: the installer, which also replaces itself with the release's copy after each update;
+- `tgk-server.version`: one line, the release's version (read through `releases/latest/download/`);
+- `tgk-server-SHA256SUMS`: `sha256sum` lines for the three files above, checked before anything is installed.
+
+Servers download them from `releases/download/vX.Y.Z/` and find the version through `releases/latest/download/`, so
+only stable releases reach them. They skip a new MAJOR version until the admin runs `tgk-server-manage update --force`,
+so a release that needs a step by hand (e.g. a database or protocol change older clients can't follow) goes out as a
+MAJOR version with that step in its notes. CI's `server-install` job installs, updates and rolls back a server with
+these files on a real systemd machine (`scripts/test-server-install.sh`); a release waits for it.
+
 ## Code signing
 
 **Windows.** CI signs TGK's own files (`TGK.exe`, `tgk-mcp.exe`, `TGK*.dll`) before they are zipped and packed into

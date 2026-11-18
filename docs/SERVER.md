@@ -4,6 +4,80 @@ A small sync server for TGK. It is one executable with one SQLite file. It handl
 plus an authenticator app (TOTP), signed-in devices, and sync of the vault. The vault is end-to-end encrypted: the
 server only stores ciphertext and never sees passwords or vault keys.
 
+## Install on Linux, with automatic updates (LXC, VM, server)
+
+`tgk-server-manage` installs tgk-server on any systemd-based Linux (Debian, Ubuntu, Fedora…; x86_64 or ARM64), in
+a Proxmox LXC container too, and then looks after it:
+
+- **Updates** every night from the stable releases (never the nightly), within the same MAJOR version. Each update
+  stops the server, snapshots the database, starts the new version and checks that it answers; if it does not, it
+  goes back to the previous version and that snapshot, and skips that version from then on. A new MAJOR version is
+  only announced (`tgk-server-manage status`); install it with `tgk-server-manage update --force` after reading its
+  release notes. The downloads are checked against the release's SHA-256 sums.
+- **Backups** every night to `/var/backups/tgk/daily` (the last 14 by default), made while the server runs.
+- Self-registration is **off** on a new install: invite each user with `tgk-server user create <name>`.
+
+In the container, as root:
+
+```bash
+curl -fsSLO https://github.com/AlexandruMindra/TGK/releases/latest/download/tgk-server-manage.sh
+bash tgk-server-manage.sh install --known-proxy 192.168.1.2     # the address of the reverse proxy (HAProxy, nginx…)
+tgk-server user create alex                                     # prints an invite code for "Create an account"
+```
+
+| Option of `install` | |
+|---|---|
+| `--known-proxy <ip\|cidr>` | A TLS reverse proxy on another machine. tgk-server then listens on `0.0.0.0:5080` and takes the client's address from the proxy's `X-Forwarded-For`. Repeat for several. |
+| `--listen <host:port>` | Where it listens (default `127.0.0.1:5080`, or `0.0.0.0:5080` with `--known-proxy`). |
+| `--keep-backups <n>` | Daily backups kept (14). |
+| `--no-auto-update` | Update only with `tgk-server-manage update`. |
+| `--open-registration` | Leave self-registration on. |
+
+Afterwards:
+
+```
+tgk-server-manage status        Installed and latest version, service, timers, last backup
+tgk-server-manage update        Install the latest stable release now (--force: also a new MAJOR, or a skipped one)
+tgk-server-manage backup        Back up now
+tgk-server-manage uninstall     Remove the service and programs (keeps the database, backups and settings)
+tgk-server <admin command>      users, user create <name>, registration off, ... (as root; runs as the service user)
+```
+
+Settings are in `/etc/tgk/server.env` (`systemctl restart tgk-server` after a change); running `install` again with
+other options updates them. Files: the programs in `/opt/tgk` (the last few versions, for rollbacks), the database in
+`/var/lib/tgk`, backups in `/var/backups/tgk` (`daily/`, and `updates/` for the snapshots taken before updates). The
+service runs as the `tgk` system user. Logs: `journalctl -u tgk-server`, and `journalctl -u tgk-server-update` for
+the updates.
+
+In an unprivileged LXC without the "nesting" feature, systemd can't set up the service's sandbox; the installer then
+runs the service without it and says so. To keep the sandbox, turn on nesting (Proxmox: the container's Options →
+Features) and delete `/etc/systemd/system/tgk-server.service.d/container.conf`.
+
+### Behind HAProxy (TLS on a subdomain)
+
+Clients accept only `https://` with a certificate their system trusts, so TLS ends at the proxy. With the proxy at
+192.168.1.2 and the container at 192.168.1.20:
+
+```
+frontend https
+    bind :443 ssl crt /etc/haproxy/certs/
+    mode http
+    option forwardfor                          # sets X-Forwarded-For
+    http-request set-header X-Forwarded-Proto https
+    use_backend tgk if { req.hdr(host) -i tgk.example.com }
+
+backend tgk
+    mode http
+    option httpchk GET /api/info
+    timeout server 60s
+    server tgk 192.168.1.20:5080 check
+```
+
+and `install --known-proxy 192.168.1.2` in the container. The app's server address is then
+`https://tgk.example.com`. Between the proxy and the container the traffic is plain HTTP: keep it on your own network,
+and if others share that network, let only the proxy reach port 5080 (a firewall rule in the container or on the
+host). The vault stays end-to-end encrypted either way, but session tokens cross that link readable.
+
 ## Build and publish
 
 ```bash
@@ -12,8 +86,8 @@ scripts/publish-server.sh                  # self-contained single file for linu
 scripts/publish-server.sh linux-arm64      # or any other runtime identifier
 ```
 
-The published file (about 50 MB) needs no .NET installation. On Linux it uses the system ICU library (`libicu`),
-which most distributions install by default.
+The published file (about 50 MB) needs no .NET installation, nor any library beyond glibc (no ICU: the server
+runs culture-invariant). Releases carry it for Linux as `tgk-server-linux-x64` and `tgk-server-linux-arm64`.
 
 ## Run
 
@@ -29,6 +103,7 @@ tgk-server serve --urls http://127.0.0.1:5080 --trust-proxy                     
 | `--urls <urls>` | `http://127.0.0.1:5080` (env `TGK_URLS`) | Separate several URLs with `;`. |
 | `--cert <pfx>` `--cert-password <pw>` | | Serve HTTPS directly. Use `https://` URLs. |
 | `--trust-proxy` | off | Honour `X-Forwarded-For` and `X-Forwarded-Proto` from a proxy on loopback. Client IPs are then correct in logs, rate limits and the session list. |
+| `--known-proxy <ip\|cidr>` | (env `TGK_KNOWN_PROXIES`) | Honour them also from a proxy on another machine (an address such as `192.168.1.2` or a network such as `10.0.0.0/24`; repeat or separate with commas). Without it, behind such a proxy every client has the proxy's address, and they share one rate limit. |
 | `--rate-limit <n>` | 20 | Requests per minute per client IP to prelogin, login, register and password change combined. |
 
 Clients refuse plain `http://` except on loopback. Expose the server only over HTTPS, either with `--cert` or with a
@@ -50,6 +125,8 @@ tgk-server user delete <name> [--yes]     Delete the account and all of its sync
 tgk-server user reset-totp <name>         Lost phone: the next sign-in asks the user to set up a new authenticator
 tgk-server user revoke-sessions <name>    Sign out every device
 tgk-server registration on|off|status     Self-registration from clients (on for a new database)
+tgk-server backup <file>                  Consistent copy of the database, also while the server runs
+tgk-server --version
 ```
 
 Self-registration is on for a new database. On a server anyone can reach, run `tgk-server registration off` and
@@ -60,7 +137,9 @@ authenticator are set up on the user's device, so the admin never knows them.
 Each account may store at most 50,000 items (deleted ones included) and 64 MB of encrypted data. A push beyond that
 is refused (`payload_too_large`); edits that shrink a full vault are still accepted.
 
-## systemd
+## systemd (by hand)
+
+`tgk-server-manage` (above) sets this up by itself. To do it by hand:
 
 ```ini
 # /etc/systemd/system/tgk-server.service
@@ -108,11 +187,11 @@ together with `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` and
 
 ## Backup
 
-The database is in WAL mode, so do not copy the file while the server is running. Take a consistent snapshot
-instead:
+`tgk-server-manage` backs up every night by itself. Otherwise: the database is in WAL mode, so do not copy the file
+while the server is running. Take a consistent snapshot instead (mode 0600, checked for integrity):
 
 ```bash
-sqlite3 /var/lib/tgk/tgk.db ".backup '/backups/tgk-$(date +%F).db'"
+tgk-server --db /var/lib/tgk/tgk.db backup /backups/tgk-$(date +%F).db
 ```
 
 To restore, stop the server, put the backup at the `--db` path, delete any `tgk.db-wal` and `tgk.db-shm` files

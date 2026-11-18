@@ -8,6 +8,8 @@
     <IsWebConfigTransformDisabled>true</IsWebConfigTransformDisabled>
     <!-- Workstation GC: a small idle footprint suits a light personal server. -->
     <ServerGarbageCollection>false</ServerGarbageCollection>
+    <!-- No ICU needed (minimal containers lack libicu): the server compares and formats culture-independently. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 
   <ItemGroup>

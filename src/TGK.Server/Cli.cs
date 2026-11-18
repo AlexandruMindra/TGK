@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using Microsoft.Data.Sqlite;
 using TGK.Protocol;
 
@@ -15,7 +16,8 @@ public static class Cli
         tgk-server - TGK sync server
 
         Usage:
-          tgk-server [serve] [--urls <urls>] [--db <path>] [--cert <pfx> [--cert-password <pw>]] [--trust-proxy] [--rate-limit <n>]
+          tgk-server [serve] [--urls <urls>] [--db <path>] [--cert <pfx> [--cert-password <pw>]] [--trust-proxy]
+                     [--known-proxy <ip|cidr>] [--rate-limit <n>]
           tgk-server users                          List accounts
           tgk-server user create <name>             Invite a user: prints a one-time code they use to create the account in the app
           tgk-server user show <name>               Account details and signed-in devices
@@ -24,12 +26,16 @@ public static class Cli
           tgk-server user reset-totp <name>         Require a new authenticator at the next sign-in
           tgk-server user revoke-sessions <name>    Sign out every device
           tgk-server registration on|off|status     Allow or refuse self-registration from clients
+          tgk-server backup <file>                  Copy the database to <file>, consistently, also while the server runs
+          tgk-server --version                      Print the version
 
         Options:
           --db <path>          SQLite database (default ./data/tgk.db, env TGK_DB); used by every command
           --urls <urls>        Listen URLs, ';'-separated (default http://127.0.0.1:5080, env TGK_URLS)
           --cert <pfx>         Serve HTTPS with this PKCS#12 certificate (use https:// URLs)
           --trust-proxy        Honour X-Forwarded-For/Proto from a reverse proxy on loopback
+          --known-proxy <a>    Also honour them from this proxy on another machine: an address or a network
+                               (e.g. 192.168.1.10 or 10.0.0.0/24); repeat or separate with commas (env TGK_KNOWN_PROXIES)
           --rate-limit <n>     Auth requests per minute per client IP (default 20)
         """;
 
@@ -41,9 +47,12 @@ public static class Cli
         string urls = Environment.GetEnvironmentVariable("TGK_URLS") is { Length: > 0 } envUrls ? envUrls : ServerOptions.DefaultUrls;
         string? cert = null, certPassword = null;
         bool trustProxy = false, yes = false;
+        var knownProxies = new List<string>();
         int rateLimit = ServerOptions.DefaultRateLimit;
         try
         {
+            if (Environment.GetEnvironmentVariable("TGK_KNOWN_PROXIES") is { Length: > 0 } envProxies)
+                knownProxies.AddRange(ServerApp.ParseProxies(envProxies) ?? throw new UsageException($"TGK_KNOWN_PROXIES is not a list of addresses or networks: '{envProxies}'."));
             for (int i = 0; i < args.Length; i++)
             {
                 string arg = args[i];
@@ -57,6 +66,13 @@ public static class Cli
                     case "--cert": cert = Value(); break;
                     case "--cert-password": certPassword = Value(); break;
                     case "--trust-proxy": trustProxy = true; break;
+                    case "--known-proxy":
+                        string proxies = Value();
+                        knownProxies.AddRange(ServerApp.ParseProxies(proxies) ?? throw new UsageException($"--known-proxy needs addresses or networks (e.g. 192.168.1.10 or 10.0.0.0/24), got '{proxies}'."));
+                        break;
+                    case "--version":
+                        output.WriteLine(VersionText);
+                        return 0;
                     case "--yes" or "-y": yes = true; break;
                     case "--rate-limit":
                         rateLimit = int.TryParse(Value(), out int n) && n > 0 ? n : throw new UsageException("--rate-limit needs a positive number.");
@@ -85,10 +101,21 @@ public static class Cli
                     throw new UsageException($"Unexpected argument '{positional[1]}'.");
                 ServerApp.Run(new ServerOptions
                 {
-                    DbPath = dbPath, Urls = urls, CertPath = cert, CertPassword = certPassword, TrustProxy = trustProxy, RateLimitPerMinute = rateLimit,
+                    DbPath = dbPath, Urls = urls, CertPath = cert, CertPassword = certPassword, TrustProxy = trustProxy, KnownProxies = knownProxies,
+                    RateLimitPerMinute = rateLimit,
                 }, hostArgs.ToArray());
                 return 0;
             }
+
+            if (positional is ["version"])
+            {
+                output.WriteLine(VersionText);
+                return 0;
+            }
+            if (positional is ["backup", var target])
+                return Backup(dbPath, target, output, error);
+            if (positional is ["backup", ..])
+                throw new UsageException("Usage: tgk-server backup <file>");
 
             var db = new Db(dbPath);
             if (db.IsNew)
@@ -157,6 +184,56 @@ public static class Cli
             default:
                 throw new UsageException($"Unknown command '{string.Join(' ', args)}'.");
         }
+    }
+
+    /// <summary>The release this executable was built as (e.g. <c>0.5.0</c> or <c>0.5.0-nightly.12</c>), without the commit.</summary>
+    public static string VersionText =>
+        (typeof(Cli).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0").Split('+')[0];
+
+    /// <summary>
+    /// A consistent copy of the database through SQLite's online backup, safe while the server runs (copying the file
+    /// is not: it is in WAL mode). The source is opened as it is: no migration, so an older server's database stays
+    /// readable by it. The copy is private to the caller (mode 0600), like the database.
+    /// </summary>
+    private static int Backup(string dbPath, string target, TextWriter output, TextWriter error)
+    {
+        string source = Path.GetFullPath(dbPath);
+        if (!File.Exists(source))
+        {
+            error.WriteLine($"No database at {source}.");
+            return 1;
+        }
+        string destination = Path.GetFullPath(target);
+        if (destination == source)
+            throw new UsageException("The backup must go to another file than the database.");
+        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+        string partial = destination + ".partial";
+        File.Delete(partial);
+        File.Create(partial).Dispose();
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(partial, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        try
+        {
+            using (var from = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = source, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString()))
+            using (var to = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = partial, Pooling = false }.ToString()))
+            {
+                from.Open();
+                to.Open();
+                from.BackupDatabase(to);
+                using var check = to.CreateCommand();
+                check.CommandText = "PRAGMA integrity_check";
+                if (check.ExecuteScalar() as string != "ok")
+                    throw new IOException("The copy failed its integrity check.");
+            }
+            File.Move(partial, destination, overwrite: true);
+        }
+        catch
+        {
+            File.Delete(partial);
+            throw;
+        }
+        output.WriteLine($"Backed up {source} to {destination} ({new FileInfo(destination).Length / 1024.0:0.#} KB).");
+        return 0;
     }
 
     private static int UserAction(Store store, UserRecord user, string action, bool yes, TextReader input, TextWriter output)

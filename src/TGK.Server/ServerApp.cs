@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Net;
 using System.Linq;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
@@ -30,8 +32,14 @@ public sealed class ServerOptions
     public string? CertPath { get; init; }
     public string? CertPassword { get; init; }
 
-    /// <summary>Honour X-Forwarded-For/Proto from a reverse proxy on loopback.</summary>
+    /// <summary>Honour X-Forwarded-For/Proto from a reverse proxy on loopback (and on <see cref="KnownProxies"/>).</summary>
     public bool TrustProxy { get; init; }
+
+    /// <summary>
+    /// Addresses or networks (<c>192.168.1.10</c>, <c>10.0.0.0/24</c>) of reverse proxies on other machines whose
+    /// X-Forwarded-For/Proto are honoured too, e.g. HAProxy in front of a container. Implies <see cref="TrustProxy"/>.
+    /// </summary>
+    public IReadOnlyList<string> KnownProxies { get; init; } = [];
 
     /// <summary>Requests per minute per client IP to prelogin, login, register and password change (together).</summary>
     public int RateLimitPerMinute { get; init; } = DefaultRateLimit;
@@ -134,12 +142,16 @@ public static class ServerApp
         var db = app.Services.GetRequiredService<Db>();
         app.Logger.LogInformation("Database {Path}{New}; registration {Registration}", db.Path, db.IsNew ? " (created)" : "",
             app.Services.GetRequiredService<Store>().RegistrationOpen ? "open" : "closed");
-        if (!options.TrustProxy && options.Urls.Split(';').Any(IsPublicPlainHttp))
+        bool trustProxy = options.TrustProxy || options.KnownProxies.Count > 0;
+        if (trustProxy)
+            app.Logger.LogInformation("Forwarded headers trusted from loopback{Proxies}",
+                options.KnownProxies.Count == 0 ? "" : " and " + string.Join(", ", options.KnownProxies));
+        if (!trustProxy && options.Urls.Split(';').Any(IsPublicPlainHttp))
             app.Logger.LogWarning("Serving plain HTTP on a non-loopback address; clients refuse it. Use --cert, or a TLS reverse proxy with --trust-proxy.");
 
         app.Use(HandleErrors);
-        if (options.TrustProxy)
-            app.UseForwardedHeaders(new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto });
+        if (trustProxy)
+            app.UseForwardedHeaders(ForwardedOptions(options.KnownProxies));
         app.Use(LimitBodySize);
         app.UseRouting();
         app.UseRateLimiter();
@@ -152,6 +164,33 @@ public static class ServerApp
         VaultEndpoints.Map(authenticated);
         app.MapFallback(() => Api.Error(StatusCodes.Status404NotFound, ErrorCodes.NotFound, "Not found."));
         return app;
+    }
+
+    /// <summary>Forwarded headers are honoured from loopback (the defaults) and from <paramref name="knownProxies"/>.</summary>
+    internal static ForwardedHeadersOptions ForwardedOptions(IReadOnlyList<string> knownProxies)
+    {
+        var forwarded = new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto };
+        foreach (string proxy in knownProxies)
+        {
+            if (IPAddress.TryParse(proxy, out IPAddress? address))
+                forwarded.KnownProxies.Add(address);
+            else
+                forwarded.KnownIPNetworks.Add(System.Net.IPNetwork.Parse(proxy));
+        }
+        return forwarded;
+    }
+
+    /// <summary>Splits a <c>--known-proxy</c> value (addresses or networks separated by commas, semicolons or spaces); null if one is not valid.</summary>
+    public static List<string>? ParseProxies(string value)
+    {
+        var proxies = new List<string>();
+        foreach (string part in value.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!IPAddress.TryParse(part, out _) && !System.Net.IPNetwork.TryParse(part, out _))
+                return null;
+            proxies.Add(part);
+        }
+        return proxies;
     }
 
     private static bool IsPublicPlainHttp(string url) =>

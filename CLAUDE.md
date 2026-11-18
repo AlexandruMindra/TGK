@@ -19,4 +19,5 @@
   Never remove or weaken the signing or signature-check steps, never sign pull request builds, never put a
   certificate, key or secret in the repo (only GitHub secrets/variables).
 - Installed clients update themselves from the release assets: keep their names and layout (`docs/RELEASING.md`,
-  "Self-update contract").
+  "Self-update contract"). Installed servers do too (`tgk-server-*` assets, `packaging/server/tgk-server-manage.sh`):
+  keep those as well (`docs/RELEASING.md`, "Server packages").

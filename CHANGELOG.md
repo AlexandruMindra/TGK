@@ -10,6 +10,23 @@ shows the current Unreleased section.
 
 ## [Unreleased]
 
+### Added
+
+- **Sync server packages with automatic updates**: releases now carry the sync server for Linux
+  (`tgk-server-linux-x64`, `tgk-server-linux-arm64`) and `tgk-server-manage.sh`, which installs it on any systemd
+  Linux (a Proxmox LXC too) and then looks after it: every night it installs a new stable release of the same MAJOR
+  version (checked against SHA-256 sums; the database is snapshotted first, and a version that does not start is
+  rolled back and skipped) and backs up the database. A new install has self-registration off. See docs/SERVER.md.
+- **tgk-server `--known-proxy <ip|cidr>`**: trusts `X-Forwarded-For`/`-Proto` from a reverse proxy on another machine
+  (e.g. HAProxy ending TLS for a subdomain). Before, only a proxy on the same machine was trusted, so behind another
+  one every client had the proxy's address and they all shared one sign-in rate limit.
+- **tgk-server `backup <file>`**: a consistent copy of the database while the server runs (no sqlite3 needed), and
+  `--version`.
+
+### Changed
+
+- **tgk-server** no longer needs the ICU library (`libicu`), which minimal containers lack.
+
 ## [0.4.0] - 2026-11-18
 
 ### Added
