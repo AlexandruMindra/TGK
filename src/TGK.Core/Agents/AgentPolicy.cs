@@ -38,10 +38,11 @@ public sealed record AgentRules(AgentAccess Access, IReadOnlyList<string> Allowe
 /// <item><b>Off</b>: nothing (the host is not listed).</item>
 /// <item><b>Read only</b>: reading files, and commands that are built-in read-only ones or allowed; never protected paths.</item>
 /// <item><b>Ask</b>: reading is free; writing, and commands that are not read-only or allowed, need approval.</item>
-/// <item><b>Full</b>: everything without asking.</item>
+/// <item><b>Full</b>: everything without asking, sudo and the built-in protected paths included.</item>
 /// </list>
-/// In every mode a protected path (built-in or the host's own) needs approval, and is refused in read-only mode;
-/// commands count as touching one when a word of theirs is such a path.
+/// A protected path needs approval, and is refused in read-only mode: the built-in ones and the host's own in Read only
+/// and Ask, only the host's own (the user listed them on purpose) in Full. Commands count as touching one when a word
+/// of theirs is such a path.
 /// </remarks>
 public static class AgentPolicy
 {
@@ -127,6 +128,9 @@ public static class AgentPolicy
     /// </summary>
     public static string? TouchedProtectedPath(AgentRules rules, ShellCommand parsed, string home, string workingDir)
     {
+        // Nothing protected applies (full access without paths of the host's own): there is nothing a word could reach.
+        if (!Protected(rules).Any())
+            return null;
         string? wd = workingDir;
         foreach (IReadOnlyList<ShellWord> command in parsed.Parts)
         {
@@ -242,7 +246,7 @@ public static class AgentPolicy
         // it may be read), the whole glob may match one, and its last part may match a protected file name.
         int slash = path.LastIndexOf('/');
         string dirGlob = slash <= 0 ? "/" : path[..slash], nameGlob = path[(slash + 1)..];
-        foreach (string pattern in BuiltInProtectedPaths.Concat(rules.ProtectedPaths))
+        foreach (string pattern in Protected(rules))
         {
             string trimmed = pattern.Trim();
             if (!trimmed.Contains('/'))
@@ -264,7 +268,7 @@ public static class AgentPolicy
     public static string? ProtectedBelow(AgentRules rules, string dir, string home, bool builtIn = true)
     {
         string prefix = dir == "/" ? "/" : dir + "/";
-        foreach (string pattern in (builtIn ? BuiltInProtectedPaths : []).Concat(rules.ProtectedPaths))
+        foreach (string pattern in Protected(rules, builtIn))
         {
             if (!pattern.Contains('/'))
                 continue;
@@ -292,18 +296,53 @@ public static class AgentPolicy
         return slash <= 0 ? "/" : path[..slash];
     }
 
-    /// <summary>Commands as root (TGK supplies the sudo password): always the user's call, never in read-only mode.</summary>
+    /// <summary>
+    /// Typing into a terminal tab. The shell there may run as another user, inside a program or on another machine
+    /// (after su, docker exec, ssh, a database client), so the policy cannot tell what the input does: in Ask mode every
+    /// input needs approval and read-only access cannot type. Full access asks only for input naming one of the host's
+    /// own protected paths.
+    /// </summary>
+    public static AgentDecision Type(AgentRules rules, string text)
+    {
+        switch (rules.Access)
+        {
+            case AgentAccess.Off:
+                return AgentDecision.Deny("Agents have no access to this host.");
+            case AgentAccess.ReadOnly:
+                return AgentDecision.Deny("Agents have read-only access to this host: they can read its terminal tabs but not type into them.");
+            case AgentAccess.Ask:
+                return AgentDecision.Ask("Typing into a terminal needs approval on this host (TGK cannot tell what the shell or program there does with it).");
+        }
+        if (text.Length == 0 || rules.ProtectedPaths.Count == 0)
+            return AgentDecision.Allow();
+        if (TouchedProtectedPath(rules, ShellCommand.Parse(text), TerminalHome, TerminalHome) is { } touched)
+            return AgentDecision.Ask($"The input may touch a protected path: {touched}.");
+        return AgentDecision.Allow();
+    }
+
+    // A terminal's home and directory are not known: "~" stands for both, so ~/… patterns and names still match.
+    private const string TerminalHome = "/~";
+
+    /// <summary>Commands as root (TGK supplies the sudo password): approved by the user, except with full access; never in read-only mode.</summary>
     public static AgentDecision Sudo(AgentRules rules) => rules.Access switch
     {
         AgentAccess.Off => AgentDecision.Deny("Agents have no access to this host."),
         AgentAccess.ReadOnly => AgentDecision.Deny("Agents have read-only access to this host; sudo is not available to them."),
-        _ => AgentDecision.Ask("Commands as root always need approval."),
+        AgentAccess.Full => AgentDecision.Allow(),
+        _ => AgentDecision.Ask("Commands as root need approval on this host."),
     };
 
-    /// <summary>The protected-path pattern <paramref name="path"/> (absolute) matches, or null.</summary>
+    /// <summary>
+    /// The protected paths that apply under <paramref name="rules"/>: the built-in ones (unless <paramref name="builtIn"/>
+    /// is false, or the access is full) and the host's own.
+    /// </summary>
+    public static IEnumerable<string> Protected(AgentRules rules, bool builtIn = true) =>
+        builtIn && rules.Access != AgentAccess.Full ? BuiltInProtectedPaths.Concat(rules.ProtectedPaths) : rules.ProtectedPaths;
+
+    /// <summary>The protected-path pattern <paramref name="path"/> (absolute) matches, or null (see <see cref="Protected"/>).</summary>
     public static string? ProtectedPattern(AgentRules rules, string path, string home)
     {
-        foreach (string pattern in BuiltInProtectedPaths.Concat(rules.ProtectedPaths))
+        foreach (string pattern in Protected(rules))
         {
             if (RemotePath.Matches(pattern, path, home) || IsInside(pattern, path, home))
                 return pattern;

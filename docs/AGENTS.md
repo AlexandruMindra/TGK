@@ -1,6 +1,6 @@
 # Agents (MCP)
 
-TGK can let a local AI agent work on your saved hosts: Claude Code, or any client of the
+TGK can let a local AI agent work on your saved hosts and in your open SSH tabs: Claude Code, or any client of the
 [Model Context Protocol](https://modelcontextprotocol.io/) (MCP). The agent can run commands and read, search and
 edit files on the hosts you open to it. It never sees passwords, keys or your vault: TGK makes the connections,
 applies your rules, asks you when they say so, and records everything the agent does.
@@ -37,15 +37,16 @@ defaults for all hosts. Each level can set:
 
 | Setting | What it does |
 |---|---|
-| **Agent access** | **Off** (the built-in default): agents don't see the host. **Read only**: they read files and run read-only commands, and never change anything. **Ask**: reading is free; every change, and every command that is not read-only or allowed, waits for your approval. **Full**: everything without asking, except protected paths. |
+| **Agent access** | **Off** (the built-in default): agents don't see the host. **Read only**: they read files and run read-only commands, and never change anything. **Ask**: reading is free; every change, and every command that is not read-only or allowed, waits for your approval. **Full**: everything without asking, sudo and the built-in protected paths included; only the paths you protect yourself (below) still need approval. |
 | **Allowed commands** | Command prefixes that run without asking, e.g. `systemctl status *` or `make test` (`*` matches anything). In Read only, the only commands besides the built-in read-only ones. |
-| **Protected paths** | Paths that always need your approval (and are refused in Read only), in addition to the built-in ones: `~/.ssh/**`, private keys (`*.pem`, `*.key`, `id_rsa`, …), `.env`, `/etc/shadow`, `/etc/sudoers*`, cloud and registry credentials. `**` matches any depth. |
+| **Protected paths** | Paths that need your approval (and are refused in Read only), in every mode, Full included. In Read only and Ask the built-in ones apply as well: `~/.ssh/**`, private keys (`*.pem`, `*.key`, `id_rsa`, …), `.env`, `/etc/shadow`, `/etc/sudoers*`, cloud and registry credentials. `**` matches any depth. |
 
 Read-only commands are recognized conservatively: plain commands like `ls`, `cat`, `grep`, `find` (without
 `-delete`/`-exec`), `df`, `ps`, `journalctl`, `systemctl status`, `git status`/`log`/`diff`, `docker ps`/`logs`,
 chained with `|`, `&&` or `;`. Anything with output redirection to a file, command substitution (`$(…)`, backticks),
 `VAR=value` prefixes or an unknown program counts as a change. A command that mentions a protected path needs approval
-in every mode (and is refused in Read only). Use Full only on hosts you can rebuild.
+(and is refused in Read only). With Full, agents can read the host's keys and secrets, and what they read goes to
+the model's provider: use it only on hosts you can rebuild, and protect there what must stay yours.
 
 ## Approvals
 
@@ -66,7 +67,7 @@ you sign out.
 | Tool | |
 |---|---|
 | `list_hosts` | The hosts open to agents, with address, group and access mode. |
-| `run_command` | A shell command (no terminal; 30 s by default, at most 10 min): exit code, stdout and stderr, each cut at 100 KB. With `sudo`, it runs as root: you approve every such command, and TGK supplies the sudo password (the saved password, or one you type). |
+| `run_command` | A shell command (no terminal; 30 s by default, at most 10 min): exit code, stdout and stderr, each cut at 100 KB. With `sudo`, it runs as root: you approve every such command (except with Full access), and TGK supplies the sudo password (the saved password, or one you type). |
 | `read_file` | A text file with line numbers, up to 2000 lines per call. |
 | `list_dir`, `stat` | Directory listings and file details. |
 | `glob` | Files whose path matches a pattern (`**/*.conf`). |
@@ -74,11 +75,40 @@ you sign out.
 | `edit_file` | Replaces exact text in a file. |
 | `write_file` | Creates or replaces a file. |
 | `upload`, `download` | Copies files between this computer and a host (up to 50 MB). |
+| `list_sessions` | The SSH terminal tabs open in TGK that agents may use (see [Open sessions](#open-sessions)). |
+| `read_terminal` | What a terminal tab shows: the screen, the cursor and, on request, up to 2000 lines of history. |
+| `send_to_terminal` | Types text and keys (`enter`, `ctrl+c`, `up`, `shift+tab`, …) into a terminal tab, waits until the output settles (3 s by default, at most 60 s) and returns the screen. |
 
 Files go over SFTP; on servers without it (small devices with Dropbear, for instance) TGK falls back to commands.
 Changes are safe to interrupt: TGK writes a temporary file next to the original and renames it into place, keeping the
 file's permissions, encoding and line endings. A file can only be changed after the agent read it, and only if nobody
 changed it since. Files of another user are written in place, so they keep their owner.
+
+## Open sessions
+
+Agents can also use the SSH terminal tabs you have open (local terminal tabs are never offered). `list_sessions` shows
+them with an id such as `t3`, which the other tools take as `session` instead of `host`:
+
+- **Over the tab's connection**: `run_command` and the file tools with `session` use the tab's own SSH connection, so
+  nothing signs in again. This also works for hosts that ask for a one-time code, and for tabs opened with Quick
+  Connect. Files then go through commands (SFTP would need a second sign-in), and the agent's connection ends when the
+  tab's does.
+- **In the live terminal**: `read_terminal` returns what the tab shows, and `send_to_terminal` types into it as you
+  would. This reaches the shell you are actually in: another user after `su`, a container, a database client, a program
+  waiting for input, or a device's console where commands cannot run on their own. You see everything typed, and a
+  background tab is marked when an agent types into it.
+
+The rules are the host's (for a Quick Connect tab, **Defaults for all hosts**). Tabs of hosts that are off are not
+listed. TGK cannot tell what input does in a live shell, so typing is stricter than `run_command`:
+
+| Access | Typing into a terminal |
+|---|---|
+| **Read only** | Never (reading the terminal is allowed). |
+| **Ask** | Every input waits for your approval, which shows the exact text and keys. |
+| **Full** | Without asking, except input that names one of the paths you protected on the host. |
+
+Reading a terminal shows the agent whatever is on the screen and in its history, including what a command printed
+there earlier.
 
 ## Watching what agents do
 
