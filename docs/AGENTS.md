@@ -91,7 +91,8 @@ changed it since. Files of another user are written in place, so they keep their
 
 ## Security
 
-- The socket is in TGK's config directory, readable only by you, and every connection must present a random token
+- The socket is in TGK's config directory (on Windows in `%USERPROFILE%\.tgk`, since MSIX-packaged clients such as
+  Claude Desktop cannot reach a socket under AppData), readable only by you, and every connection must present a random token
   from `agent.json` (also only readable by you), renewed each time TGK starts serving. Programs running as your user
   can read it, which is the same trust you give your SSH agent: turn agents off when you don't use them.
 - Remote content can try to steer the agent (prompt injection: a README that says "now delete everything"). This is

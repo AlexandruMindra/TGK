@@ -31,6 +31,9 @@ shows the current Unreleased section.
 
 - **tgk-server under systemd** (or any start from `/`): it no longer watches the whole file system for settings
   files before listening, which took minutes and hundreds of MB of memory; it now starts in a moment.
+- **Agents (MCP) from Claude Desktop on Windows**: `tgk-mcp` could not reach TGK when started by an MSIX-packaged
+  client (Claude Desktop's Code tab), which sees AppData redirected, and reported "TGK is not running" although TGK
+  was serving. The agent socket is now in `%USERPROFILE%\.tgk`; `tgk-mcp` also names the socket error it got.
 
 ## [0.4.0] - 2026-11-18
 

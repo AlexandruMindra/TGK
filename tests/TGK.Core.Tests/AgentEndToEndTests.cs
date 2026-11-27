@@ -111,6 +111,16 @@ public sealed class AgentEndToEndTests : IAsyncLifetime
     }
 
     [Fact]
+    public void The_default_socket_on_windows_is_outside_appdata()
+    {
+        // MSIX-packaged clients cannot connect to a Unix socket TGK created under AppData (redirected for them).
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows only");
+        string socket = AgentEndpoint.DefaultSocketPath();
+        foreach (Environment.SpecialFolder folder in new[] { Environment.SpecialFolder.ApplicationData, Environment.SpecialFolder.LocalApplicationData })
+            Assert.False(socket.StartsWith(Environment.GetFolderPath(folder) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase), socket);
+    }
+
+    [Fact]
     public async Task A_wrong_token_is_refused()
     {
         string info = Path.Combine(_config, "forged.json");
