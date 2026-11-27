@@ -113,6 +113,12 @@ public sealed partial class TerminalView : VisualElement, IKeyInput, ISendsContr
     public int Cols => Emulator.Cols;
     public int Rows => Emulator.Rows;
 
+    /// <summary>Output arrived that is not on the screen yet (the next frames parse it). UI thread.</summary>
+    public bool HasPendingOutput => _feeding is not null || Interlocked.Read(ref _queuedBytes) > 0;
+
+    /// <summary>Scrolls back to the live screen, as typing does (for input sent on the user's behalf). UI thread.</summary>
+    public void ShowLatest() => ScrollToBottom();
+
     /// <summary>
     /// Queues host output. Thread-safe (call it from one producer thread); the bytes are copied. While the parse
     /// backlog is full this blocks until the view has caught up, or until the view is reset or disposed.

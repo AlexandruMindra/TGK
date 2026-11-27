@@ -251,7 +251,7 @@ public enum AgentAccess
     /// <summary>Reads are free; writes and other commands need the user's approval (allowed commands excepted).</summary>
     Ask,
 
-    /// <summary>Everything without asking, except protected paths.</summary>
+    /// <summary>Everything without asking (sudo and the built-in protected paths included), except the host's own protected paths.</summary>
     Full,
 }
 

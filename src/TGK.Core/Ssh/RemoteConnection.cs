@@ -57,6 +57,7 @@ public sealed class RemoteConnection : IDisposable
     private SshConnectRequest? _request;
     private bool _connected;
     private bool _disposed;
+    private Func<bool>? _borrowedAlive; // set when the hops belong to a terminal session (Attach): never disposed here
 
     /// <param name="verifier">Decides whether to trust each hop's host key (prompts the user for unknown keys).</param>
     /// <param name="promptUser">Answers sign-in questions the stored credentials can't (one-time codes); null to fail instead.</param>
@@ -65,6 +66,30 @@ public sealed class RemoteConnection : IDisposable
         _verifier = verifier ?? throw new ArgumentNullException(nameof(verifier));
         _promptUser = promptUser;
     }
+
+    /// <summary>
+    /// Commands over the SSH connection of an open terminal <paramref name="session"/>: no new connection or sign-in.
+    /// The session keeps owning it (disposing this leaves it open), and this connection ends with it. Files go through
+    /// commands: SFTP would need a second sign-in, which may ask for a one-time code again. Null when not connected.
+    /// </summary>
+    public static RemoteConnection? Attach(SshSession session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        if (session.ConnectedHops is not { Count: > 0 } hops)
+            return null;
+        var connection = new RemoteConnection(RefusingVerifier.Instance)
+        {
+            _request = hops[^1].Request,
+            _connected = true,
+            _sftpUnavailable = "Files go through commands on the terminal tab's connection.",
+            _borrowedAlive = () => session.State == SessionState.Connected,
+        };
+        connection._hops.AddRange(hops);
+        return connection;
+    }
+
+    /// <summary>Over the connection of a terminal session (<see cref="Attach"/>).</summary>
+    public bool IsAttached => _borrowedAlive is not null;
 
     /// <summary>The request this connection was made with (null before <see cref="ConnectAsync"/>).</summary>
     public SshConnectRequest? Request { get { lock (_gate) return _request; } }
@@ -76,12 +101,19 @@ public sealed class RemoteConnection : IDisposable
         {
             lock (_gate)
             {
-                if (!_connected || _disposed)
+                if (!_connected || _disposed || _borrowedAlive?.Invoke() == false)
                     return false;
-                foreach (SshHop hop in _hops)
+                try
                 {
-                    if (!hop.Client.IsConnected)
-                        return false;
+                    foreach (SshHop hop in _hops)
+                    {
+                        if (!hop.Client.IsConnected)
+                            return false;
+                    }
+                }
+                catch (ObjectDisposedException)
+                {
+                    return false; // a borrowed session closed meanwhile
                 }
                 return true;
             }
@@ -363,8 +395,18 @@ public sealed class RemoteConnection : IDisposable
             _hops.Clear();
         }
         SshHop.Try(() => sftp?.Dispose());
+        if (_borrowedAlive is not null)
+            return; // the terminal session's: it closes them
         for (int i = hops.Length - 1; i >= 0; i--) // innermost first: each hop runs through the ones before it
             hops[i].Dispose();
+    }
+
+    /// <summary>The verifier of an attached connection, which never connects: trusts nothing.</summary>
+    private sealed class RefusingVerifier : IHostKeyVerifier
+    {
+        public static readonly RefusingVerifier Instance = new();
+
+        public Task<bool> VerifyAsync(HostKeyInfo info, CancellationToken ct) => Task.FromResult(false);
     }
 
     private SshClient FinalClient()

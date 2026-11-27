@@ -111,6 +111,16 @@ public sealed class SshSession : IDisposable
     /// <summary>The (final) server's host key fingerprint once it was trusted.</summary>
     public string? HostKeyFingerprint { get { lock (_gate) return _trustedFingerprint; } }
 
+    /// <summary>The connected hops (jump hosts, then the final host) while connected, else null. Still owned by the session.</summary>
+    internal IReadOnlyList<SshHop>? ConnectedHops
+    {
+        get
+        {
+            lock (_gate)
+                return _state == SessionState.Connected && _connection is { } c ? [.. c.Hops] : null;
+        }
+    }
+
     /// <summary>
     /// Connects (through the jump hosts, if any), authenticates (private key, then password, then keyboard-interactive)
     /// and opens a PTY shell. Completes once <see cref="State"/> is <see cref="SessionState.Connected"/>; the tunnels

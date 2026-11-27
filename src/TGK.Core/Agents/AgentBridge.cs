@@ -33,10 +33,10 @@ public static class AgentBridge
         {
             await socket.ConnectAsync(new UnixDomainSocketEndPoint(info.Socket), ct).ConfigureAwait(false);
         }
-        catch (SocketException)
+        catch (SocketException ex)
         {
             await log.WriteLineAsync("tgk-mcp: TGK is not running (or stopped serving agents). Start TGK with \"Allow agents (MCP)\" on, " +
-                "then reconnect (in Claude Code: /mcp).").ConfigureAwait(false);
+                $"then reconnect (in Claude Code: /mcp). [{ex.SocketErrorCode} connecting to {info.Socket}]").ConfigureAwait(false);
             return ExitNotRunning;
         }
 

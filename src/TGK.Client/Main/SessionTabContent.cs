@@ -9,6 +9,7 @@ using TGK.Client.Controls;
 using TGK.Client.Dialogs;
 using TGK.Client.Input;
 using TGK.Client.Terminal;
+using TGK.Core.Agents;
 using TGK.Core.Models;
 using TGK.Core.Ssh;
 
@@ -51,6 +52,8 @@ public sealed class SessionTabContent : TabContent, IKeyInput
     private long _connectedAtMs;
     private bool _unattended; // the running attempt was started by the reconnect timer, so nobody is waiting for its prompts
     private string? _inputNeeded; // what an unattended attempt would have had to ask for, e.g. "a password"
+    private static int _lastAgentId;
+    private long _outputBytes; // every byte of output since the tab opened (agents wait on it)
 
     /// <param name="host">A saved host (re-read from the vault on every connect) or an unsaved quick-connect entry.</param>
     /// <param name="password">Password to try first instead of the stored credentials (dev and quick-connect use).</param>
@@ -68,6 +71,60 @@ public sealed class SessionTabContent : TabContent, IKeyInput
     }
 
     public override VisualElement? DefaultFocus => _terminal;
+
+    // ---- For agents (see Agents/SessionAgentTerminal.cs) ----
+
+    /// <summary>How agents name this tab (<c>t1</c>, <c>t2</c>…): unique while TGK runs.</summary>
+    public string AgentId { get; } = $"t{Interlocked.Increment(ref _lastAgentId)}";
+
+    /// <summary>The host as the tab was opened with (a saved host's current settings are in the vault).</summary>
+    public HostEntry AgentHost => _host;
+
+    /// <summary>The tab's SSH session while it has one and is not closing. Any thread.</summary>
+    public SshSession? AgentSession => _closing ? null : _session;
+
+    /// <summary>Grows with every byte of output. Any thread.</summary>
+    public long AgentOutputVersion => Interlocked.Read(ref _outputBytes);
+
+    public bool IsClosing => _closing;
+
+    /// <summary>Output arrived that the screen does not show yet. UI thread.</summary>
+    public bool HasPendingOutput => _terminal?.HasPendingOutput ?? false;
+
+    /// <summary>The screen and up to <paramref name="scrollback"/> lines of history. UI thread.</summary>
+    public TerminalSnapshot AgentSnapshot(int scrollback)
+    {
+        TGK.Terminal.TerminalEmulator e = _terminal.Emulator;
+        lock (e.SyncRoot)
+        {
+            var screen = new List<string>(e.Rows);
+            for (int row = 0; row < e.Rows; row++)
+                screen.Add(e.GetText(row, 0, row, e.Cols));
+            int count = Math.Min(Math.Max(0, scrollback), e.ScrollbackCount);
+            var history = new List<string>(count);
+            for (int line = -count; line < 0; line++)
+                history.Add(e.GetText(line, 0, line, e.Cols));
+            return new TerminalSnapshot(screen, history, e.ScrollbackCount, e.CursorRow, e.CursorCol, e.Cols, e.Rows, e.Modes.AlternateScreen);
+        }
+    }
+
+    /// <summary>Types for an agent, as the user would; false when the tab takes no input now. UI thread.</summary>
+    public bool AgentType(string text, IReadOnlyList<TerminalKeyPress> keys)
+    {
+        if (_closing || _session is not { State: SessionState.Connected } session || !_terminal.InputEnabled)
+            return false;
+        var bytes = new List<byte>();
+        if (text.Length > 0)
+            bytes.AddRange(TGK.Terminal.TerminalInput.EncodeText(text));
+        foreach (TerminalKeyPress key in keys)
+            bytes.AddRange(Agents.SessionAgentTerminal.Encode(key, _terminal.Emulator.Modes));
+        _terminal.ShowLatest();
+        if (!session.Send([.. bytes]))
+            return false;
+        if (!IsShown)
+            RequestAttention(); // an agent typed in a background tab: the tab strip shows it
+        return true;
+    }
 
     // A saved host by id (it is re-read on reconnect anyway), an unsaved one by address. Passwords are never saved.
     public override WorkspaceTab SaveState() => IsSaved
@@ -373,7 +430,10 @@ public sealed class SessionTabContent : TabContent, IKeyInput
         {
             // A replaced session's reader may still deliver a last chunk: it must not reach the new session's screen.
             if (session == _session)
+            {
                 _terminal.Write(buffer.AsSpan(0, count));
+                Interlocked.Add(ref _outputBytes, count);
+            }
         };
         session.StateChanged += (state, message) => UiThread.Post(() => OnSessionState(session, state, message));
         session.TunnelsChanged += () => UiThread.Post(() => OnTunnelsChanged(session));

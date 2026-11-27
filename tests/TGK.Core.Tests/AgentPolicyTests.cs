@@ -150,18 +150,41 @@ public class AgentPolicyTests
     }
 
     [Fact]
-    public void Full_needs_approval_only_for_protected_paths()
+    public void Full_needs_approval_only_for_the_hosts_own_protected_paths()
     {
         AgentRules full = Rules(AgentAccess.Full, paths: ["/srv/secrets/**"]);
         Assert.Equal(AgentVerdict.Allow, AgentPolicy.Run(full, "apt-get upgrade -y", Home).Verdict);
         Assert.Equal(AgentVerdict.Allow, AgentPolicy.Write(full, "/etc/nginx/nginx.conf", Home).Verdict);
         Assert.Equal(AgentVerdict.Ask, AgentPolicy.Write(full, "/srv/secrets/db.txt", Home).Verdict);
         Assert.Equal(AgentVerdict.Ask, AgentPolicy.Read(full, "/srv/secrets", Home).Verdict);
-        Assert.Equal(AgentVerdict.Ask, AgentPolicy.Write(full, "/home/dev/.ssh/authorized_keys", Home).Verdict);
-        Assert.Equal(AgentVerdict.Ask, AgentPolicy.Read(full, "/opt/app/.env", Home).Verdict);
-        Assert.Equal(AgentVerdict.Ask, AgentPolicy.Read(full, "/etc/ssl/private/site.key", Home).Verdict);
         Assert.Equal(AgentVerdict.Ask, AgentPolicy.Run(full, "cp backup.tar /srv/secrets/", Home).Verdict);
+        Assert.Equal(AgentVerdict.Ask, AgentPolicy.Run(full, "cat $DIR/x", Home).Verdict); // could be /srv/secrets
         Assert.Equal(AgentVerdict.Allow, AgentPolicy.Read(full, "/srv/secretsauce.txt", Home).Verdict);
+
+        // The built-in ones do not apply with full access.
+        Assert.Equal(AgentVerdict.Allow, AgentPolicy.Write(full, "/home/dev/.ssh/authorized_keys", Home).Verdict);
+        Assert.Equal(AgentVerdict.Allow, AgentPolicy.Read(full, "/opt/app/.env", Home).Verdict);
+        Assert.Equal(AgentVerdict.Allow, AgentPolicy.Read(full, "/etc/ssl/private/site.key", Home).Verdict);
+        Assert.Equal(AgentVerdict.Allow, AgentPolicy.Run(full, "cat ~/.ssh/id_ed25519", Home).Verdict);
+        Assert.Equal(AgentVerdict.Allow, AgentPolicy.Run(full, "grep -rn password ~", Home).Verdict);
+        Assert.Equal(AgentVerdict.Allow, AgentPolicy.Sudo(full).Verdict);
+    }
+
+    [Theory]
+    [InlineData("cat ~/.ssh/id_ed25519")]
+    [InlineData("cat $SOME_DIR/file")]
+    [InlineData("rm -rf build/*")]
+    [InlineData("grep -R x")]
+    [InlineData("cd \"$X\" && cat a/b")]
+    public void Full_without_paths_of_its_own_never_asks(string command) =>
+        Assert.Equal(AgentVerdict.Allow, AgentPolicy.Run(Rules(AgentAccess.Full), command, Home).Verdict);
+
+    [Fact]
+    public void Sudo_needs_approval_except_with_full_access()
+    {
+        Assert.Equal(AgentVerdict.Deny, AgentPolicy.Sudo(Rules(AgentAccess.ReadOnly)).Verdict);
+        Assert.Equal(AgentVerdict.Ask, AgentPolicy.Sudo(Rules(AgentAccess.Ask)).Verdict);
+        Assert.Equal(AgentVerdict.Allow, AgentPolicy.Sudo(Rules(AgentAccess.Full)).Verdict);
     }
 
     [Theory]
@@ -183,7 +206,7 @@ public class AgentPolicyTests
     {
         AgentRules ro = Rules(AgentAccess.ReadOnly);
         Assert.Equal(AgentVerdict.Deny, AgentPolicy.Run(ro, command, Home, cwd).Verdict);
-        Assert.Equal(AgentVerdict.Ask, AgentPolicy.Run(Rules(AgentAccess.Full), command, Home, cwd).Verdict);
+        Assert.Equal(AgentVerdict.Ask, AgentPolicy.Run(Rules(AgentAccess.Ask), command, Home, cwd).Verdict);
     }
 
     [Theory]
@@ -201,10 +224,11 @@ public class AgentPolicyTests
     [Fact]
     public void Cd_in_the_command_line_moves_where_paths_are_resolved()
     {
-        Assert.Equal(AgentVerdict.Ask, AgentPolicy.Run(Rules(AgentAccess.Full), "cd /etc/ssh && cat ssh_host_rsa_key", Home).Verdict);
-        Assert.Equal(AgentVerdict.Ask, AgentPolicy.Run(Rules(AgentAccess.Full), "cd ~ && cat .ssh/config", Home).Verdict);
-        Assert.Equal(AgentVerdict.Ask, AgentPolicy.Run(Rules(AgentAccess.Full), "cd \"$X\" && cat a/b", Home).Verdict);
-        Assert.Equal(AgentVerdict.Allow, AgentPolicy.Run(Rules(AgentAccess.Full), "cd /var/www && cat index.html", Home).Verdict);
+        AgentRules ro = Rules(AgentAccess.ReadOnly); // read-only commands: only a protected path refuses them
+        Assert.Equal(AgentVerdict.Deny, AgentPolicy.Run(ro, "cd /etc/ssh && cat ssh_host_rsa_key", Home).Verdict);
+        Assert.Equal(AgentVerdict.Deny, AgentPolicy.Run(ro, "cd ~ && cat .ssh/config", Home).Verdict);
+        Assert.Equal(AgentVerdict.Deny, AgentPolicy.Run(ro, "cd \"$X\" && cat a/b", Home).Verdict);
+        Assert.Null(AgentPolicy.TouchedProtectedPath(ro, ShellCommand.Parse("cd /var/www && cat index.html"), Home, Home));
     }
 
     [Fact]

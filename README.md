@@ -82,7 +82,8 @@ entirely on one machine.
   copy files up and down (SFTP, with a fallback for servers without it). Off by default (Settings → Agents); per
   host, group or for all hosts you choose Read only, Ask (you approve every change in TGK, with the exact command or a
   diff) or Full, plus commands that may run without asking and protected paths (keys and other secrets out of the
-  box). Commands with sudo are always approved by you, and TGK supplies the password. The agent never sees passwords
+  box; Full skips them, and sudo, and asks only for the paths you protect yourself). Outside Full, commands with sudo
+  are approved by you; TGK supplies the password. The agent never sees passwords
   or keys; every call is shown live, mirrored in an "Agent log" tab and kept in an audit log.
   See [docs/AGENTS.md](docs/AGENTS.md).
 

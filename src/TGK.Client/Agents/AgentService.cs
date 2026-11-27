@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Blossom;
 using TGK.Client.Dialogs;
+using TGK.Client.Main;
 using TGK.Client.Platform;
 using TGK.Client.Views;
 using TGK.Core.Agents;
@@ -321,6 +322,17 @@ public sealed class AgentService : IAgentHost, IAsyncDisposable
             _passwords[Key(hop)] = password;
         return hop with { Password = password };
     }
+
+    /// <summary>The SSH terminal tabs open now (none while TGK is locked or signed out).</summary>
+    public Task<IReadOnlyList<IAgentTerminal>> TerminalsAsync(CancellationToken ct) =>
+        UiThread.InvokeAsync(() =>
+        {
+            if (_signedOut || _app.Main is not { IsTornDown: false } main || !_app.Services.Vault.IsLoggedIn)
+                return Task.FromResult<IReadOnlyList<IAgentTerminal>>([]);
+            IReadOnlyList<IAgentTerminal> tabs = main.Tabs.OfType<SessionTabContent>().Where(t => !t.IsClosing)
+                .Select(t => (IAgentTerminal)new SessionAgentTerminal(t)).ToList();
+            return Task.FromResult(tabs);
+        }).WaitAsync(ct);
 
     private static string Key(SshConnectRequest r) => $"{r.Username}@{r.Host}:{r.Port}";
 

@@ -49,16 +49,23 @@ public sealed class AgentEndpoint : IAsyncDisposable
     public static string InfoPath => Path.Combine(AppPaths.ConfigDirectory, "agent.json");
 
     /// <summary>
-    /// <c>agent.sock</c> in the config directory, or in a private temporary directory when that path is too long for
-    /// a socket (about 100 bytes).
+    /// <c>agent.sock</c> in the config directory (on Windows in <c>%USERPROFILE%\.tgk</c>), or in a private temporary
+    /// directory when that path is too long for a socket (about 100 bytes).
     /// </summary>
+    /// <remarks>
+    /// Not under AppData on Windows: MSIX-packaged clients (Claude Desktop, …) start <c>tgk-mcp</c> inside their
+    /// package, which sees AppData through a file system redirection, and a socket TGK created there cannot be
+    /// connected to from inside (WSAEINVAL; under Temp: refused). The user profile itself is not redirected.
+    /// </remarks>
     public static string DefaultSocketPath()
     {
-        string path = Path.Combine(AppPaths.ConfigDirectory, "agent.sock");
+        string dir = OperatingSystem.IsWindows()
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".tgk")
+            : AppPaths.ConfigDirectory;
+        string path = Path.Combine(dir, "agent.sock");
         if (Encoding.UTF8.GetByteCount(path) < 100)
             return path;
-        string dir = Path.Combine(Path.GetTempPath(), $"tgk-{Environment.UserName}");
-        return Path.Combine(dir, "agent.sock");
+        return Path.Combine(Path.GetTempPath(), $"tgk-{Environment.UserName}", "agent.sock");
     }
 
     public string SocketPath => _socketPath;

@@ -49,6 +49,9 @@ public interface IAgentHost
     /// declined. <paramref name="error"/> says why a previous one did not work (it is asked again then).
     /// </summary>
     Task<string?> SudoPasswordAsync(HostEntry host, SshConnectRequest request, string? error, CancellationToken ct);
+
+    /// <summary>The SSH terminal tabs open now (none without an app around them, e.g. a headless runner).</summary>
+    Task<IReadOnlyList<IAgentTerminal>> TerminalsAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<IAgentTerminal>>([]);
 }
 
 /// <summary>One agent's connection to TGK (one MCP session): its name, approvals and the files it has read.</summary>
@@ -116,9 +119,15 @@ public sealed class AgentToolbox : IDisposable
     private static readonly TimeSpan DefaultCommandTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan MaxCommandTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan SearchTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan DefaultTerminalWait = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan TerminalPoll = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan TerminalQuiet = TimeSpan.FromMilliseconds(600); // output paused this long: the program answered
 
     private readonly IAgentHost _host;
     private readonly ConnectionPool _pool;
+    private readonly Lock _tabGate = new();
+    private readonly Dictionary<string, RemoteFiles> _tabFiles = []; // attached to terminal tabs' connections, by tab id
+    private readonly Dictionary<string, SemaphoreSlim> _typing = []; // by tab id
     private int _running;
 
     public AgentToolbox(IAgentHost host, AgentActivity activity)
@@ -141,7 +150,16 @@ public sealed class AgentToolbox : IDisposable
     /// <summary>Raised (on any thread) after each call with its record and the text the agent got back.</summary>
     public event Action<AgentActivityEntry, string>? CallFinished;
 
-    public void Dispose() => _pool.Dispose();
+    public void Dispose()
+    {
+        _pool.Dispose();
+        lock (_tabGate)
+        {
+            foreach (RemoteFiles files in _tabFiles.Values)
+                files.Connection.Dispose(); // only detaches: the tabs keep their connections
+            _tabFiles.Clear();
+        }
+    }
 
     /// <summary>Runs tool <paramref name="name"/> for <paramref name="session"/>; never throws except for cancellation.</summary>
     public async Task<ToolOutcome> CallAsync(AgentSession session, string name, JsonElement arguments, CancellationToken ct)
@@ -154,7 +172,10 @@ public sealed class AgentToolbox : IDisposable
         {
             ToolOutcome outcome = name switch
             {
-                AgentTools.ListHosts => ListHosts(call),
+                AgentTools.ListHosts => await ListHostsAsync(call, ct).ConfigureAwait(false),
+                AgentTools.ListSessions => await ListSessionsAsync(call, ct).ConfigureAwait(false),
+                AgentTools.ReadTerminal => await ReadTerminalAsync(call, ct).ConfigureAwait(false),
+                AgentTools.SendToTerminal => await SendToTerminalAsync(call, ct).ConfigureAwait(false),
                 AgentTools.RunCommand => await RunCommandAsync(call, ct).ConfigureAwait(false),
                 AgentTools.ReadFile => await ReadFileAsync(call, ct).ConfigureAwait(false),
                 AgentTools.ListDir => await ListDirAsync(call, ct).ConfigureAwait(false),
@@ -205,6 +226,15 @@ public sealed class AgentToolbox : IDisposable
 
     // ---- Tools ----
 
+    private async Task<ToolOutcome> ListHostsAsync(Call call, CancellationToken ct)
+    {
+        ToolOutcome hosts = ListHosts(call);
+        VaultData vault = Vault();
+        IReadOnlyList<IAgentTerminal> tabs = await _host.TerminalsAsync(ct).ConfigureAwait(false);
+        int open = tabs.Count(t => AgentRules.For(vault, RulesHost(vault, t)).Access != AgentAccess.Off);
+        return open == 0 ? hosts : hosts with { Text = hosts.Text.TrimEnd('\n') + $"\n\n{open} SSH terminal tab(s) open in TGK can be used too: see list_sessions.\n" };
+    }
+
     private ToolOutcome ListHosts(Call call)
     {
         VaultData vault = Vault();
@@ -231,7 +261,180 @@ public sealed class AgentToolbox : IDisposable
                 "edit the host (or group) → Connection → Agent access.");
         }
         return ToolOutcome.Ok($"{lines.Count} host(s) open to agents (access: read-only = reads and read-only commands only; " +
-            "ask = changes need the user's approval; full = no approval except protected paths):\n" + string.Join('\n', lines));
+            "ask = changes need the user's approval; full = no approval, except paths the user protected on that host):\n" + string.Join('\n', lines));
+    }
+
+    private async Task<ToolOutcome> ListSessionsAsync(Call call, CancellationToken ct)
+    {
+        VaultData vault = Vault();
+        call.Summary = "";
+        var lines = new List<string>();
+        foreach (IAgentTerminal tab in await _host.TerminalsAsync(ct).ConfigureAwait(false))
+        {
+            HostEntry host = RulesHost(vault, tab);
+            AgentRules rules = AgentRules.For(vault, host);
+            if (rules.Access == AgentAccess.Off)
+                continue;
+            var parts = new List<string>
+            {
+                $"{tab.Id}: {host.DisplayName}", $"address: {Address(vault, host)}", tab.IsConnected ? "connected" : "not connected",
+                $"access: {AccessName(rules.Access)}",
+                vault.FindHost(host.Id) is null ? "Quick Connect (not a saved host; the defaults for all hosts apply)" : "saved host",
+            };
+            if (!string.IsNullOrWhiteSpace(tab.Title) && !string.Equals(tab.Title.Trim(), host.DisplayName.Trim(), StringComparison.Ordinal))
+                parts.Add($"title: {OneLine(tab.Title, 120)}");
+            lines.Add("- " + string.Join("; ", parts));
+        }
+        if (lines.Count == 0)
+        {
+            return ToolOutcome.Ok("No SSH terminal tabs that agents may use are open in TGK. The user opens one by connecting to a host; " +
+                "tabs of hosts whose agent access is off are not listed.");
+        }
+        return ToolOutcome.Ok($"{lines.Count} terminal tab(s) open to agents. Pass the id as session to run_command and the file tools " +
+            "(they use the tab's connection), or to read_terminal and send_to_terminal (its live terminal):\n" + string.Join('\n', lines));
+    }
+
+    private async Task<ToolOutcome> ReadTerminalAsync(Call call, CancellationToken ct)
+    {
+        IAgentTerminal tab = await call.TerminalAsync(ct).ConfigureAwait(false);
+        int scrollback = Math.Clamp(call.Int("scrollback") ?? 0, 0, AgentTools.MaxScrollbackLines);
+        call.Summary = scrollback > 0 ? $"screen and {scrollback} lines of history" : "screen";
+        TerminalSnapshot snapshot = await tab.ReadAsync(scrollback, ct).ConfigureAwait(false);
+        return ToolOutcome.Ok(Cap(DescribeTerminal(tab, call.Host!, snapshot)));
+    }
+
+    private async Task<ToolOutcome> SendToTerminalAsync(Call call, CancellationToken ct)
+    {
+        IAgentTerminal tab = await call.TerminalAsync(ct).ConfigureAwait(false);
+        string text = call.OptionalRawString("text") ?? "";
+        var keys = new List<TerminalKeyPress>();
+        foreach (string spec in call.Strings("keys"))
+        {
+            try
+            {
+                keys.Add(TerminalKeyPress.Parse(spec));
+            }
+            catch (FormatException ex)
+            {
+                throw new ToolException(ex.Message);
+            }
+        }
+        if (text.Length == 0 && keys.Count == 0)
+            throw new ToolException("Give text, keys or both.");
+        double seconds = Math.Clamp(call.Number("wait_seconds") ?? DefaultTerminalWait.TotalSeconds, 0, AgentTools.MaxTerminalWaitSeconds);
+        string shown = DescribeInput(text, keys);
+        call.Summary = shown;
+        if (!tab.IsConnected)
+            throw new ToolException($"Terminal tab {tab.Id} ({tab.Host.DisplayName}) is not connected; the user can reconnect it in TGK.");
+        await call.ApproveAsync(AgentPolicy.Type(call.Rules, text), "Type into a terminal", shown,
+            $"Typed into terminal tab {tab.Id} ({OneLine(tab.Title, 80)}), where you see it.", $"type|{text}|{string.Join(' ', keys)}", ct).ConfigureAwait(false);
+
+        // One agent's input at a time per tab, so two calls cannot interleave their keys.
+        SemaphoreSlim gate;
+        lock (_tabGate)
+        {
+            if (!_typing.TryGetValue(tab.Id, out gate!))
+                _typing[tab.Id] = gate = new SemaphoreSlim(1, 1);
+        }
+        await gate.WaitAsync(ct).ConfigureAwait(false);
+        bool answered;
+        try
+        {
+            long before = tab.OutputVersion;
+            if (!await tab.SendAsync(text.ReplaceLineEndings("\r"), keys, ct).ConfigureAwait(false))
+                throw new ToolException($"Terminal tab {tab.Id} ({tab.Host.DisplayName}) did not take the input: it is not connected, or its server stopped reading.");
+            answered = await WaitForOutputAsync(tab, before, TimeSpan.FromSeconds(seconds), ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+        TerminalSnapshot snapshot = await tab.ReadAsync(0, ct).ConfigureAwait(false);
+        string note = answered ? "Sent." : seconds > 0
+            ? $"Sent; no output within {seconds:0.#} s (the program may still be working: read_terminal shows it later)."
+            : "Sent.";
+        call.Detail = answered ? "output" : "no output yet";
+        return ToolOutcome.Ok(Cap(note + "\n" + DescribeTerminal(tab, call.Host!, snapshot)));
+    }
+
+    /// <summary>
+    /// Waits until output that started after <paramref name="before"/> has paused for a moment, at most
+    /// <paramref name="max"/>; false when none came.
+    /// </summary>
+    private static async Task<bool> WaitForOutputAsync(IAgentTerminal tab, long before, TimeSpan max, CancellationToken ct)
+    {
+        var clock = Stopwatch.StartNew();
+        long last = before;
+        TimeSpan changed = TimeSpan.Zero;
+        bool any = false;
+        while (clock.Elapsed < max)
+        {
+            await Task.Delay(TerminalPoll, ct).ConfigureAwait(false);
+            long now = tab.OutputVersion;
+            if (now != last)
+            {
+                last = now;
+                changed = clock.Elapsed;
+                any = true;
+            }
+            else if (any && clock.Elapsed - changed >= TerminalQuiet)
+            {
+                break;
+            }
+        }
+        return any || tab.OutputVersion != before;
+    }
+
+    private string DescribeTerminal(IAgentTerminal tab, HostEntry host, TerminalSnapshot s)
+    {
+        VaultData? vault = _host.Vault;
+        var sb = new StringBuilder();
+        sb.Append(CultureInfo.InvariantCulture, $"Terminal tab {tab.Id}: {host.DisplayName}");
+        if (vault is not null)
+            sb.Append(CultureInfo.InvariantCulture, $" ({Address(vault, host)})");
+        sb.Append(tab.IsConnected ? ", connected" : ", not connected (the session ended; this is its last screen)");
+        sb.Append(CultureInfo.InvariantCulture, $"; {s.Cols}x{s.Rows}; cursor at line {s.CursorRow + 1}, column {s.CursorCol + 1}");
+        if (s.AlternateScreen)
+            sb.Append("; a full-screen program is showing (it has no history)");
+        sb.Append('\n');
+        if (s.Scrollback.Count > 0)
+            sb.Append(CultureInfo.InvariantCulture, $"--- history (last {s.Scrollback.Count} of {s.ScrollbackTotal} lines) ---\n").AppendJoin('\n', s.Scrollback).Append('\n');
+        // Blank rows below the cursor say nothing.
+        int rows = s.Screen.Count;
+        while (rows > s.CursorRow + 1 && rows > 0 && string.IsNullOrWhiteSpace(s.Screen[rows - 1]))
+            rows--;
+        sb.Append("--- screen ---\n").AppendJoin('\n', s.Screen.Take(rows)).Append('\n');
+        return sb.ToString();
+    }
+
+    private static string DescribeInput(string text, IReadOnlyList<TerminalKeyPress> keys)
+    {
+        string typed = text.ReplaceLineEndings("⏎");
+        string pressed = string.Join(' ', keys.Select(k => $"[{k}]"));
+        return typed.Length == 0 ? pressed : pressed.Length == 0 ? typed : $"{typed} {pressed}";
+    }
+
+    /// <summary>The saved host behind a tab (with its current settings), or its unsaved Quick Connect entry.</summary>
+    private static HostEntry RulesHost(VaultData vault, IAgentTerminal tab) => vault.FindHost(tab.Host.Id) ?? tab.Host;
+
+    /// <summary>A connection over <paramref name="tab"/>'s SSH connection for one call, attached on first use and kept while it lives.</summary>
+    private ConnectionPool.Lease TabLease(IAgentTerminal tab)
+    {
+        lock (_tabGate)
+        {
+            foreach (string stale in _tabFiles.Where(e => !e.Value.Connection.IsConnected).Select(e => e.Key).ToList())
+            {
+                _tabFiles[stale].Connection.Dispose();
+                _tabFiles.Remove(stale);
+            }
+            if (!_tabFiles.TryGetValue(tab.Id, out RemoteFiles? files))
+            {
+                RemoteConnection connection = tab.AttachConnection()
+                    ?? throw new ToolException($"Terminal tab {tab.Id} ({tab.Host.DisplayName}) is not connected; the user can reconnect it in TGK.");
+                _tabFiles[tab.Id] = files = new RemoteFiles(connection);
+            }
+            return new ConnectionPool.Lease(files, static () => { });
+        }
     }
 
     private async Task<ToolOutcome> RunCommandAsync(Call call, CancellationToken ct)
@@ -693,9 +896,63 @@ public sealed class AgentToolbox : IDisposable
 
         public string Display(string path) => RemotePath.Tilde(_home, path);
 
-        /// <summary>Finds the host (open to agents) and leases its connection.</summary>
+        /// <summary>The terminal tab the call works with (the session argument), if any.</summary>
+        public IAgentTerminal? Terminal { get; private set; }
+
+        /// <summary>The host as the user reads it in approvals and the activity: with the tab when the call uses one.</summary>
+        public string HostLabel => Host is null ? "" : Terminal is { } tab ? $"{Host.DisplayName} (tab {tab.Id})" : Host.DisplayName;
+
+        /// <summary>Finds the terminal tab named by the session argument (open to agents); its host and rules become the call's.</summary>
+        public async Task<IAgentTerminal> TerminalAsync(CancellationToken ct)
+        {
+            VaultData vault = toolbox.Vault();
+            string spec = String("session").Trim();
+            var open = new List<IAgentTerminal>();
+            foreach (IAgentTerminal t in await toolbox._host.TerminalsAsync(ct).ConfigureAwait(false))
+            {
+                if (AgentRules.For(vault, RulesHost(vault, t)).Access != AgentAccess.Off)
+                    open.Add(t);
+            }
+            List<IAgentTerminal> matches = open.Where(t => string.Equals(t.Id, spec, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (matches.Count == 0)
+            {
+                matches = open.Where(t => string.Equals(t.Host.DisplayName.Trim(), spec, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(t.Title.Trim(), spec, StringComparison.OrdinalIgnoreCase)).ToList();
+            }
+            IAgentTerminal tab = matches.Count switch
+            {
+                1 => matches[0],
+                0 => throw new ToolException($"No open terminal tab \"{spec}\" that agents may use. list_sessions shows them."),
+                _ => throw new ToolException($"Several terminal tabs match \"{spec}\"; use one of their ids: {string.Join(", ", matches.Select(t => t.Id))}."),
+            };
+            Terminal = tab;
+            Host = RulesHost(vault, tab);
+            Rules = AgentRules.For(vault, Host);
+            return tab;
+        }
+
+        /// <summary>Finds the host (open to agents), or the terminal tab, and leases its connection.</summary>
         public async Task<ConnectionPool.Lease> ConnectAsync(CancellationToken ct)
         {
+            if (OptionalString("session") is not null)
+            {
+                if (OptionalString("host") is not null)
+                    throw new ToolException("Give host or session, not both.");
+                IAgentTerminal tab = await TerminalAsync(ct).ConfigureAwait(false);
+                ConnectionPool.Lease tabLease = toolbox.TabLease(tab);
+                try
+                {
+                    _home = await tabLease.Files.HomeAsync(ct).ConfigureAwait(false);
+                }
+                catch
+                {
+                    tabLease.Dispose();
+                    throw;
+                }
+                return tabLease;
+            }
+            if (OptionalString("host") is null)
+                throw new ToolException("host is required (a saved host, see list_hosts), or session (an open terminal tab, see list_sessions).");
             VaultData vault = toolbox.Vault();
             string spec = String("host").Trim();
             HostEntry host = FindHost(vault, spec);
@@ -784,7 +1041,7 @@ public sealed class AgentToolbox : IDisposable
                 _approvedBy = "session";
                 return;
             }
-            var request = new ApprovalRequest(Session.Client, Host.DisplayName, action, subject, detail, decision.Reason);
+            var request = new ApprovalRequest(Session.Client, HostLabel, action, subject, detail, decision.Reason);
             ApprovalAnswer answer = await toolbox._host.ApproveAsync(request, ct).ConfigureAwait(false);
             switch (answer)
             {
@@ -808,7 +1065,7 @@ public sealed class AgentToolbox : IDisposable
             _finished = true;
             AgentOutcome result = kind ?? (outcome.IsError ? AgentOutcome.Failed : AgentOutcome.Ok);
             string? detail = result == AgentOutcome.Ok ? Detail : OneLine(outcome.Text, 300);
-            var entry = new AgentActivityEntry(DateTimeOffset.UtcNow, Session.Client, Host?.DisplayName, tool,
+            var entry = new AgentActivityEntry(DateTimeOffset.UtcNow, Session.Client, Host is null ? null : HostLabel, tool,
                 AgentActivity.Redact(Summary.Length > 0 ? Summary : SummaryFromArgs()), result,
                 detail is null ? null : AgentActivity.Redact(detail), Stopwatch.GetElapsedTime(_started),
                 result == AgentOutcome.Ok ? _approvedBy : null);
@@ -843,6 +1100,39 @@ public sealed class AgentToolbox : IDisposable
                 && !string.IsNullOrWhiteSpace(value.GetString())
                 ? value.GetString()
                 : null;
+
+        /// <summary>A string argument as given, whitespace included (text to type); null when absent.</summary>
+        public string? OptionalRawString(string name)
+        {
+            if (args.ValueKind != JsonValueKind.Object || !args.TryGetProperty(name, out JsonElement value) || value.ValueKind == JsonValueKind.Null)
+                return null;
+            return value.ValueKind == JsonValueKind.String ? value.GetString() : throw new ToolException($"{name} must be a string.");
+        }
+
+        /// <summary>An array of strings (a single string counts as one); empty when absent.</summary>
+        public IReadOnlyList<string> Strings(string name)
+        {
+            if (args.ValueKind != JsonValueKind.Object || !args.TryGetProperty(name, out JsonElement value) || value.ValueKind == JsonValueKind.Null)
+                return [];
+            if (value.ValueKind == JsonValueKind.String)
+                return [value.GetString()!];
+            if (value.ValueKind != JsonValueKind.Array || value.EnumerateArray().Any(e => e.ValueKind != JsonValueKind.String))
+                throw new ToolException($"{name} must be an array of strings.");
+            return value.EnumerateArray().Select(e => e.GetString()!).ToList();
+        }
+
+        public double? Number(string name)
+        {
+            if (args.ValueKind != JsonValueKind.Object || !args.TryGetProperty(name, out JsonElement value))
+                return null;
+            if (value.ValueKind == JsonValueKind.Number)
+                return value.GetDouble();
+            if (value.ValueKind == JsonValueKind.String && double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed))
+                return parsed;
+            if (value.ValueKind == JsonValueKind.Null)
+                return null;
+            throw new ToolException($"{name} must be a number.");
+        }
 
         public int? Int(string name)
         {

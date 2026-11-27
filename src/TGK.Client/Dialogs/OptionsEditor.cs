@@ -394,7 +394,7 @@ public sealed class OptionsEditor
         {
             AgentAccess.ReadOnly => $"Agents can read files and run read-only commands on {target}, never change anything.",
             AgentAccess.Ask => $"Agents can read freely; you approve every change and command that is not read-only or allowed below.",
-            AgentAccess.Full => $"Agents can run commands and change files on {target} without asking, except protected paths. For hosts you can rebuild.",
+            AgentAccess.Full => $"Agents do everything on {target} without asking: commands, sudo, changes, keys and other secrets. Only the protected paths listed below still need you. For hosts you can rebuild.",
             _ => $"Agents (Claude Code and other MCP clients connected through TGK) can't see or use {target}.",
         };
         _accessHelp.Color = access == AgentAccess.Full ? Theme.Warning : Theme.TextMuted;

@@ -95,6 +95,32 @@ public sealed class RemoteConnectionEndToEndTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Attached_to_a_terminal_session_it_uses_its_connection_and_leaves_it_open()
+    {
+        SshConnectRequest target = Request("TGK_E2E_SSH");
+        using var session = new SshSession(new TrustAll());
+        Assert.Null(RemoteConnection.Attach(session)); // not connected yet
+        await session.ConnectAsync(target with { Cols = 80, Rows = 24 }, Ct);
+
+        RemoteConnection c = RemoteConnection.Attach(session)!;
+        Assert.True(c.IsAttached);
+        Assert.True(c.IsConnected);
+        Assert.Equal("attached\n", (await c.RunAsync("echo attached", Timeout, ct: Ct)).Stdout);
+        var files = new RemoteFiles(c);
+        Assert.StartsWith("/", await files.HomeAsync(Ct));
+        Assert.True(files.UsesCommands); // no second sign-in for SFTP
+
+        c.Dispose();
+        Assert.Equal(SessionState.Connected, session.State); // detaching leaves the tab's session alone
+        RemoteConnection again = RemoteConnection.Attach(session)!;
+        Assert.Equal("again\n", (await again.RunAsync("echo again", Timeout, ct: Ct)).Stdout);
+
+        session.Disconnect();
+        Assert.False(again.IsConnected);
+        again.Dispose();
+    }
+
+    [Fact]
     public async Task Sftp_WriteReadListStat()
     {
         _sftpConnection = await ConnectAsync("TGK_E2E_SSH");

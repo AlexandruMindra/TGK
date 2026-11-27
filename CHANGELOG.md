@@ -12,6 +12,12 @@ shows the current Unreleased section.
 
 ### Added
 
+- **Agents (MCP) can use open SSH tabs**: `list_sessions` lists the terminal tabs open in TGK, and `run_command` and the
+  file tools take `session` instead of `host` to work over a tab's own connection (no new sign-in, also for hosts that
+  ask for a one-time code and for Quick Connect tabs, which follow the defaults for all hosts). `read_terminal` reads
+  a tab's screen and history, and `send_to_terminal` types text and keys into it, for shells and programs a separate
+  command cannot reach (after `su`, in a container, a device console). Typing needs approval in Ask mode and is refused
+  in Read only. See docs/AGENTS.md, "Open sessions".
 - **Sync server packages with automatic updates**: releases now carry the sync server for Linux
   (`tgk-server-linux-x64`, `tgk-server-linux-arm64`) and `tgk-server-manage.sh`, which installs it on any systemd
   Linux (a Proxmox LXC too) and then looks after it: every night it installs a new stable release of the same MAJOR
@@ -25,12 +31,18 @@ shows the current Unreleased section.
 
 ### Changed
 
+- **Agent access Full now means full**: no more approvals for sudo or for the built-in protected paths (keys,
+  `.env`, `/etc/shadow`, credentials), including commands that only might reach them (globs, variables, recursive
+  searches). Only the protected paths you add to a host or group still ask. Read only and Ask are unchanged.
 - **tgk-server** no longer needs the ICU library (`libicu`), which minimal containers lack.
 
 ### Fixed
 
 - **tgk-server under systemd** (or any start from `/`): it no longer watches the whole file system for settings
   files before listening, which took minutes and hundreds of MB of memory; it now starts in a moment.
+- **Agents (MCP) from Claude Desktop on Windows**: `tgk-mcp` could not reach TGK when started by an MSIX-packaged
+  client (Claude Desktop's Code tab), which sees AppData redirected, and reported "TGK is not running" although TGK
+  was serving. The agent socket is now in `%USERPROFILE%\.tgk`; `tgk-mcp` also names the socket error it got.
 
 ## [0.4.0] - 2026-11-18
 
